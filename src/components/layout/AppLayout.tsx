@@ -3,7 +3,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { BarChart3, Clock, Info, ListTodo, Minus, Settings, Square, Timer, X } from "lucide-react";
 import { useState } from "react";
 import type { MouseEvent } from "react";
-import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
+import { cn, isMacOS } from "@/lib/utils";
+
+const macOS = isMacOS();
 
 const navItems = [
   { to: "/", label: "概览", icon: Clock },
@@ -18,11 +21,16 @@ export function AppLayout() {
   const location = useLocation();
 
   return (
-    <div className="app-shell flex h-screen flex-col">
+    <div className="app-shell relative h-screen overflow-hidden">
       <WindowTitleBar />
 
-      <div className="relative z-10 flex min-h-0 flex-1">
-        <aside className="flex w-[200px] shrink-0 flex-col border-r border-border/60 p-4 pt-5">
+      <div className="relative z-10 flex h-full min-h-0">
+        <aside
+          className={cn(
+            "flex w-[200px] shrink-0 flex-col border-r border-border/60 p-4",
+            macOS ? "pt-8" : "pt-5"
+          )}
+        >
           <nav className="flex flex-1 flex-col gap-1">
             {navItems.map(({ to, label, icon: Icon }) => (
               <NavLink
@@ -108,57 +116,66 @@ function WindowTitleBar() {
   const hideWindow = async (button: HTMLButtonElement) => {
     resetControlState(button);
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    await appWindow.hide().catch(console.error);
+    await api.hideToTray().catch(console.error);
   };
 
   return (
     <div
       data-tauri-drag-region
       onMouseDown={startDrag}
-      className="relative z-20 flex h-10 shrink-0 select-none items-center bg-transparent pl-4"
+      className={cn(
+        "flex h-10 select-none items-center bg-transparent",
+        macOS
+          ? "pointer-events-none absolute inset-x-0 top-0 z-50 pl-[78px] [&_[data-tauri-drag-region]]:pointer-events-auto"
+          : "relative z-20 shrink-0 pl-4"
+      )}
     >
-      <div data-tauri-drag-region className="text-[13px] font-medium">
-        时窗
-      </div>
+      {!macOS && (
+        <div data-tauri-drag-region className="text-[13px] font-medium">
+          时窗
+        </div>
+      )}
       <div data-tauri-drag-region className="h-full flex-1" />
-      <div data-no-drag className="flex h-full">
-        <button
-          type="button"
-          className={cn(
-            "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors focus:outline-none",
-            hoveredControl === "minimize" && "bg-foreground/5 text-foreground"
-          )}
-          aria-label="最小化"
-          onPointerEnter={() => setHoveredControl("minimize")}
-          onPointerLeave={() => setHoveredControl(null)}
-          onPointerDown={(event) => resetControlState(event.currentTarget)}
-          onClick={(event) => void minimizeWindow(event.currentTarget)}
-        >
-          <Minus className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          className="flex h-full w-11 items-center justify-center text-muted-foreground opacity-35 transition-colors focus:outline-none"
-          aria-label="最大化"
-          disabled
-        >
-          <Square className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          className={cn(
-            "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors focus:outline-none",
-            hoveredControl === "close" && "bg-foreground/6 text-foreground"
-          )}
-          aria-label="关闭"
-          onPointerEnter={() => setHoveredControl("close")}
-          onPointerLeave={() => setHoveredControl(null)}
-          onPointerDown={(event) => resetControlState(event.currentTarget)}
-          onClick={(event) => void hideWindow(event.currentTarget)}
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      {!macOS && (
+        <div data-no-drag className="flex h-full">
+          <button
+            type="button"
+            className={cn(
+              "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors focus:outline-none",
+              hoveredControl === "minimize" && "bg-foreground/5 text-foreground"
+            )}
+            aria-label="最小化"
+            onPointerEnter={() => setHoveredControl("minimize")}
+            onPointerLeave={() => setHoveredControl(null)}
+            onPointerDown={(event) => resetControlState(event.currentTarget)}
+            onClick={(event) => void minimizeWindow(event.currentTarget)}
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className="flex h-full w-11 items-center justify-center text-muted-foreground opacity-35 transition-colors focus:outline-none"
+            aria-label="最大化"
+            disabled
+          >
+            <Square className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors focus:outline-none",
+              hoveredControl === "close" && "bg-foreground/6 text-foreground"
+            )}
+            aria-label="关闭"
+            onPointerEnter={() => setHoveredControl("close")}
+            onPointerLeave={() => setHoveredControl(null)}
+            onPointerDown={(event) => resetControlState(event.currentTarget)}
+            onClick={(event) => void hideWindow(event.currentTarget)}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

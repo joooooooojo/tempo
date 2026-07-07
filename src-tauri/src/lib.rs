@@ -3,6 +3,13 @@ mod db;
 mod platform;
 mod pomodoro;
 
+#[cfg(target_os = "macos")]
+mod macos_dock;
+
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
 use db::{db_path, init_db, AppState, PomodoroRuntime, TrackerState};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -37,16 +44,21 @@ pub fn run() {
 
             setup_tray(app)?;
 
+            #[cfg(target_os = "macos")]
+            {
+                macos_dock::apply_branding(app.handle());
+                let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Regular);
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 let app_handle = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        if let Some(w) = app_handle.get_webview_window("main") {
-                            let _ = w.hide();
-                        }
+                        commands::hide_to_tray(&app_handle);
                     }
                 });
+
             }
 
             Ok(())
@@ -75,6 +87,7 @@ pub fn run() {
             commands::export_report,
             commands::complete_onboarding,
             commands::quit_app,
+            commands::hide_to_tray_command,
             commands::show_window,
             commands::get_pomodoro_state,
             commands::start_pomodoro,

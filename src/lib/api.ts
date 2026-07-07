@@ -40,6 +40,7 @@ export const api = {
   exportReport: (path: string) => invoke<void>("export_report", { path }),
   completeOnboarding: () => invoke<void>("complete_onboarding"),
   quitApp: () => invoke<void>("quit_app"),
+  hideToTray: () => invoke<void>("hide_to_tray_command"),
   showWindow: () => invoke<void>("show_window"),
   getPomodoroState: () => invoke<PomodoroState>("get_pomodoro_state"),
   startPomodoro: () => invoke<PomodoroState>("start_pomodoro"),

@@ -5,6 +5,9 @@ description = "时窗 - 屏幕使用时间监控"
 authors = ["Edesign"]
 edition = "2021"
 
+[lints.rust]
+unexpected_cfgs = "allow"
+
 [lib]
 name = "screen_time_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -43,3 +46,5 @@ windows = { version = "0.58", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
+appkit-nsworkspace-bindings = "0.1"
+objc = "0.2"

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "时窗",
+        "width": 900,
+        "height": 640,
+        "minWidth": 900,
+        "maxWidth": 900,
+        "minHeight": 640,
+        "maxHeight": 640,
+        "resizable": false,
+        "center": true,
+        "decorations": false
+      }
+    ]
+  }
+}

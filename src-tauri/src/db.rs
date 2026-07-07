@@ -402,6 +402,14 @@ pub fn is_system_host_usage(name: &str, process: &str) -> bool {
     let app_name = name.trim().to_lowercase();
     let process_name = process.trim().to_ascii_lowercase();
 
+    if app_name == "screen-time-app"
+        || app_name == "时窗"
+        || process_name == "screen-time-app"
+        || process_name.ends_with("screen-time-app")
+    {
+        return true;
+    }
+
     if app_name.contains("windows 主进程")
         || app_name.contains("host process for windows")
         || app_name.contains("windows host process")

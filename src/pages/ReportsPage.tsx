@@ -150,8 +150,8 @@ export function ReportsPage() {
                           <AppIcon
                             name={app.app_name}
                             iconDataUrl={app.icon_data_url}
-                            className="h-7 w-7 rounded-md text-[11px]"
-                            fallbackClassName="bg-gradient-to-br from-slate-400 to-slate-600"
+                            size="sm"
+                            fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
                           />
                           <span className="truncate">{app.app_name}</span>
                         </span>

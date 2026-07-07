@@ -160,7 +160,7 @@ export function HomePage() {
                     <AppIcon
                       name={app.app_name}
                       iconDataUrl={app.icon_data_url}
-                      className="rank-icon h-11 w-11 rounded-lg bg-background/60 p-1 ring-1 ring-border/60"
+                      className="rank-icon"
                       fallbackClassName={`bg-gradient-to-br ${grad}`}
                     />
                     <div className="min-w-0">

@@ -174,6 +174,13 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
         return None;
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(app) = get_foreground_app_macos() {
+            return Some(app);
+        }
+    }
+
     match active_win_pos_rs::get_active_window() {
         Ok(win) => {
             let name = win.app_name.trim().to_string();
@@ -188,12 +195,7 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
                 return None;
             }
 
-            let lower = format!("{} {}", name, process).to_lowercase();
-            if lower.contains("lockapp")
-                || lower.contains("lock screen")
-                || lower.contains("screen saver")
-                || lower.contains("screensaver")
-            {
+            if is_ignored_foreground_app(&name, &process, None) {
                 return None;
             }
 
@@ -212,6 +214,123 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
             })
         }
         Err(_) => None,
+    }
+}
+
+fn is_ignored_foreground_app(name: &str, process: &str, bundle_id: Option<&str>) -> bool {
+    let lower = format!("{} {}", name, process).to_lowercase();
+    if lower.contains("lockapp")
+        || lower.contains("lock screen")
+        || lower.contains("screen saver")
+        || lower.contains("screensaver")
+    {
+        return true;
+    }
+
+    let name_lower = name.trim().to_lowercase();
+    let process_lower = process.trim().to_ascii_lowercase();
+    if name_lower == "screen-time-app"
+        || name_lower == "时窗"
+        || process_lower == "screen-time-app"
+        || process_lower.ends_with("screen-time-app")
+    {
+        return true;
+    }
+
+    if bundle_id == Some("com.edesign.screen-time") {
+        return true;
+    }
+
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn get_foreground_app_macos() -> Option<ForegroundApp> {
+    use appkit_nsworkspace_bindings::{INSRunningApplication, INSURL, INSWorkspace, NSWorkspace};
+    use std::path::PathBuf;
+
+    unsafe {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let app = workspace.frontmostApplication();
+        if app.0.is_null() {
+            return None;
+        }
+
+        let bundle_id = nsstring_to_rust_string(app.bundleIdentifier().0);
+        let localized_name = nsstring_to_rust_string(app.localizedName().0);
+        let bundle_url = app.bundleURL();
+        let executable_url = app.executableURL();
+        if bundle_url.0.is_null() && executable_url.0.is_null() && localized_name.is_empty() {
+            return None;
+        }
+
+        let bundle_path_str = if bundle_url.0.is_null() {
+            String::new()
+        } else {
+            nsstring_to_rust_string(bundle_url.path().0)
+        };
+        let bundle_path = PathBuf::from(bundle_path_str.trim());
+        let executable_path = if executable_url.0.is_null() {
+            String::new()
+        } else {
+            nsstring_to_rust_string(executable_url.path().0)
+        };
+        let process_name = std::path::Path::new(executable_path.trim())
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let display_name = if !localized_name.trim().is_empty() {
+            localized_name.trim().to_string()
+        } else if bundle_path.extension().is_some_and(|ext| ext == "app") {
+            resolve_macos_display_name(&bundle_path).or_else(|| {
+                bundle_path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string())
+            })?
+        } else {
+            return None;
+        };
+
+        if is_ignored_foreground_app(
+            &display_name,
+            &process_name,
+            (!bundle_id.is_empty()).then_some(bundle_id.as_str()),
+        ) {
+            return None;
+        }
+
+        let icon_data_url = if bundle_path.extension().is_some_and(|ext| ext == "app") {
+            get_cached_icon_data_url(&bundle_path).or_else(|| {
+                resolve_app_icon_data_url(&display_name, &process_name)
+            })
+        } else {
+            resolve_app_icon_data_url(&display_name, &process_name)
+        };
+
+        Some(ForegroundApp {
+            name: display_name,
+            process_name,
+            icon_data_url,
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn nsstring_to_rust_string(nsstring: *mut objc::runtime::Object) -> String {
+    if nsstring.is_null() {
+        return String::new();
+    }
+
+    unsafe {
+        let cstr: *const i8 = msg_send![nsstring, UTF8String];
+        if cstr.is_null() {
+            return String::new();
+        }
+
+        std::ffi::CStr::from_ptr(cstr)
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -604,4 +723,11 @@ fn read_macos_plist_value(plist: &Path, key: &str) -> Option<String> {
 
     let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_macos_display_name(app_bundle: &Path) -> Option<String> {
+    let plist = app_bundle.join("Contents").join("Info.plist");
+    read_macos_plist_value(&plist, "CFBundleDisplayName")
+        .or_else(|| read_macos_plist_value(&plist, "CFBundleName"))
 }

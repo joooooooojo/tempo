@@ -3251,10 +3251,12 @@ name = "screen-time-app"
 version = "0.1.0"
 dependencies = [
  "active-win-pos-rs",
+ "appkit-nsworkspace-bindings",
  "base64 0.22.1",
  "chrono",
  "core-foundation 0.10.1",
  "core-foundation-sys",
+ "objc",
  "parking_lot",
  "png 0.17.16",
  "rusqlite",

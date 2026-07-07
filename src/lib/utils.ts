@@ -5,6 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function isMacOS() {
+  return navigator.userAgent.includes("Mac");
+}
+
 export function getDurationParts(seconds: number) {
   const totalSeconds = Math.max(0, Math.floor(seconds));
   const h = Math.floor(totalSeconds / 3600);

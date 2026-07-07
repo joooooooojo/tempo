@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Toaster, toast } from "sonner";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -71,11 +70,6 @@ function MainApp() {
 
     const unlistenToast = listen<{ message: string }>("toast", (e) => {
       toast.info(e.payload.message);
-    });
-
-    getCurrentWindow().onCloseRequested(async (event) => {
-      event.preventDefault();
-      await getCurrentWindow().hide();
     });
 
     return () => {
