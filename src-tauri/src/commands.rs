@@ -1,0 +1,684 @@
+use crate::db::{
+    add_app_time, add_screen_time, cleanup_old_data, get_daily_total, is_blocked, load_settings,
+    today_str, AppLimit, AppState, AppUsage, DailyReport, DashboardData, HourlyData, Settings,
+    WeeklyDay, WeeklyReport,
+};
+use crate::platform::{get_foreground_app, should_count_screen_time, should_count_time};
+use base64::Engine as _;
+use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
+use rusqlite::params;
+use serde_json::json;
+use std::time::Instant;
+use tauri::{AppHandle, Emitter, Manager};
+
+const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
+
+pub fn start_tracker(app: AppHandle, state: AppState) {
+    std::thread::spawn(move || {
+        let mut tick_count: u64 = 0;
+        let mut last_tick = Instant::now();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let elapsed_seconds = last_tick.elapsed().as_secs().clamp(1, 5) as i64;
+            last_tick = Instant::now();
+            tick_count += elapsed_seconds as u64;
+
+            let now = Local::now();
+            let date = now.format("%Y-%m-%d").to_string();
+
+            {
+                let mut tracker = state.tracker.lock();
+                if tracker.last_date != date {
+                    tracker.continuous_seconds = 0;
+                    tracker.night_reminded_today = false;
+                    tracker.last_date = date.clone();
+                }
+            }
+
+            if !should_count_time() {
+                state.tracker.lock().continuous_seconds = 0;
+                continue;
+            }
+
+            let foreground = get_foreground_app();
+
+            if !should_count_screen_time(&foreground) {
+                state.tracker.lock().continuous_seconds = 0;
+                continue;
+            }
+
+            {
+                let conn = state.db.lock();
+                for (bucket_date, bucket_hour, seconds) in second_buckets(now, elapsed_seconds) {
+                    add_screen_time(&conn, &bucket_date, bucket_hour, seconds);
+
+                    if let Some(ref app_info) = foreground {
+                        if !is_blocked(&conn, &app_info.name) {
+                            add_app_time(
+                                &conn,
+                                &bucket_date,
+                                &app_info.name,
+                                &app_info.process_name,
+                                seconds,
+                                app_info.icon_data_url.as_deref(),
+                            );
+                        }
+                    }
+                }
+            }
+
+            if let Some(ref app_info) = foreground {
+                check_app_limits(&app, &state, &date, &app_info.name);
+            }
+
+            {
+                let mut tracker = state.tracker.lock();
+                tracker.continuous_seconds += elapsed_seconds;
+            }
+
+            push_dashboard_event(&app, &state);
+
+            if tick_count % 5 == 0 {
+                update_tray_tooltip(&app, &state);
+            }
+
+            if tick_count % 60 == 0 {
+                let conn = state.db.lock();
+                cleanup_old_data(&conn);
+            }
+
+            check_reminders(&app, &state);
+        }
+    });
+}
+
+fn second_buckets(now: DateTime<Local>, seconds: i64) -> Vec<(String, u32, i64)> {
+    let mut buckets: Vec<(String, u32, i64)> = Vec::new();
+
+    for offset in 1..=seconds {
+        let point = now - ChronoDuration::seconds(offset);
+        let date = point.format("%Y-%m-%d").to_string();
+        let hour = point.hour();
+
+        if let Some((_, _, total)) = buckets
+            .iter_mut()
+            .find(|(bucket_date, bucket_hour, _)| bucket_date == &date && *bucket_hour == hour)
+        {
+            *total += 1;
+        } else {
+            buckets.push((date, hour, 1));
+        }
+    }
+
+    buckets
+}
+
+fn push_dashboard_event(app: &AppHandle, state: &AppState) {
+    let Some(dashboard) = build_dashboard(state) else {
+        return;
+    };
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = app_handle.emit("dashboard-update", dashboard);
+    });
+}
+
+fn build_dashboard(state: &AppState) -> Option<DashboardData> {
+    let continuous = state.tracker.lock().continuous_seconds;
+    let today = today_str();
+    let (today_secs, week_secs, month_secs, mut top_apps) = {
+        let conn = state.db.lock();
+        (
+            get_daily_total(&conn, &today),
+            crate::db::sum_range(&conn, 7),
+            crate::db::sum_range(&conn, 30),
+            crate::db::top_apps(&conn, &today, 10),
+        )
+    };
+    hydrate_app_icons(state, &today, &mut top_apps);
+
+    let status = if today_secs == 0 {
+        "今日尚未开始统计".into()
+    } else if today_secs > 8 * 3600 {
+        "今日使用时长较长，注意休息".into()
+    } else if today_secs > 4 * 3600 {
+        "使用时长适中".into()
+    } else {
+        "今日使用正常".into()
+    };
+
+    Some(DashboardData {
+        today_screen_seconds: today_secs,
+        week_screen_seconds: week_secs,
+        month_screen_seconds: month_secs,
+        top_apps,
+        continuous_screen_seconds: continuous,
+        status_message: status,
+    })
+}
+
+fn hydrate_app_icons(state: &AppState, date: &str, apps: &mut [AppUsage]) {
+    for app in apps.iter_mut() {
+        if app
+            .icon_data_url
+            .as_deref()
+            .is_some_and(|icon| !icon_needs_refresh(icon))
+        {
+            continue;
+        }
+
+        let Some(icon) =
+            crate::platform::resolve_app_icon_data_url(&app.app_name, &app.process_name)
+        else {
+            continue;
+        };
+
+        {
+            let conn = state.db.lock();
+            conn.execute(
+                "UPDATE app_usage SET icon_data_url = ?1 WHERE date = ?2 AND app_name = ?3",
+                params![icon, date, app.app_name],
+            )
+            .ok();
+        }
+
+        app.icon_data_url = Some(icon);
+    }
+}
+
+fn icon_needs_refresh(icon_data_url: &str) -> bool {
+    if icon_data_url.trim().is_empty() {
+        return true;
+    }
+
+    let Some(payload) = icon_data_url.strip_prefix("data:image/png;base64,") else {
+        return false;
+    };
+
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) else {
+        return true;
+    };
+
+    if bytes.len() < 24 || &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return false;
+    }
+
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    width < 64
+}
+
+fn update_tray_tooltip(app: &AppHandle, state: &AppState) {
+    let today = {
+        let conn = state.db.lock();
+        get_daily_total(&conn, &today_str())
+    };
+    let tooltip = format!("今日屏幕时长: {}", format_duration(today));
+    let app_handle = app.clone();
+
+    let _ = app.run_on_main_thread(move || {
+        if let Some(tray) = app_handle.tray_by_id("main") {
+            let _ = tray.set_tooltip(Some(&tooltip));
+        }
+    });
+}
+
+fn emit_on_main(app: &AppHandle, event: &str, payload: serde_json::Value) {
+    let app_handle = app.clone();
+    let event = event.to_string();
+    let _ = app.run_on_main_thread(move || {
+        let _ = app_handle.emit(&event, payload);
+    });
+}
+
+fn check_app_limits(app: &AppHandle, state: &AppState, date: &str, app_name: &str) {
+    let row: Option<(i64, i64, i64, i64)> = {
+        let conn = state.db.lock();
+        conn.query_row(
+            "SELECT l.limit_seconds, COALESCE(u.seconds, 0), l.warn_sent, l.limit_sent
+             FROM app_limits l
+             LEFT JOIN app_usage u ON u.app_name = l.app_name AND u.date = ?1
+             WHERE l.app_name = ?2",
+            params![date, app_name],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .ok()
+    };
+
+    let Some((limit, used, warn_sent, limit_sent)) = row else {
+        return;
+    };
+
+    if limit <= 0 {
+        return;
+    }
+
+    let pct = (used * 100) / limit;
+
+    if pct >= 80 && warn_sent == 0 {
+        {
+            let conn = state.db.lock();
+            conn.execute(
+                "UPDATE app_limits SET warn_sent = 1 WHERE app_name = ?1",
+                [app_name],
+            )
+            .ok();
+        }
+        emit_on_main(
+            app,
+            "reminder",
+            json!({ "type": "app_limit_warn", "app_name": app_name, "percent": pct }),
+        );
+        emit_on_main(
+            app,
+            "toast",
+            json!({ "message": format!("{} 使用已达 {}%", app_name, pct) }),
+        );
+    }
+
+    if pct >= 100 && limit_sent == 0 {
+        {
+            let conn = state.db.lock();
+            conn.execute(
+                "UPDATE app_limits SET limit_sent = 1 WHERE app_name = ?1",
+                [app_name],
+            )
+            .ok();
+        }
+        emit_on_main(
+            app,
+            "reminder",
+            json!({ "type": "app_limit_reached", "app_name": app_name }),
+        );
+    }
+}
+
+fn check_reminders(app: &AppHandle, state: &AppState) {
+    let settings = {
+        let conn = state.db.lock();
+        load_settings(&conn)
+    };
+
+    let continuous = state.tracker.lock().continuous_seconds;
+
+    if settings.eye_care_enabled {
+        let interval = (settings.eye_care_interval_minutes as i64) * 60;
+        if interval > 0 && continuous >= interval {
+            emit_on_main(app, "reminder", json!({ "type": "eye_care" }));
+            state.tracker.lock().continuous_seconds = 0;
+        }
+    }
+
+    if settings.night_reminder_enabled {
+        let now = Local::now().time();
+        let in_range = is_in_night_range(
+            &now.format("%H:%M").to_string(),
+            &settings.night_reminder_start,
+            &settings.night_reminder_end,
+        );
+
+        let should_notify = {
+            let mut tracker = state.tracker.lock();
+            if in_range && !tracker.night_reminded_today {
+                tracker.night_reminded_today = true;
+                true
+            } else {
+                false
+            }
+        };
+
+        if should_notify {
+            emit_on_main(app, "reminder", json!({ "type": "night" }));
+        }
+    }
+}
+
+fn is_in_night_range(now: &str, start: &str, end: &str) -> bool {
+    if start <= end {
+        now >= start && now <= end
+    } else {
+        now >= start || now <= end
+    }
+}
+
+#[tauri::command]
+pub fn get_dashboard(state: tauri::State<AppState>) -> DashboardData {
+    build_dashboard(&state).unwrap_or(DashboardData {
+        today_screen_seconds: 0,
+        week_screen_seconds: 0,
+        month_screen_seconds: 0,
+        top_apps: vec![],
+        continuous_screen_seconds: 0,
+        status_message: "加载中".into(),
+    })
+}
+
+#[tauri::command]
+pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> DailyReport {
+    let date = date.unwrap_or_else(today_str);
+    let (total, hourly, mut top_apps) = {
+        let conn = state.db.lock();
+        let total = get_daily_total(&conn, &date);
+
+        let mut hourly = Vec::new();
+        for h in 0..24 {
+            let secs: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
+                    params![date, h],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            hourly.push(HourlyData {
+                hour: h,
+                seconds: secs,
+            });
+        }
+
+        (total, hourly, crate::db::top_apps(&conn, &date, 10))
+    };
+    hydrate_app_icons(&state, &date, &mut top_apps);
+
+    let peak = hourly
+        .iter()
+        .max_by_key(|h| h.seconds)
+        .cloned()
+        .unwrap_or(HourlyData {
+            hour: 0,
+            seconds: 0,
+        });
+
+    let active_hours = hourly.iter().filter(|h| h.seconds > 0).count().max(1) as i64;
+    let average = total / active_hours;
+
+    DailyReport {
+        date: date.clone(),
+        total_seconds: total,
+        average_seconds: average,
+        peak_hour: peak.hour,
+        peak_seconds: peak.seconds,
+        hourly,
+        top_apps,
+    }
+}
+
+#[tauri::command]
+pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
+    let conn = state.db.lock();
+    let today = Local::now().date_naive();
+    let mut days = Vec::new();
+    let mut total = 0i64;
+
+    for i in (0..7).rev() {
+        let d = today - chrono::Duration::days(i);
+        let ds = d.format("%Y-%m-%d").to_string();
+        let secs = get_daily_total(&conn, &ds);
+        total += secs;
+        days.push(WeeklyDay {
+            date: ds,
+            seconds: secs,
+            is_over_limit: false,
+        });
+    }
+
+    let average = total / 7;
+
+    for day in &mut days {
+        day.is_over_limit = day.seconds > DAILY_RECOMMENDED_LIMIT_SECONDS;
+    }
+
+    WeeklyReport {
+        days,
+        average_seconds: average,
+        daily_limit_seconds: DAILY_RECOMMENDED_LIMIT_SECONDS,
+    }
+}
+
+#[tauri::command]
+pub fn get_settings(state: tauri::State<AppState>) -> Settings {
+    let conn = state.db.lock();
+    load_settings(&conn)
+}
+
+#[tauri::command]
+pub fn update_settings(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    settings: serde_json::Value,
+) -> Result<(), String> {
+    let mut current = {
+        let conn = state.db.lock();
+        load_settings(&conn)
+    };
+
+    if let Some(v) = settings.get("autostart").and_then(|v| v.as_bool()) {
+        current.autostart = v;
+        use tauri_plugin_autostart::ManagerExt;
+        let autostart = app.autolaunch();
+        if v {
+            autostart.enable().map_err(|e| e.to_string())?;
+        } else {
+            autostart.disable().map_err(|e| e.to_string())?;
+        }
+    }
+    if let Some(v) = settings.get("sound_enabled").and_then(|v| v.as_bool()) {
+        current.sound_enabled = v;
+    }
+    if let Some(v) = settings.get("theme").and_then(|v| v.as_str()) {
+        current.theme = v.into();
+    }
+    if let Some(v) = settings.get("eye_care_enabled").and_then(|v| v.as_bool()) {
+        current.eye_care_enabled = v;
+    }
+    if let Some(v) = settings
+        .get("eye_care_interval_minutes")
+        .and_then(|v| v.as_u64())
+    {
+        current.eye_care_interval_minutes = v as u32;
+    }
+    if let Some(v) = settings
+        .get("night_reminder_enabled")
+        .and_then(|v| v.as_bool())
+    {
+        current.night_reminder_enabled = v;
+    }
+    if let Some(v) = settings
+        .get("night_reminder_start")
+        .and_then(|v| v.as_str())
+    {
+        current.night_reminder_start = v.into();
+    }
+    if let Some(v) = settings.get("night_reminder_end").and_then(|v| v.as_str()) {
+        current.night_reminder_end = v.into();
+    }
+
+    let conn = state.db.lock();
+    crate::db::save_settings(&conn, &current);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reset_today(state: tauri::State<AppState>) {
+    do_reset_today(&state);
+}
+
+pub fn do_reset_today(state: &AppState) {
+    let conn = state.db.lock();
+    let today = today_str();
+    conn.execute("DELETE FROM screen_time_daily WHERE date = ?1", [&today])
+        .ok();
+    conn.execute("DELETE FROM screen_time_hourly WHERE date = ?1", [&today])
+        .ok();
+    conn.execute("DELETE FROM app_usage WHERE date = ?1", [&today])
+        .ok();
+    conn.execute("UPDATE app_limits SET warn_sent = 0, limit_sent = 0", [])
+        .ok();
+}
+
+#[tauri::command]
+pub fn reset_all(state: tauri::State<AppState>) {
+    let conn = state.db.lock();
+    conn.execute("DELETE FROM screen_time_daily", []).ok();
+    conn.execute("DELETE FROM screen_time_hourly", []).ok();
+    conn.execute("DELETE FROM app_usage", []).ok();
+    conn.execute("UPDATE app_limits SET warn_sent = 0, limit_sent = 0", [])
+        .ok();
+}
+
+#[tauri::command]
+pub fn get_blocked_apps(state: tauri::State<AppState>) -> Vec<String> {
+    let conn = state.db.lock();
+    let mut stmt = conn
+        .prepare("SELECT app_name FROM blocked_apps ORDER BY app_name")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .filter_map(|x| x.ok())
+        .collect()
+}
+
+#[tauri::command]
+pub fn block_app(state: tauri::State<AppState>, app_name: String) {
+    let conn = state.db.lock();
+    conn.execute(
+        "INSERT OR IGNORE INTO blocked_apps (app_name) VALUES (?1)",
+        [&app_name],
+    )
+    .ok();
+}
+
+#[tauri::command]
+pub fn unblock_app(state: tauri::State<AppState>, app_name: String) {
+    let conn = state.db.lock();
+    conn.execute("DELETE FROM blocked_apps WHERE app_name = ?1", [&app_name])
+        .ok();
+}
+
+#[tauri::command]
+pub fn get_app_limits(state: tauri::State<AppState>) -> Vec<AppLimit> {
+    let conn = state.db.lock();
+    let today = today_str();
+    let mut stmt = conn
+        .prepare(
+            "SELECT l.app_name, l.limit_seconds, COALESCE(u.seconds, 0), l.warn_sent, l.limit_sent
+             FROM app_limits l
+             LEFT JOIN app_usage u ON u.app_name = l.app_name AND u.date = ?1",
+        )
+        .unwrap();
+    stmt.query_map([&today], |r| {
+        Ok(AppLimit {
+            app_name: r.get(0)?,
+            limit_seconds: r.get(1)?,
+            used_seconds: r.get(2)?,
+            warn_sent: r.get::<_, i64>(3)? != 0,
+            limit_sent: r.get::<_, i64>(4)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|x| x.ok())
+    .collect()
+}
+
+#[tauri::command]
+pub fn set_app_limit(state: tauri::State<AppState>, app_name: String, limit_seconds: i64) {
+    let conn = state.db.lock();
+    conn.execute(
+        "INSERT INTO app_limits (app_name, limit_seconds, warn_sent, limit_sent)
+         VALUES (?1, ?2, 0, 0)
+         ON CONFLICT(app_name) DO UPDATE SET limit_seconds = excluded.limit_seconds,
+           warn_sent = 0, limit_sent = 0",
+        params![app_name, limit_seconds],
+    )
+    .ok();
+}
+
+#[tauri::command]
+pub fn remove_app_limit(state: tauri::State<AppState>, app_name: String) {
+    let conn = state.db.lock();
+    conn.execute("DELETE FROM app_limits WHERE app_name = ?1", [&app_name])
+        .ok();
+}
+
+#[tauri::command]
+pub fn get_known_apps(state: tauri::State<AppState>) -> Vec<AppUsage> {
+    let today = today_str();
+    let mut apps = {
+        let conn = state.db.lock();
+        crate::db::top_apps(&conn, &today, 50)
+    };
+    hydrate_app_icons(&state, &today, &mut apps);
+    apps
+}
+
+#[tauri::command]
+pub fn export_report(state: tauri::State<AppState>, path: String) -> Result<(), String> {
+    let conn = state.db.lock();
+    let today = today_str();
+
+    let mut lines = vec!["日期,应用名称,耗时(秒),耗时(格式化)".to_string()];
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT date, app_name, process_name, seconds FROM app_usage
+             ORDER BY date DESC, seconds DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    for row in rows.filter_map(|x| x.ok()) {
+        let (date, name, process, secs) = row;
+        if crate::db::is_system_host_usage(&name, &process) {
+            continue;
+        }
+        let formatted = format_duration(secs);
+        lines.push(format!("{},{},{},{}", date, name, secs, formatted));
+    }
+
+    let screen_total = get_daily_total(&conn, &today);
+    lines.push(String::new());
+    lines.push(format!("今日屏幕总时长(秒),{}", screen_total));
+
+    let content = "\u{FEFF}".to_string() + &lines.join("\n");
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+fn format_duration(seconds: i64) -> String {
+    let h = seconds / 3600;
+    let m = (seconds % 3600) / 60;
+    let s = seconds % 60;
+    if h > 0 {
+        format!("{}小时{}分钟", h, m)
+    } else {
+        format!("{}分钟{}秒", m, s)
+    }
+}
+
+#[tauri::command]
+pub fn complete_onboarding(state: tauri::State<AppState>) {
+    let conn = state.db.lock();
+    crate::db::set_setting(&conn, "onboarding_completed", "true");
+}
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+pub fn show_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|e| e.to_string())?;
+        window.unminimize().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
