@@ -1,12 +1,14 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { BarChart3, Clock, Info, Minus, Settings, Square, X } from "lucide-react";
+import { BarChart3, Clock, Info, ListTodo, Minus, Settings, Square, Timer, X } from "lucide-react";
 import { useState } from "react";
 import type { MouseEvent } from "react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { to: "/", label: "概览", icon: Clock },
+  { to: "/pomodoro", label: "番茄钟", icon: Timer },
+  { to: "/todos", label: "待办", icon: ListTodo },
   { to: "/reports", label: "报表", icon: BarChart3 },
   { to: "/settings", label: "设置", icon: Settings },
   { to: "/about", label: "关于", icon: Info },

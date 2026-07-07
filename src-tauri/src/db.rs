@@ -66,6 +66,15 @@ pub struct AppLimit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoItem {
+    pub id: i64,
+    pub title: String,
+    pub completed: bool,
+    pub created_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub autostart: bool,
     pub sound_enabled: bool,
@@ -76,6 +85,10 @@ pub struct Settings {
     pub night_reminder_start: String,
     pub night_reminder_end: String,
     pub onboarding_completed: bool,
+    pub pomodoro_work_minutes: u32,
+    pub pomodoro_short_break_minutes: u32,
+    pub pomodoro_long_break_minutes: u32,
+    pub pomodoro_sessions_per_cycle: u32,
 }
 
 impl Default for Settings {
@@ -90,8 +103,57 @@ impl Default for Settings {
             night_reminder_start: "23:00".into(),
             night_reminder_end: "06:00".into(),
             onboarding_completed: false,
+            pomodoro_work_minutes: 25,
+            pomodoro_short_break_minutes: 5,
+            pomodoro_long_break_minutes: 15,
+            pomodoro_sessions_per_cycle: 4,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PomodoroStatus {
+    Idle,
+    Running,
+    Paused,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PomodoroPhase {
+    Work,
+    ShortBreak,
+    LongBreak,
+}
+
+#[derive(Debug)]
+pub struct PomodoroRuntime {
+    pub status: PomodoroStatus,
+    pub phase: PomodoroPhase,
+    pub remaining_seconds: i64,
+    pub phase_total_seconds: i64,
+    pub cycle_count: u32,
+}
+
+impl Default for PomodoroRuntime {
+    fn default() -> Self {
+        Self {
+            status: PomodoroStatus::Idle,
+            phase: PomodoroPhase::Work,
+            remaining_seconds: 0,
+            phase_total_seconds: 0,
+            cycle_count: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PomodoroState {
+    pub status: String,
+    pub phase: String,
+    pub remaining_seconds: i64,
+    pub phase_total_seconds: i64,
+    pub sessions_today: u32,
+    pub cycle_count: u32,
 }
 
 pub struct TrackerState {
@@ -114,6 +176,7 @@ impl Default for TrackerState {
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub tracker: Arc<Mutex<TrackerState>>,
+    pub pomodoro: Arc<Mutex<PomodoroRuntime>>,
 }
 
 pub fn today_str() -> String {
@@ -166,6 +229,13 @@ pub fn init_db(path: &PathBuf) -> Connection {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        );
         ",
     )
     .expect("init schema");
@@ -205,6 +275,18 @@ pub fn load_settings(conn: &Connection) -> Settings {
         night_reminder_start: get_setting(conn, "night_reminder_start", "23:00"),
         night_reminder_end: get_setting(conn, "night_reminder_end", "06:00"),
         onboarding_completed: get_setting(conn, "onboarding_completed", "false") == "true",
+        pomodoro_work_minutes: get_setting(conn, "pomodoro_work_minutes", "25")
+            .parse()
+            .unwrap_or(25),
+        pomodoro_short_break_minutes: get_setting(conn, "pomodoro_short_break_minutes", "5")
+            .parse()
+            .unwrap_or(5),
+        pomodoro_long_break_minutes: get_setting(conn, "pomodoro_long_break_minutes", "15")
+            .parse()
+            .unwrap_or(15),
+        pomodoro_sessions_per_cycle: get_setting(conn, "pomodoro_sessions_per_cycle", "4")
+            .parse()
+            .unwrap_or(4),
     }
 }
 
@@ -234,6 +316,53 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         "onboarding_completed",
         &settings.onboarding_completed.to_string(),
     );
+    set_setting(
+        conn,
+        "pomodoro_work_minutes",
+        &settings.pomodoro_work_minutes.to_string(),
+    );
+    set_setting(
+        conn,
+        "pomodoro_short_break_minutes",
+        &settings.pomodoro_short_break_minutes.to_string(),
+    );
+    set_setting(
+        conn,
+        "pomodoro_long_break_minutes",
+        &settings.pomodoro_long_break_minutes.to_string(),
+    );
+    set_setting(
+        conn,
+        "pomodoro_sessions_per_cycle",
+        &settings.pomodoro_sessions_per_cycle.to_string(),
+    );
+}
+
+pub fn get_pomodoro_sessions_today(conn: &Connection) -> u32 {
+    let today = today_str();
+    let stored_date = get_setting(conn, "pomodoro_sessions_date", "");
+    if stored_date != today {
+        return 0;
+    }
+    get_setting(conn, "pomodoro_sessions_count", "0")
+        .parse()
+        .unwrap_or(0)
+}
+
+pub fn increment_pomodoro_sessions(conn: &Connection) -> u32 {
+    let today = today_str();
+    let stored_date = get_setting(conn, "pomodoro_sessions_date", "");
+    let count = if stored_date == today {
+        get_setting(conn, "pomodoro_sessions_count", "0")
+            .parse::<u32>()
+            .unwrap_or(0)
+            + 1
+    } else {
+        1
+    };
+    set_setting(conn, "pomodoro_sessions_date", &today);
+    set_setting(conn, "pomodoro_sessions_count", &count.to_string());
+    count
 }
 
 pub fn categorize(name: &str, process: &str) -> &'static str {

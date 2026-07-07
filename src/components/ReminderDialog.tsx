@@ -56,5 +56,36 @@ function getConfig(event: DialogReminderEvent) {
         description: `${event.app_name} 今日使用时长已达到设定上限。你仍可继续使用，请自主决定是否休息。`,
         action: "继续使用",
       };
+    case "pomodoro_phase_end":
+      return getPomodoroConfig(event);
+  }
+}
+
+function getPomodoroConfig(event: { phase: "work" | "short_break" | "long_break"; skipped: boolean }) {
+  switch (event.phase) {
+    case "work":
+      return {
+        title: event.skipped ? "专注已跳过" : "专注完成",
+        description: event.skipped
+          ? "已进入休息阶段，放松一下再继续。"
+          : "太棒了！休息一下，活动活动身体。",
+        action: "好的",
+      };
+    case "short_break":
+      return {
+        title: event.skipped ? "短休已跳过" : "短休结束",
+        description: event.skipped
+          ? "已开始新一轮专注，加油！"
+          : "休息够了，准备好开始下一轮专注了吗？",
+        action: "继续",
+      };
+    case "long_break":
+      return {
+        title: event.skipped ? "长休已跳过" : "长休结束",
+        description: event.skipped
+          ? "新一轮专注已开始，保持好节奏。"
+          : "长休结束，新一轮番茄循环开始！",
+        action: "开始专注",
+      };
   }
 }

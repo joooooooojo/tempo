@@ -13,7 +13,10 @@ import { EyeCareReminderPage } from "@/pages/EyeCareReminderPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { AboutPage } from "@/pages/AboutPage";
+import { PomodoroPage } from "@/pages/PomodoroPage";
+import { TodoPage } from "@/pages/TodoPage";
 import { api } from "@/lib/api";
+import { playNotificationSound } from "@/lib/sound";
 import type { ReminderEvent, Settings } from "@/types";
 
 const EYE_CARE_REMINDER_LABEL = "eye-care-reminder";
@@ -55,6 +58,12 @@ function MainApp() {
         return;
       }
 
+      if (e.payload.type === "pomodoro_phase_end") {
+        api.getSettings().then((s) => {
+          if (s.sound_enabled) playNotificationSound();
+        });
+      }
+
       setReminder(e.payload);
     });
 
@@ -82,6 +91,8 @@ function MainApp() {
         <Routes>
           <Route element={<AppLayout />}>
             <Route index element={<HomePage />} />
+            <Route path="pomodoro" element={<PomodoroPage />} />
+            <Route path="todos" element={<TodoPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="about" element={<AboutPage />} />

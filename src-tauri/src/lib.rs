@@ -1,8 +1,9 @@
 mod commands;
 mod db;
 mod platform;
+mod pomodoro;
 
-use db::{db_path, init_db, AppState, TrackerState};
+use db::{db_path, init_db, AppState, PomodoroRuntime, TrackerState};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::{
@@ -29,6 +30,7 @@ pub fn run() {
             let state = AppState {
                 db: Arc::new(Mutex::new(conn)),
                 tracker: Arc::new(Mutex::new(TrackerState::default())),
+                pomodoro: Arc::new(Mutex::new(PomodoroRuntime::default())),
             };
             commands::start_tracker(app.handle().clone(), state.clone());
             app.manage(state);
@@ -63,11 +65,22 @@ pub fn run() {
             commands::get_app_limits,
             commands::set_app_limit,
             commands::remove_app_limit,
+            commands::get_todos,
+            commands::add_todo,
+            commands::update_todo_title,
+            commands::set_todo_completed,
+            commands::delete_todo,
+            commands::clear_completed_todos,
             commands::get_known_apps,
             commands::export_report,
             commands::complete_onboarding,
             commands::quit_app,
             commands::show_window,
+            commands::get_pomodoro_state,
+            commands::start_pomodoro,
+            commands::pause_pomodoro,
+            commands::stop_pomodoro,
+            commands::skip_pomodoro_phase,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

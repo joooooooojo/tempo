@@ -4,7 +4,9 @@ import type {
   AppUsage,
   DashboardData,
   DailyReport,
+  PomodoroState,
   Settings,
+  TodoItem,
   WeeklyReport,
 } from "@/types";
 
@@ -26,9 +28,22 @@ export const api = {
     invoke<void>("set_app_limit", { appName, limitSeconds }),
   removeAppLimit: (appName: string) =>
     invoke<void>("remove_app_limit", { appName }),
+  getTodos: () => invoke<TodoItem[]>("get_todos"),
+  addTodo: (title: string) => invoke<TodoItem>("add_todo", { title }),
+  updateTodoTitle: (id: number, title: string) =>
+    invoke<TodoItem>("update_todo_title", { id, title }),
+  setTodoCompleted: (id: number, completed: boolean) =>
+    invoke<TodoItem>("set_todo_completed", { id, completed }),
+  deleteTodo: (id: number) => invoke<void>("delete_todo", { id }),
+  clearCompletedTodos: () => invoke<number>("clear_completed_todos"),
   getKnownApps: () => invoke<AppUsage[]>("get_known_apps"),
   exportReport: (path: string) => invoke<void>("export_report", { path }),
   completeOnboarding: () => invoke<void>("complete_onboarding"),
   quitApp: () => invoke<void>("quit_app"),
   showWindow: () => invoke<void>("show_window"),
+  getPomodoroState: () => invoke<PomodoroState>("get_pomodoro_state"),
+  startPomodoro: () => invoke<PomodoroState>("start_pomodoro"),
+  pausePomodoro: () => invoke<PomodoroState>("pause_pomodoro"),
+  stopPomodoro: () => invoke<PomodoroState>("stop_pomodoro"),
+  skipPomodoroPhase: () => invoke<PomodoroState>("skip_pomodoro_phase"),
 };

@@ -1,12 +1,12 @@
 use crate::db::{
     add_app_time, add_screen_time, cleanup_old_data, get_daily_total, is_blocked, load_settings,
-    today_str, AppLimit, AppState, AppUsage, DailyReport, DashboardData, HourlyData, Settings,
-    WeeklyDay, WeeklyReport,
+    today_str, AppLimit, AppState, AppUsage, DailyReport, DashboardData, HourlyData, PomodoroState,
+    Settings, TodoItem, WeeklyDay, WeeklyReport,
 };
 use crate::platform::{get_foreground_app, should_count_screen_time, should_count_time};
 use base64::Engine as _;
 use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
-use rusqlite::params;
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
@@ -88,6 +88,7 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
             }
 
             check_reminders(&app, &state);
+            crate::pomodoro::tick_pomodoro(&app, &state, elapsed_seconds);
         }
     });
 }
@@ -490,6 +491,30 @@ pub fn update_settings(
     if let Some(v) = settings.get("night_reminder_end").and_then(|v| v.as_str()) {
         current.night_reminder_end = v.into();
     }
+    if let Some(v) = settings
+        .get("pomodoro_work_minutes")
+        .and_then(|v| v.as_u64())
+    {
+        current.pomodoro_work_minutes = v as u32;
+    }
+    if let Some(v) = settings
+        .get("pomodoro_short_break_minutes")
+        .and_then(|v| v.as_u64())
+    {
+        current.pomodoro_short_break_minutes = v as u32;
+    }
+    if let Some(v) = settings
+        .get("pomodoro_long_break_minutes")
+        .and_then(|v| v.as_u64())
+    {
+        current.pomodoro_long_break_minutes = v as u32;
+    }
+    if let Some(v) = settings
+        .get("pomodoro_sessions_per_cycle")
+        .and_then(|v| v.as_u64())
+    {
+        current.pomodoro_sessions_per_cycle = v as u32;
+    }
 
     let conn = state.db.lock();
     crate::db::save_settings(&conn, &current);
@@ -599,6 +624,102 @@ pub fn remove_app_limit(state: tauri::State<AppState>, app_name: String) {
 }
 
 #[tauri::command]
+pub fn get_todos(state: tauri::State<AppState>) -> Result<Vec<TodoItem>, String> {
+    let conn = state.db.lock();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, title, completed, created_at, completed_at
+             FROM todos
+             ORDER BY completed ASC,
+               datetime(COALESCE(completed_at, created_at)) DESC,
+               id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], todo_from_row)
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_todo(state: tauri::State<AppState>, title: String) -> Result<TodoItem, String> {
+    let title = normalize_todo_title(title)?;
+    let created_at = Local::now().to_rfc3339();
+    let conn = state.db.lock();
+    conn.execute(
+        "INSERT INTO todos (title, completed, created_at) VALUES (?1, 0, ?2)",
+        params![title, created_at],
+    )
+    .map_err(|e| e.to_string())?;
+
+    fetch_todo(&conn, conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn update_todo_title(
+    state: tauri::State<AppState>,
+    id: i64,
+    title: String,
+) -> Result<TodoItem, String> {
+    let title = normalize_todo_title(title)?;
+    let conn = state.db.lock();
+    let _existing = fetch_todo(&conn, id)?;
+
+    conn.execute(
+        "UPDATE todos SET title = ?1 WHERE id = ?2",
+        params![title, id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    fetch_todo(&conn, id)
+}
+
+#[tauri::command]
+pub fn set_todo_completed(
+    state: tauri::State<AppState>,
+    id: i64,
+    completed: bool,
+) -> Result<TodoItem, String> {
+    let completed_at = completed.then(|| Local::now().to_rfc3339());
+    let conn = state.db.lock();
+    conn.execute(
+        "UPDATE todos SET completed = ?1, completed_at = ?2 WHERE id = ?3",
+        params![if completed { 1 } else { 0 }, completed_at, id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    if conn.changes() == 0 {
+        return Err("待办不存在".into());
+    }
+
+    fetch_todo(&conn, id)
+}
+
+#[tauri::command]
+pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db.lock();
+    conn.execute("DELETE FROM todos WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+
+    if conn.changes() == 0 {
+        return Err("待办不存在".into());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_completed_todos(state: tauri::State<AppState>) -> Result<u64, String> {
+    let conn = state.db.lock();
+    conn.execute("DELETE FROM todos WHERE completed = 1", [])
+        .map_err(|e| e.to_string())?;
+    Ok(conn.changes())
+}
+
+#[tauri::command]
 pub fn get_known_apps(state: tauri::State<AppState>) -> Vec<AppUsage> {
     let today = today_str();
     let mut apps = {
@@ -681,4 +802,75 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_pomodoro_state(state: tauri::State<AppState>) -> PomodoroState {
+    crate::pomodoro::pomodoro_state_snapshot(&state)
+}
+
+#[tauri::command]
+pub fn start_pomodoro(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<PomodoroState, String> {
+    let snapshot = crate::pomodoro::start_pomodoro(&state)?;
+    crate::pomodoro::push_pomodoro_update(&app, &state);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn pause_pomodoro(app: AppHandle, state: tauri::State<AppState>) -> PomodoroState {
+    let snapshot = crate::pomodoro::pause_pomodoro(&state);
+    crate::pomodoro::push_pomodoro_update(&app, &state);
+    snapshot
+}
+
+#[tauri::command]
+pub fn stop_pomodoro(app: AppHandle, state: tauri::State<AppState>) -> PomodoroState {
+    let snapshot = crate::pomodoro::stop_pomodoro(&state);
+    crate::pomodoro::push_pomodoro_update(&app, &state);
+    snapshot
+}
+
+#[tauri::command]
+pub fn skip_pomodoro_phase(app: AppHandle, state: tauri::State<AppState>) -> PomodoroState {
+    crate::pomodoro::skip_pomodoro_phase(&app, &state)
+}
+
+fn normalize_todo_title(title: String) -> Result<String, String> {
+    let normalized = title.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if normalized.is_empty() {
+        return Err("请输入待办内容".into());
+    }
+
+    if normalized.chars().count() > 120 {
+        return Err("待办内容不能超过 120 个字".into());
+    }
+
+    Ok(normalized)
+}
+
+fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
+    conn.query_row(
+        "SELECT id, title, completed, created_at, completed_at
+         FROM todos
+         WHERE id = ?1",
+        [id],
+        todo_from_row,
+    )
+    .optional()
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "待办不存在".into())
+}
+
+fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
+    Ok(TodoItem {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        completed: row.get::<_, i64>(2)? != 0,
+        created_at: row.get(3)?,
+        completed_at: row.get(4)?,
+    })
 }

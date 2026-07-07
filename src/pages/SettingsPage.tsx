@@ -99,6 +99,37 @@ export function SettingsPage() {
         </Card>
       </Section>
 
+      <Section title="番茄钟">
+        <Card className="overflow-hidden">
+          <div className="space-y-4 px-4 py-4">
+            <div>
+              <Label className="text-[13px]">专注时长 · {settings.pomodoro_work_minutes} 分钟</Label>
+              <Slider className="mt-3" min={5} max={60} step={5}
+                value={[settings.pomodoro_work_minutes]}
+                onValueChange={([v]) => update({ pomodoro_work_minutes: v })} />
+            </div>
+            <div>
+              <Label className="text-[13px]">短休时长 · {settings.pomodoro_short_break_minutes} 分钟</Label>
+              <Slider className="mt-3" min={1} max={15} step={1}
+                value={[settings.pomodoro_short_break_minutes]}
+                onValueChange={([v]) => update({ pomodoro_short_break_minutes: v })} />
+            </div>
+            <div>
+              <Label className="text-[13px]">长休时长 · {settings.pomodoro_long_break_minutes} 分钟</Label>
+              <Slider className="mt-3" min={5} max={30} step={5}
+                value={[settings.pomodoro_long_break_minutes]}
+                onValueChange={([v]) => update({ pomodoro_long_break_minutes: v })} />
+            </div>
+            <div>
+              <Label className="text-[13px]">长休间隔 · 每 {settings.pomodoro_sessions_per_cycle} 轮专注</Label>
+              <Slider className="mt-3" min={2} max={8} step={1}
+                value={[settings.pomodoro_sessions_per_cycle]}
+                onValueChange={([v]) => update({ pomodoro_sessions_per_cycle: v })} />
+            </div>
+          </div>
+        </Card>
+      </Section>
+
       <Section title="夜间提醒">
         <Card className="overflow-hidden">
           <Row label="启用">

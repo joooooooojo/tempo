@@ -50,6 +50,14 @@ export interface AppLimit {
   limit_sent: boolean;
 }
 
+export interface TodoItem {
+  id: number;
+  title: string;
+  completed: boolean;
+  created_at: string;
+  completed_at?: string | null;
+}
+
 export interface Settings {
   autostart: boolean;
   sound_enabled: boolean;
@@ -60,10 +68,24 @@ export interface Settings {
   night_reminder_start: string;
   night_reminder_end: string;
   onboarding_completed: boolean;
+  pomodoro_work_minutes: number;
+  pomodoro_short_break_minutes: number;
+  pomodoro_long_break_minutes: number;
+  pomodoro_sessions_per_cycle: number;
+}
+
+export interface PomodoroState {
+  status: "idle" | "running" | "paused";
+  phase: "work" | "short_break" | "long_break";
+  remaining_seconds: number;
+  phase_total_seconds: number;
+  sessions_today: number;
+  cycle_count: number;
 }
 
 export type ReminderEvent =
   | { type: "eye_care" }
   | { type: "night" }
   | { type: "app_limit_warn"; app_name: string; percent: number }
-  | { type: "app_limit_reached"; app_name: string };
+  | { type: "app_limit_reached"; app_name: string }
+  | { type: "pomodoro_phase_end"; phase: "work" | "short_break" | "long_break"; skipped: boolean };
