@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
@@ -8,6 +8,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <title>时窗</title>
+    <script>
+      (function () {
+        var view = new URLSearchParams(location.search).get("view");
+        if (!view) {
+          document.documentElement.classList.add("dark");
+          return;
+        }
+        if (view === "quick-todo") {
+          document.documentElement.style.background = "transparent";
+        } else if (view === "eye-care") {
+          document.documentElement.style.background = "#effbf4";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

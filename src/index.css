@@ -195,19 +195,45 @@ body {
     0 18px 52px rgba(0, 0, 0, 0.46);
 }
 
+html.quick-todo-window,
+html.quick-todo-window body,
+html.quick-todo-window #root {
+  background: transparent !important;
+  overflow: visible;
+}
+
 .quick-todo-page {
-  background: hsl(var(--background));
-  overflow: hidden;
+  display: flex;
+  min-height: 100vh;
+  height: 100vh;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  overflow: visible;
 }
 
 .quick-todo-panel {
+  --todo-field-bg: rgba(255, 255, 255, 0.74);
+  width: 420px;
+  height: 80px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 12px;
   background: hsl(var(--background));
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  box-shadow:
+    0 0 0 0.5px rgba(15, 23, 42, 0.06),
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 10px rgba(15, 23, 42, 0.06),
+    0 14px 32px rgba(15, 23, 42, 0.14);
 }
 
 .dark .quick-todo-panel {
-  background: hsl(var(--background));
+  --todo-field-bg: rgba(255, 255, 255, 0.045);
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.08),
+    0 2px 6px rgba(0, 0, 0, 0.22),
+    0 10px 24px rgba(0, 0, 0, 0.28),
+    0 20px 44px rgba(0, 0, 0, 0.42);
 }
 
 .github-markdown {
@@ -623,12 +649,29 @@ body {
   transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
-.eye-care-screen {
+html.eye-care-window,
+html.eye-care-window body,
+html.eye-care-window #root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #effbf4;
+}
+
+html.dark.eye-care-window,
+html.dark.eye-care-window body,
+html.dark.eye-care-window #root {
+  background: hsl(160 25% 8%);
+}
+
+.eye-care-screen,
+.eye-care-overlay {
   position: relative;
   isolation: isolate;
 }
 
-.eye-care-screen::before {
+.eye-care-screen::before,
+.eye-care-overlay::before {
   content: "";
   position: absolute;
   inset: -12%;
@@ -640,13 +683,15 @@ body {
   transform: scale(0.94);
 }
 
-.dark .eye-care-screen::before {
+.dark .eye-care-screen::before,
+.dark .eye-care-overlay::before {
   background:
     radial-gradient(circle at 50% 44%, rgba(52, 211, 153, 0.16), transparent 28%),
     radial-gradient(circle at 50% 52%, rgba(20, 184, 166, 0.12), transparent 42%);
 }
 
-.eye-care-screen.is-revealed::before {
+.eye-care-screen.is-revealed::before,
+.eye-care-overlay.is-revealed::before {
   animation: eye-care-aura 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -658,23 +703,28 @@ body {
   opacity: 0;
 }
 
-.eye-care-screen.is-revealed .eye-care-content {
+.eye-care-screen.is-revealed .eye-care-content,
+.eye-care-overlay.is-revealed .eye-care-content {
   animation: eye-care-content-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.eye-care-screen.is-revealed .eye-care-icon {
+.eye-care-screen.is-revealed .eye-care-icon,
+.eye-care-overlay.is-revealed .eye-care-icon {
   animation: eye-care-pop 520ms cubic-bezier(0.22, 1, 0.36, 1) 70ms both;
 }
 
-.eye-care-screen.is-revealed .eye-care-title {
+.eye-care-screen.is-revealed .eye-care-title,
+.eye-care-overlay.is-revealed .eye-care-title {
   animation: eye-care-rise 360ms cubic-bezier(0.22, 1, 0.36, 1) 150ms both;
 }
 
-.eye-care-screen.is-revealed .eye-care-copy {
+.eye-care-screen.is-revealed .eye-care-copy,
+.eye-care-overlay.is-revealed .eye-care-copy {
   animation: eye-care-rise 360ms cubic-bezier(0.22, 1, 0.36, 1) 210ms both;
 }
 
-.eye-care-screen.is-revealed .eye-care-hint {
+.eye-care-screen.is-revealed .eye-care-hint,
+.eye-care-overlay.is-revealed .eye-care-hint {
   animation: eye-care-rise 360ms cubic-bezier(0.22, 1, 0.36, 1) 310ms both;
 }
 

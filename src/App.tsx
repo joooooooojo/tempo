@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { invoke } from "@tauri-apps/api/core";
 import { Toaster, toast } from "sonner";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
@@ -16,8 +16,6 @@ import { api } from "@/lib/api";
 import { playNotificationSound } from "@/lib/sound";
 import { appToastOptions } from "@/lib/toastOptions";
 import type { ReminderEvent, Settings } from "@/types";
-
-const EYE_CARE_REMINDER_LABEL = "eye-care-reminder";
 
 function App() {
   const view = new URLSearchParams(window.location.search).get("view");
@@ -109,34 +107,11 @@ function MainApp() {
 }
 
 async function openEyeCareReminderWindow() {
-  const existing = await WebviewWindow.getByLabel(EYE_CARE_REMINDER_LABEL);
-  if (existing) {
-    const isVisible = await existing.isVisible().catch(() => false);
-    if (isVisible) {
-      await existing.setFocus();
-    }
-    return;
+  try {
+    await invoke("show_eye_care_overlay");
+  } catch (error) {
+    console.error("Failed to open eye-care overlay", error);
   }
-
-  const reminderWindow = new WebviewWindow(EYE_CARE_REMINDER_LABEL, {
-    url: "/?view=eye-care",
-    title: "护眼提醒",
-    fullscreen: true,
-    decorations: false,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    focus: false,
-    visible: false,
-    visibleOnAllWorkspaces: true,
-    backgroundColor: "#effbf4",
-  });
-
-  reminderWindow.once("tauri://error", (event) => {
-    console.error("Failed to create eye-care reminder window", event.payload);
-  });
 }
 
 export default App;

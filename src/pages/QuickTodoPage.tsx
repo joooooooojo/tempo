@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "@/lib/api";
@@ -9,30 +9,70 @@ export function QuickTodoPage() {
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const savingRef = useRef(false);
+
+  const focusTitleInput = useCallback(() => {
+    setTitle("");
+    setSaving(false);
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  }, []);
+
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
+    const root = document.documentElement;
+    root.classList.add("quick-todo-window");
+    document.body.classList.add("quick-todo-window");
     document.body.style.overflow = "hidden";
-    api.getSettings().then((settings) => {
-      const root = document.documentElement;
-      if (settings.theme === "dark") root.classList.add("dark");
-      else if (settings.theme === "light") root.classList.remove("dark");
-      else {
-        root.classList.toggle("dark", window.matchMedia("(prefers-color-scheme: dark)").matches);
-      }
-    });
+    void applyThemeFromSettings();
 
     return () => {
+      root.classList.remove("quick-todo-window");
+      document.body.classList.remove("quick-todo-window");
       document.body.style.overflow = previousBodyOverflow;
     };
   }, []);
 
   useEffect(() => {
-    focusTitleInput();
-    const unlisten = listen("quick-todo:focus-title", focusTitleInput);
-    return () => {
-      unlisten.then((fn) => fn());
+    savingRef.current = saving;
+  }, [saving]);
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let armed = false;
+    let armTimer = 0;
+
+    const armBlurClose = () => {
+      window.clearTimeout(armTimer);
+      armTimer = window.setTimeout(() => {
+        armed = true;
+      }, 200);
     };
-  }, []);
+
+    const unlistenFocus = listen("quick-todo:focus-title", () => {
+      focusTitleInput();
+      armBlurClose();
+    });
+
+    let unlistenBlur: (() => void) | undefined;
+    void appWindow
+      .onFocusChanged(({ payload: focused }) => {
+        if (!focused && armed && !savingRef.current) {
+          void hideWindow();
+        }
+      })
+      .then((fn) => {
+        unlistenBlur = fn;
+      });
+
+    return () => {
+      window.clearTimeout(armTimer);
+      void unlistenFocus.then((fn) => fn());
+      unlistenBlur?.();
+    };
+  }, [focusTitleInput]);
 
   const submit = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -47,26 +87,27 @@ export function QuickTodoPage() {
     try {
       const created = await api.addTodo(nextTitle, "", null);
       await emit<TodoItem>("todo-created", created);
-      window.setTimeout(() => void closeWindow(), 100);
-    } catch (error) {
+      window.setTimeout(() => void hideWindow(), 100);
+    } catch {
       setSaving(false);
     }
   };
 
   const close = () => {
-    if (!saving) void closeWindow();
-  };
-
-  const focusTitleInput = () => {
-    window.requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
+    if (!saving) void hideWindow();
   };
 
   return (
-    <div className="quick-todo-page text-foreground">
-        <form className="flex min-h-0 flex-1 items-center px-4 py-4" onSubmit={submit}>
+    <div
+      className="quick-todo-page"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !saving) {
+          void hideWindow();
+        }
+      }}
+    >
+      <div className="quick-todo-panel text-foreground">
+        <form className="flex h-full items-center px-4" onSubmit={submit}>
           <input
             ref={inputRef}
             value={title}
@@ -83,10 +124,22 @@ export function QuickTodoPage() {
             }}
           />
         </form>
+      </div>
     </div>
   );
 }
 
-async function closeWindow() {
-  await getCurrentWindow().close();
+async function applyThemeFromSettings() {
+  const settings = await api.getSettings();
+  const root = document.documentElement;
+
+  if (settings.theme === "dark") root.classList.add("dark");
+  else if (settings.theme === "light") root.classList.remove("dark");
+  else {
+    root.classList.toggle("dark", window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+}
+
+async function hideWindow() {
+  await getCurrentWindow().hide();
 }

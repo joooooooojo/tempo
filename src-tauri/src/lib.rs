@@ -5,6 +5,7 @@ mod pomodoro;
 
 #[cfg(target_os = "macos")]
 mod macos_dock;
+mod auxiliary_windows;
 
 #[cfg(target_os = "macos")]
 #[macro_use]
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -34,7 +35,7 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        if let Err(error) = show_quick_todo_window(app) {
+                        if let Err(error) = auxiliary_windows::show_quick_todo(app) {
                             let _ = app.emit(
                                 "toast",
                                 serde_json::json!({
@@ -63,6 +64,7 @@ pub fn run() {
 
             setup_tray(app)?;
             register_quick_todo_shortcut(app.handle());
+            auxiliary_windows::precache_auxiliary_windows(app.handle())?;
 
             #[cfg(target_os = "macos")]
             {
@@ -126,6 +128,8 @@ pub fn run() {
             commands::pause_pomodoro,
             commands::stop_pomodoro,
             commands::skip_pomodoro_phase,
+            auxiliary_windows::show_eye_care_overlay,
+            auxiliary_windows::hide_eye_care_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -199,39 +203,5 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         inner.set_show_menu_on_right_click(!cfg!(target_os = "macos"));
     })?;
 
-    Ok(())
-}
-
-fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
-    const QUICK_TODO_WIDTH: f64 = 420.0;
-    const QUICK_TODO_HEIGHT: f64 = 80.0;
-
-    if let Some(window) = app.get_webview_window("quick-todo") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_always_on_top(true);
-        let _ = window.set_shadow(true);
-        let _ = window.set_focus();
-        let _ = window.emit("quick-todo:focus-title", ());
-        return Ok(());
-    }
-
-    let window = WebviewWindowBuilder::new(
-        app,
-        "quick-todo",
-        WebviewUrl::App("/?view=quick-todo".into()),
-    )
-    .title("快速待办")
-    .inner_size(QUICK_TODO_WIDTH, QUICK_TODO_HEIGHT)
-    .resizable(false)
-    .decorations(false)
-    .shadow(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .center()
-    .focused(true)
-    .build()?;
-
-    window.set_focus()?;
     Ok(())
 }

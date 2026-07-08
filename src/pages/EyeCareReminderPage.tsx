@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Eye } from "lucide-react";
 import { api } from "@/lib/api";
@@ -7,57 +9,59 @@ import type { Settings } from "@/types";
 
 export function EyeCareReminderPage() {
   const rootRef = useRef<HTMLDivElement>(null);
-  const closingRef = useRef(false);
+  const hidingRef = useRef(false);
   const [revealed, setRevealed] = useState(false);
 
-  const closeReminder = useCallback(() => {
-    if (closingRef.current) return;
-    closingRef.current = true;
+  const revealOverlay = useCallback(() => {
+    setRevealed(true);
+    window.requestAnimationFrame(() => {
+      rootRef.current?.focus();
+    });
+  }, []);
 
-    getCurrentWindow()
-      .close()
+  const hideOverlay = useCallback(() => {
+    if (hidingRef.current) return;
+    hidingRef.current = true;
+    setRevealed(false);
+
+    invoke("hide_eye_care_overlay")
       .catch((error) => {
-        closingRef.current = false;
-        console.error("Failed to close eye-care reminder window", error);
+        console.error("Failed to hide eye-care overlay", error);
+      })
+      .finally(() => {
+        hidingRef.current = false;
       });
   }, []);
 
   useEffect(() => {
-    const appWindow = getCurrentWindow();
-    let cancelled = false;
+    const root = document.documentElement;
+    root.classList.add("eye-care-window");
+    document.body.classList.add("eye-care-window");
+    void applyThemeFromSettings();
 
-    const revealWhenReady = async () => {
-      try {
-        const settings = await api.getSettings();
-        applyTheme(settings.theme);
-      } catch {
-        applyTheme("system");
-      }
+    const unlistenReveal = listen("eye-care:reveal", () => {
+      setRevealed(false);
+      window.requestAnimationFrame(() => {
+        revealOverlay();
+      });
+    });
 
-      await document.fonts?.ready.catch(() => undefined);
-      await delay(50);
+    void getCurrentWindow()
+      .isVisible()
+      .then((visible) => {
+        if (visible) revealOverlay();
+      });
 
-      if (cancelled) return;
-
-      await appWindow.show();
-      await appWindow.setFocus();
-      rootRef.current?.focus();
-      await delay(35);
-
-      if (!cancelled) {
-        setRevealed(true);
-      }
-    };
-
-    const handleKeyDown = () => closeReminder();
+    const handleKeyDown = () => hideOverlay();
     window.addEventListener("keydown", handleKeyDown);
-    void revealWhenReady().catch(console.error);
 
     return () => {
-      cancelled = true;
+      root.classList.remove("eye-care-window");
+      document.body.classList.remove("eye-care-window");
+      void unlistenReveal.then((fn) => fn());
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [closeReminder]);
+  }, [hideOverlay, revealOverlay]);
 
   return (
     <main
@@ -66,10 +70,10 @@ export function EyeCareReminderPage() {
       role="dialog"
       aria-label="护眼提醒"
       className={cn(
-        "eye-care-screen flex min-h-screen cursor-pointer items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,hsl(143_58%_96%),hsl(154_40%_90%))] px-8 text-emerald-950 outline-none transition-[filter] duration-300 dark:bg-[radial-gradient(circle_at_center,hsl(164_22%_15%),hsl(160_25%_8%))] dark:text-emerald-50",
+        "eye-care-overlay flex h-screen w-screen cursor-pointer items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,hsl(143_58%_96%),hsl(154_40%_90%))] px-8 text-emerald-950 outline-none transition-[filter] duration-300 dark:bg-[radial-gradient(circle_at_center,hsl(164_22%_15%),hsl(160_25%_8%))] dark:text-emerald-50",
         revealed ? "is-revealed" : "brightness-[0.96]"
       )}
-      onPointerDown={closeReminder}
+      onPointerDown={hideOverlay}
     >
       <section className="eye-care-content pointer-events-none flex max-w-xl flex-col items-center text-center">
         <div className="eye-care-icon flex h-[72px] w-[72px] items-center justify-center rounded-xl bg-white/70 text-emerald-600 shadow-[0_18px_45px_rgba(16,185,129,0.18)] ring-1 ring-emerald-900/5 dark:bg-white/8 dark:text-emerald-200 dark:ring-white/10">
@@ -92,6 +96,15 @@ export function EyeCareReminderPage() {
   );
 }
 
+async function applyThemeFromSettings() {
+  try {
+    const settings = await api.getSettings();
+    applyTheme(settings.theme);
+  } catch {
+    applyTheme("system");
+  }
+}
+
 function applyTheme(theme: Settings["theme"]) {
   const root = document.documentElement;
 
@@ -106,10 +119,4 @@ function applyTheme(theme: Settings["theme"]) {
   }
 
   root.classList.toggle("dark", window.matchMedia("(prefers-color-scheme: dark)").matches);
-}
-
-function delay(ms: number) {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
 }
