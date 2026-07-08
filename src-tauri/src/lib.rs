@@ -176,7 +176,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     const QUICK_TODO_WIDTH: f64 = 520.0;
-    const QUICK_TODO_HEIGHT: f64 = 500.0;
+    const QUICK_TODO_HEIGHT: f64 = 560.0;
 
     if let Some(window) = app.get_webview_window("quick-todo") {
         let _ = window.show();

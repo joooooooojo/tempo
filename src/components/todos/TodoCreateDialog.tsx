@@ -45,6 +45,7 @@ type TodoCreateDialogProps = {
 type TodoCreateFormPanelProps = Omit<TodoCreateDialogProps, "open" | "onOpenChange"> & {
   titleElement?: ReactNode;
   cancelElement?: ReactNode;
+  layout?: "dialog" | "window";
   onCancel?: () => void;
 };
 
@@ -109,12 +110,15 @@ export function TodoCreateFormPanel({
   submitLabel = "创建",
   titleElement,
   cancelElement,
+  layout = "dialog",
   onCancel,
   onTitleChange,
   onDueAtChange,
   onDeleteImage,
   onSubmit,
 }: TodoCreateFormPanelProps) {
+  const isWindowLayout = layout === "window";
+
   return (
     <>
       <DialogHeader className="relative border-b border-border/60 px-5 py-4 pr-12">
@@ -130,8 +134,14 @@ export function TodoCreateFormPanel({
           </button>
         )}
       </DialogHeader>
-      <form className="contents" onSubmit={onSubmit}>
-        <div className="space-y-4 px-5 pb-4 pt-5">
+      <form className={cn(isWindowLayout ? "flex min-h-0 flex-1 flex-col" : "contents")} onSubmit={onSubmit}>
+        <div
+          className={cn(
+            isWindowLayout
+              ? "flex min-h-0 flex-1 flex-col gap-3.5 px-5 pb-4 pt-5"
+              : "space-y-4 px-5 pb-4 pt-5"
+          )}
+        >
           <div>
             <DueDateField
               value={dueAt}
@@ -142,7 +152,7 @@ export function TodoCreateFormPanel({
             />
           </div>
 
-          <div>
+          <div className={cn(isWindowLayout && "shrink-0")}>
             <FloatingTextarea
               id="new-todo-title"
               autoFocus
@@ -153,11 +163,16 @@ export function TodoCreateFormPanel({
             />
           </div>
 
-          <div>
+          <div className={cn(isWindowLayout && "min-h-0 flex-1")}>
             {images.length > 0 ? (
               <ImageStrip images={images} onDelete={onDeleteImage} />
             ) : (
-              <div className="flex h-14 items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-background/46 text-muted-foreground">
+              <div
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-background/46 text-muted-foreground",
+                  isWindowLayout ? "h-full min-h-18" : "h-14"
+                )}
+              >
                 <ImagePlus className="h-4 w-4" />
                 <span className="text-[13px]">暂无图片</span>
               </div>
@@ -165,7 +180,7 @@ export function TodoCreateFormPanel({
           </div>
         </div>
 
-        <DialogFooter className="gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
+        <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
           {cancelElement ?? (
             <Button type="button" variant="outline" className="h-9 min-w-20" onClick={onCancel}>
               取消

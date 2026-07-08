@@ -117,8 +117,9 @@ export function QuickTodoPage() {
 
   return (
     <div className="quick-todo-page min-h-screen bg-transparent text-foreground">
-      <div className="todo-create-dialog quick-todo-panel min-h-screen w-screen overflow-hidden rounded-xl border border-border/80">
+      <div className="todo-create-dialog quick-todo-panel flex min-h-screen w-screen flex-col overflow-visible border border-border/80">
         <TodoCreateFormPanel
+          layout="window"
           heading="快速新建待办"
           todoTitle={title}
           dueAt={dueAt}
