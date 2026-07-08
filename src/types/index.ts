@@ -6,15 +6,6 @@ export interface AppUsage {
   icon_data_url?: string | null;
 }
 
-export interface DashboardData {
-  today_screen_seconds: number;
-  week_screen_seconds: number;
-  month_screen_seconds: number;
-  top_apps: AppUsage[];
-  continuous_screen_seconds: number;
-  status_message: string;
-}
-
 export interface HourlyData {
   hour: number;
   seconds: number;

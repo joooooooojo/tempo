@@ -84,7 +84,6 @@ function MainApp() {
           <Route element={<AppLayout />}>
             <Route index element={<TodoPage />} />
             <Route path="pomodoro" element={<PomodoroPage />} />
-            <Route path="todos" element={<TodoPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

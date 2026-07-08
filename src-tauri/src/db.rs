@@ -19,16 +19,6 @@ pub struct AppUsage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DashboardData {
-    pub today_screen_seconds: i64,
-    pub week_screen_seconds: i64,
-    pub month_screen_seconds: i64,
-    pub top_apps: Vec<AppUsage>,
-    pub continuous_screen_seconds: i64,
-    pub status_message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HourlyData {
     pub hour: u32,
     pub seconds: i64,
@@ -570,23 +560,6 @@ pub fn is_blocked(conn: &Connection, name: &str) -> bool {
         |_| Ok(()),
     )
     .is_ok()
-}
-
-pub fn sum_range(conn: &Connection, days: i64) -> i64 {
-    let today = Local::now().date_naive();
-    let start = today - chrono::Duration::days(days - 1);
-    conn.query_row(
-        "SELECT COALESCE(SUM(CASE WHEN total_seconds > ?3 THEN ?3 ELSE total_seconds END), 0)
-         FROM screen_time_daily
-         WHERE date >= ?1 AND date <= ?2",
-        params![
-            start.format("%Y-%m-%d").to_string(),
-            today.format("%Y-%m-%d").to_string(),
-            MAX_DAILY_SECONDS
-        ],
-        |r| r.get(0),
-    )
-    .unwrap_or(0)
 }
 
 pub fn top_apps(conn: &Connection, date: &str, limit: i64) -> Vec<AppUsage> {

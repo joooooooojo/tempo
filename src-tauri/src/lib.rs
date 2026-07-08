@@ -87,7 +87,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_dashboard,
             commands::get_daily_report,
             commands::get_weekly_report,
             commands::get_settings,
@@ -102,20 +101,16 @@ pub fn run() {
             commands::remove_app_limit,
             commands::get_todos,
             commands::add_todo,
-            commands::update_todo_title,
             commands::update_todo_details,
             commands::set_todo_completed,
             commands::set_todo_pinned,
-            commands::add_todo_image,
             commands::delete_todo_image,
             commands::add_todo_note,
             commands::delete_todo_note,
             commands::restore_todo_note,
             commands::delete_todo,
             commands::restore_todo,
-            commands::clear_completed_todos,
             commands::get_known_apps,
-            commands::export_report,
             commands::export_todos_backup,
             commands::import_todos_backup,
             commands::save_markdown_image,
@@ -150,9 +145,8 @@ fn register_quick_todo_shortcut(app: &tauri::AppHandle) {
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItem::with_id(app, "show", "打开首页", true, None::<&str>)?;
     let reset = MenuItem::with_id(app, "reset", "清空当日数据", true, None::<&str>)?;
-    let export = MenuItem::with_id(app, "export", "导出屏幕显示时间", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出软件", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &reset, &export, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &reset, &quit])?;
 
     let mut tray_builder = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().unwrap().clone())
@@ -168,13 +162,6 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     commands::do_reset_today(&state);
                     let _ = app.emit("toast", serde_json::json!({ "message": "今日数据已清空" }));
                 }
-            }
-            "export" => {
-                let _ = app.emit(
-                    "toast",
-                    serde_json::json!({ "message": "请在屏幕显示时间页面导出数据" }),
-                );
-                let _ = commands::show_window(app.clone());
             }
             "quit" => {
                 commands::quit_app(app.clone());

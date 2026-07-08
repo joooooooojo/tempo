@@ -1,6 +1,6 @@
 use crate::db::{
     add_app_time, add_screen_time, cleanup_old_data, get_daily_total, is_blocked, load_settings,
-    today_str, AppLimit, AppState, AppUsage, DailyReport, DashboardData, HourlyData, PomodoroState,
+    today_str, AppLimit, AppState, AppUsage, DailyReport, HourlyData, PomodoroState,
     Settings, TodoImage, TodoItem, TodoNote, TodoNoteImage, WeeklyDay, WeeklyReport,
     MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS,
 };
@@ -102,8 +102,6 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
                 tracker.continuous_seconds += elapsed_seconds;
             }
 
-            push_dashboard_event(&app, &state);
-
             if tick_count % 5 == 0 {
                 update_tray_tooltip(&app, &state);
             }
@@ -138,50 +136,6 @@ fn second_buckets(now: DateTime<Local>, seconds: i64) -> Vec<(String, u32, i64)>
     }
 
     buckets
-}
-
-fn push_dashboard_event(app: &AppHandle, state: &AppState) {
-    let Some(dashboard) = build_dashboard(state) else {
-        return;
-    };
-    let app_handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let _ = app_handle.emit("dashboard-update", dashboard);
-    });
-}
-
-fn build_dashboard(state: &AppState) -> Option<DashboardData> {
-    let continuous = state.tracker.lock().continuous_seconds;
-    let today = today_str();
-    let (today_secs, week_secs, month_secs, mut top_apps) = {
-        let conn = state.db.lock();
-        (
-            get_daily_total(&conn, &today),
-            crate::db::sum_range(&conn, 7),
-            crate::db::sum_range(&conn, 30),
-            crate::db::top_apps(&conn, &today, 10),
-        )
-    };
-    hydrate_app_icons(state, &today, &mut top_apps);
-
-    let status = if today_secs == 0 {
-        "今日尚未开始统计".into()
-    } else if today_secs > 8 * 3600 {
-        "今日使用时长较长，注意休息".into()
-    } else if today_secs > 4 * 3600 {
-        "使用时长适中".into()
-    } else {
-        "今日使用正常".into()
-    };
-
-    Some(DashboardData {
-        today_screen_seconds: today_secs,
-        week_screen_seconds: week_secs,
-        month_screen_seconds: month_secs,
-        top_apps,
-        continuous_screen_seconds: continuous,
-        status_message: status,
-    })
 }
 
 fn hydrate_app_icons(state: &AppState, date: &str, apps: &mut [AppUsage]) {
@@ -365,18 +319,6 @@ fn is_in_night_range(now: &str, start: &str, end: &str) -> bool {
     } else {
         now >= start || now <= end
     }
-}
-
-#[tauri::command]
-pub fn get_dashboard(state: tauri::State<AppState>) -> DashboardData {
-    build_dashboard(&state).unwrap_or(DashboardData {
-        today_screen_seconds: 0,
-        week_screen_seconds: 0,
-        month_screen_seconds: 0,
-        top_apps: vec![],
-        continuous_screen_seconds: 0,
-        status_message: "加载中".into(),
-    })
 }
 
 #[tauri::command]
@@ -709,7 +651,7 @@ pub fn add_todo(
 ) -> Result<TodoItem, String> {
     let images = normalize_todo_images(images)?;
     let content = normalize_todo_content(content.unwrap_or_default());
-    let title = normalize_todo_title(title, None, !images.is_empty())?;
+    let title = normalize_todo_title(title, !images.is_empty())?;
     let due_at = normalize_due_at(due_at)?;
     let created_at = Local::now().to_rfc3339();
     let conn = state.db.lock();
@@ -725,25 +667,6 @@ pub fn add_todo(
 }
 
 #[tauri::command]
-pub fn update_todo_title(
-    state: tauri::State<AppState>,
-    id: i64,
-    title: String,
-) -> Result<TodoItem, String> {
-    let title = normalize_todo_title(title, None, false)?;
-    let conn = state.db.lock();
-    let _existing = fetch_todo(&conn, id)?;
-
-    conn.execute(
-        "UPDATE todos SET title = ?1 WHERE id = ?2",
-        params![title, id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    fetch_todo(&conn, id)
-}
-
-#[tauri::command]
 pub fn update_todo_details(
     app: AppHandle,
     state: tauri::State<AppState>,
@@ -753,7 +676,7 @@ pub fn update_todo_details(
     due_at: Option<String>,
 ) -> Result<TodoItem, String> {
     let content = normalize_todo_content(content);
-    let title = normalize_todo_title(title, None, false)?;
+    let title = normalize_todo_title(title, false)?;
     let due_at = normalize_due_at(due_at)?;
     let conn = state.db.lock();
     let _existing = fetch_todo(&conn, id)?;
@@ -809,31 +732,6 @@ pub fn set_todo_pinned(
     }
 
     fetch_todo(&conn, id)
-}
-
-#[tauri::command]
-pub fn add_todo_image(
-    state: tauri::State<AppState>,
-    todo_id: i64,
-    image: TodoImageInput,
-) -> Result<TodoItem, String> {
-    let images = normalize_todo_images(Some(vec![image]))?;
-    let conn = state.db.lock();
-    let _existing = fetch_todo(&conn, todo_id)?;
-    let image_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM todo_images WHERE todo_id = ?1",
-            [todo_id],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    if image_count as usize + images.len() > MAX_TODO_IMAGES {
-        return Err(format!("每个待办最多添加 {} 张图片", MAX_TODO_IMAGES));
-    }
-
-    insert_todo_images(&conn, todo_id, &images)?;
-    fetch_todo(&conn, todo_id)
 }
 
 #[tauri::command]
@@ -1016,35 +914,6 @@ pub fn restore_todo(state: tauri::State<AppState>, todo: TodoItem) -> Result<Tod
     }
 
     fetch_todo(&conn, todo.id)
-}
-
-#[tauri::command]
-pub fn clear_completed_todos(state: tauri::State<AppState>) -> Result<u64, String> {
-    let conn = state.db.lock();
-    conn.execute(
-        "DELETE FROM todo_note_images WHERE note_id IN (
-            SELECT todo_notes.id
-            FROM todo_notes
-            INNER JOIN todos ON todos.id = todo_notes.todo_id
-            WHERE todos.completed = 1
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute(
-        "DELETE FROM todo_notes WHERE todo_id IN (SELECT id FROM todos WHERE completed = 1)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute(
-        "DELETE FROM todo_images WHERE todo_id IN (SELECT id FROM todos WHERE completed = 1)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM todos WHERE completed = 1", [])
-        .map_err(|e| e.to_string())?;
-    let changes = conn.changes();
-    Ok(changes)
 }
 
 #[tauri::command]
@@ -1636,59 +1505,6 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
-#[tauri::command]
-pub fn get_known_apps(state: tauri::State<AppState>) -> Vec<AppUsage> {
-    let today = today_str();
-    let mut apps = {
-        let conn = state.db.lock();
-        crate::db::top_apps(&conn, &today, 50)
-    };
-    hydrate_app_icons(&state, &today, &mut apps);
-    apps
-}
-
-#[tauri::command]
-pub fn export_report(state: tauri::State<AppState>, path: String) -> Result<(), String> {
-    let conn = state.db.lock();
-    let today = today_str();
-
-    let mut lines = vec!["日期,应用名称,耗时(秒),耗时(格式化)".to_string()];
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT date, app_name, process_name, seconds FROM app_usage
-             ORDER BY date DESC, seconds DESC",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
-
-    for row in rows.filter_map(|x| x.ok()) {
-        let (date, name, process, secs) = row;
-        if crate::db::is_system_host_usage(&name, &process) {
-            continue;
-        }
-        let formatted = format_duration(secs);
-        lines.push(format!("{},{},{},{}", date, name, secs, formatted));
-    }
-
-    let screen_total = get_daily_total(&conn, &today);
-    lines.push(String::new());
-    lines.push(format!("今日屏幕总时长(秒),{}", screen_total));
-
-    let content = "\u{FEFF}".to_string() + &lines.join("\n");
-    std::fs::write(&path, content).map_err(|e| e.to_string())
-}
-
 fn format_duration(seconds: i64) -> String {
     let h = seconds / 3600;
     let m = (seconds % 3600) / 60;
@@ -1698,6 +1514,17 @@ fn format_duration(seconds: i64) -> String {
     } else {
         format!("{}分钟{}秒", m, s)
     }
+}
+
+#[tauri::command]
+pub fn get_known_apps(state: tauri::State<AppState>) -> Vec<AppUsage> {
+    let today = today_str();
+    let mut apps = {
+        let conn = state.db.lock();
+        crate::db::top_apps(&conn, &today, 50)
+    };
+    hydrate_app_icons(&state, &today, &mut apps);
+    apps
 }
 
 #[tauri::command]
@@ -1782,11 +1609,7 @@ pub fn skip_pomodoro_phase(app: AppHandle, state: tauri::State<AppState>) -> Pom
     crate::pomodoro::skip_pomodoro_phase(&app, &state)
 }
 
-fn normalize_todo_title(
-    title: String,
-    content: Option<&str>,
-    allow_image_only: bool,
-) -> Result<String, String> {
+fn normalize_todo_title(title: String, allow_image_only: bool) -> Result<String, String> {
     let normalized = title
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -1795,9 +1618,6 @@ fn normalize_todo_title(
         .to_string();
 
     if normalized.is_empty() {
-        if let Some(derived) = content.and_then(derive_todo_title_from_content) {
-            return Ok(derived);
-        }
         if allow_image_only {
             return Ok("图片待办".into());
         }
@@ -1813,31 +1633,6 @@ fn normalize_todo_title(
 
 fn normalize_todo_content(content: String) -> String {
     content.replace("\r\n", "\n").replace('\r', "\n").trim().to_string()
-}
-
-fn derive_todo_title_from_content(content: &str) -> Option<String> {
-    let first_line = content.lines().find_map(|line| {
-        let cleaned = strip_markdown_for_title(line).trim().to_string();
-        (!cleaned.is_empty()).then_some(cleaned)
-    })?;
-
-    let chars = first_line.chars().collect::<Vec<_>>();
-    if chars.len() <= 120 {
-        Some(first_line)
-    } else {
-        Some(chars.into_iter().take(120).collect())
-    }
-}
-
-fn strip_markdown_for_title(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches('#')
-        .trim_start_matches(|ch: char| matches!(ch, '-' | '*' | '+' | '>'))
-        .replace("**", "")
-        .replace("__", "")
-        .replace('`', "")
-        .replace("![", "[")
 }
 
 fn normalize_due_at(due_at: Option<String>) -> Result<Option<String>, String> {
