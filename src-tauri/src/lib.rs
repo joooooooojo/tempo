@@ -176,13 +176,13 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     const QUICK_TODO_WIDTH: f64 = 520.0;
-    const QUICK_TODO_HEIGHT: f64 = 420.0;
+    const QUICK_TODO_HEIGHT: f64 = 500.0;
 
     if let Some(window) = app.get_webview_window("quick-todo") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_always_on_top(true);
-        let _ = window.set_shadow(false);
+        let _ = window.set_shadow(true);
         let _ = window.set_focus();
         let _ = window.emit("quick-todo:read-clipboard", ());
         return Ok(());
@@ -197,7 +197,8 @@ fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     .inner_size(QUICK_TODO_WIDTH, QUICK_TODO_HEIGHT)
     .resizable(false)
     .decorations(false)
-    .shadow(false)
+    .shadow(true)
+    .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
     .center()

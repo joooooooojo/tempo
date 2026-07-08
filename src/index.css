@@ -199,12 +199,6 @@ body {
   overflow: hidden;
 }
 
-.quick-todo-panel,
-.dark .quick-todo-panel {
-  border-radius: 0;
-  box-shadow: none;
-}
-
 .dark .glass-glow::before {
   background: conic-gradient(from 180deg, transparent, rgba(74, 222, 128, 0.04), transparent 30%);
 }
