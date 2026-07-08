@@ -198,7 +198,6 @@ fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     .resizable(false)
     .decorations(false)
     .shadow(true)
-    .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
     .center()

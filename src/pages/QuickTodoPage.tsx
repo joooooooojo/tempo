@@ -28,11 +28,7 @@ export function QuickTodoPage() {
   const readRequest = useRef(0);
 
   useEffect(() => {
-    const previousHtmlBackground = document.documentElement.style.background;
-    const previousBodyBackground = document.body.style.background;
     const previousBodyOverflow = document.body.style.overflow;
-    document.documentElement.style.background = "transparent";
-    document.body.style.background = "transparent";
     document.body.style.overflow = "hidden";
 
     api.getSettings().then((settings) => {
@@ -45,8 +41,6 @@ export function QuickTodoPage() {
     });
 
     return () => {
-      document.documentElement.style.background = previousHtmlBackground;
-      document.body.style.background = previousBodyBackground;
       document.body.style.overflow = previousBodyOverflow;
     };
   }, []);
@@ -116,7 +110,7 @@ export function QuickTodoPage() {
   };
 
   return (
-    <div className="quick-todo-page min-h-screen bg-transparent text-foreground">
+    <div className="quick-todo-page min-h-screen text-foreground">
       <div className="todo-create-dialog quick-todo-panel flex min-h-screen w-screen flex-col overflow-visible border border-border/80">
         <TodoCreateFormPanel
           layout="window"

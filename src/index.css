@@ -196,7 +196,18 @@ body {
 }
 
 .quick-todo-page {
+  background: hsl(var(--background));
   overflow: hidden;
+}
+
+.quick-todo-panel {
+  background: hsl(var(--background));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.dark .quick-todo-panel {
+  background: hsl(var(--background));
 }
 
 .dark .glass-glow::before {
