@@ -185,7 +185,7 @@ fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         "quick-todo",
         WebviewUrl::App("/?view=quick-todo".into()),
@@ -194,13 +194,16 @@ fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     .inner_size(580.0, 620.0)
     .resizable(false)
     .decorations(false)
-    .transparent(true)
     .shadow(false)
     .always_on_top(true)
     .skip_taskbar(true)
     .center()
-    .focused(true)
-    .build()?;
+    .focused(true);
+
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.transparent(true);
+
+    let window = builder.build()?;
 
     window.set_focus()?;
     Ok(())
