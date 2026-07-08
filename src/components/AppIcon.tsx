@@ -1,6 +1,6 @@
-import { cn, isMacOS } from "@/lib/utils";
+import { cn, isMacTarget } from "@/lib/utils";
 
-const macOS = isMacOS();
+const macOS = isMacTarget;
 
 const sizeStyles = {
   md: {

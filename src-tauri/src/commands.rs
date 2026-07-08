@@ -1,17 +1,28 @@
 use crate::db::{
     add_app_time, add_screen_time, cleanup_old_data, get_daily_total, is_blocked, load_settings,
     today_str, AppLimit, AppState, AppUsage, DailyReport, DashboardData, HourlyData, PomodoroState,
-    Settings, TodoItem, WeeklyDay, WeeklyReport,
+    Settings, TodoImage, TodoItem, TodoNote, TodoNoteImage, WeeklyDay, WeeklyReport,
 };
 use crate::platform::{get_foreground_app, should_count_screen_time, should_count_time};
 use base64::Engine as _;
 use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Deserialize;
 use serde_json::json;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 
 const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
+const MAX_TODO_IMAGES: usize = 4;
+const MAX_TODO_NOTE_IMAGES: usize = 4;
+const MAX_TODO_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_TODO_NOTE_CHARS: usize = 1_000;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TodoImageInput {
+    data_url: String,
+    mime_type: String,
+}
 
 pub fn start_tracker(app: AppHandle, state: AppState) {
     std::thread::spawn(move || {
@@ -626,36 +637,53 @@ pub fn remove_app_limit(state: tauri::State<AppState>, app_name: String) {
 #[tauri::command]
 pub fn get_todos(state: tauri::State<AppState>) -> Result<Vec<TodoItem>, String> {
     let conn = state.db.lock();
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, title, completed, created_at, completed_at
-             FROM todos
-             ORDER BY completed ASC,
-               datetime(COALESCE(completed_at, created_at)) DESC,
-               id DESC",
-        )
-        .map_err(|e| e.to_string())?;
+    let mut todos = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, title, completed, due_at, created_at, completed_at
+                 FROM todos
+                 ORDER BY completed ASC,
+                   CASE WHEN completed = 0 AND due_at IS NOT NULL THEN 0 ELSE 1 END ASC,
+                   CASE WHEN completed = 0 THEN datetime(due_at) END ASC,
+                   datetime(COALESCE(completed_at, created_at)) DESC,
+                   id DESC",
+            )
+            .map_err(|e| e.to_string())?;
 
-    let rows = stmt
-        .query_map([], todo_from_row)
-        .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], todo_from_row)
+            .map_err(|e| e.to_string())?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    hydrate_todo_images(&conn, &mut todos)?;
+    hydrate_todo_notes(&conn, &mut todos)?;
+    Ok(todos)
 }
 
 #[tauri::command]
-pub fn add_todo(state: tauri::State<AppState>, title: String) -> Result<TodoItem, String> {
-    let title = normalize_todo_title(title)?;
+pub fn add_todo(
+    state: tauri::State<AppState>,
+    title: String,
+    due_at: Option<String>,
+    images: Option<Vec<TodoImageInput>>,
+) -> Result<TodoItem, String> {
+    let images = normalize_todo_images(images)?;
+    let title = normalize_todo_title(title, !images.is_empty())?;
+    let due_at = normalize_due_at(due_at)?;
     let created_at = Local::now().to_rfc3339();
     let conn = state.db.lock();
     conn.execute(
-        "INSERT INTO todos (title, completed, created_at) VALUES (?1, 0, ?2)",
-        params![title, created_at],
+        "INSERT INTO todos (title, completed, due_at, created_at) VALUES (?1, 0, ?2, ?3)",
+        params![title, due_at, created_at],
     )
     .map_err(|e| e.to_string())?;
 
-    fetch_todo(&conn, conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    insert_todo_images(&conn, id, &images)?;
+    fetch_todo(&conn, id)
 }
 
 #[tauri::command]
@@ -664,13 +692,34 @@ pub fn update_todo_title(
     id: i64,
     title: String,
 ) -> Result<TodoItem, String> {
-    let title = normalize_todo_title(title)?;
+    let title = normalize_todo_title(title, false)?;
     let conn = state.db.lock();
     let _existing = fetch_todo(&conn, id)?;
 
     conn.execute(
         "UPDATE todos SET title = ?1 WHERE id = ?2",
         params![title, id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    fetch_todo(&conn, id)
+}
+
+#[tauri::command]
+pub fn update_todo_details(
+    state: tauri::State<AppState>,
+    id: i64,
+    title: String,
+    due_at: Option<String>,
+) -> Result<TodoItem, String> {
+    let title = normalize_todo_title(title, false)?;
+    let due_at = normalize_due_at(due_at)?;
+    let conn = state.db.lock();
+    let _existing = fetch_todo(&conn, id)?;
+
+    conn.execute(
+        "UPDATE todos SET title = ?1, due_at = ?2 WHERE id = ?3",
+        params![title, due_at, id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -699,8 +748,109 @@ pub fn set_todo_completed(
 }
 
 #[tauri::command]
+pub fn add_todo_image(
+    state: tauri::State<AppState>,
+    todo_id: i64,
+    image: TodoImageInput,
+) -> Result<TodoItem, String> {
+    let images = normalize_todo_images(Some(vec![image]))?;
+    let conn = state.db.lock();
+    let _existing = fetch_todo(&conn, todo_id)?;
+    let image_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM todo_images WHERE todo_id = ?1",
+            [todo_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if image_count as usize + images.len() > MAX_TODO_IMAGES {
+        return Err(format!("每个待办最多添加 {} 张图片", MAX_TODO_IMAGES));
+    }
+
+    insert_todo_images(&conn, todo_id, &images)?;
+    fetch_todo(&conn, todo_id)
+}
+
+#[tauri::command]
+pub fn delete_todo_image(state: tauri::State<AppState>, image_id: i64) -> Result<TodoItem, String> {
+    let conn = state.db.lock();
+    let todo_id: i64 = conn
+        .query_row(
+            "SELECT todo_id FROM todo_images WHERE id = ?1",
+            [image_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "图片不存在".to_string())?;
+
+    conn.execute("DELETE FROM todo_images WHERE id = ?1", [image_id])
+        .map_err(|e| e.to_string())?;
+
+    fetch_todo(&conn, todo_id)
+}
+
+#[tauri::command]
+pub fn add_todo_note(
+    state: tauri::State<AppState>,
+    todo_id: i64,
+    body: String,
+    images: Option<Vec<TodoImageInput>>,
+) -> Result<TodoItem, String> {
+    let images = normalize_todo_note_images(images)?;
+    let body = normalize_todo_note_body(body, !images.is_empty())?;
+    let created_at = Local::now().to_rfc3339();
+    let conn = state.db.lock();
+    let _existing = fetch_todo(&conn, todo_id)?;
+
+    conn.execute(
+        "INSERT INTO todo_notes (todo_id, body, created_at) VALUES (?1, ?2, ?3)",
+        params![todo_id, body, created_at],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let note_id = conn.last_insert_rowid();
+    insert_todo_note_images(&conn, note_id, &images)?;
+    fetch_todo(&conn, todo_id)
+}
+
+#[tauri::command]
+pub fn delete_todo_note(state: tauri::State<AppState>, note_id: i64) -> Result<TodoItem, String> {
+    let conn = state.db.lock();
+    let todo_id: i64 = conn
+        .query_row(
+            "SELECT todo_id FROM todo_notes WHERE id = ?1",
+            [note_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "备注不存在".to_string())?;
+
+    conn.execute(
+        "DELETE FROM todo_note_images WHERE note_id = ?1",
+        [note_id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM todo_notes WHERE id = ?1", [note_id])
+        .map_err(|e| e.to_string())?;
+
+    fetch_todo(&conn, todo_id)
+}
+
+#[tauri::command]
 pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
     let conn = state.db.lock();
+    conn.execute(
+        "DELETE FROM todo_note_images WHERE note_id IN (SELECT id FROM todo_notes WHERE todo_id = ?1)",
+        [id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM todo_notes WHERE todo_id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM todo_images WHERE todo_id = ?1", [id])
+        .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM todos WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
 
@@ -714,6 +864,26 @@ pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String>
 #[tauri::command]
 pub fn clear_completed_todos(state: tauri::State<AppState>) -> Result<u64, String> {
     let conn = state.db.lock();
+    conn.execute(
+        "DELETE FROM todo_note_images WHERE note_id IN (
+            SELECT todo_notes.id
+            FROM todo_notes
+            INNER JOIN todos ON todos.id = todo_notes.todo_id
+            WHERE todos.completed = 1
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM todo_notes WHERE todo_id IN (SELECT id FROM todos WHERE completed = 1)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM todo_images WHERE todo_id IN (SELECT id FROM todos WHERE completed = 1)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM todos WHERE completed = 1", [])
         .map_err(|e| e.to_string())?;
     Ok(conn.changes())
@@ -865,10 +1035,19 @@ pub fn skip_pomodoro_phase(app: AppHandle, state: tauri::State<AppState>) -> Pom
     crate::pomodoro::skip_pomodoro_phase(&app, &state)
 }
 
-fn normalize_todo_title(title: String) -> Result<String, String> {
-    let normalized = title.split_whitespace().collect::<Vec<_>>().join(" ");
+fn normalize_todo_title(title: String, allow_image_only: bool) -> Result<String, String> {
+    let normalized = title
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
 
     if normalized.is_empty() {
+        if allow_image_only {
+            return Ok("图片待办".into());
+        }
         return Err("请输入待办内容".into());
     }
 
@@ -879,17 +1058,117 @@ fn normalize_todo_title(title: String) -> Result<String, String> {
     Ok(normalized)
 }
 
+fn normalize_due_at(due_at: Option<String>) -> Result<Option<String>, String> {
+    let Some(value) = due_at
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let parsed =
+        DateTime::parse_from_rfc3339(&value).map_err(|_| "截止时间格式无效".to_string())?;
+    Ok(Some(parsed.to_rfc3339()))
+}
+
+fn normalize_todo_images(
+    images: Option<Vec<TodoImageInput>>,
+) -> Result<Vec<TodoImageInput>, String> {
+    let images = images.unwrap_or_default();
+
+    if images.len() > MAX_TODO_IMAGES {
+        return Err(format!("每个待办最多添加 {} 张图片", MAX_TODO_IMAGES));
+    }
+
+    validate_todo_image_inputs(&images)?;
+    Ok(images)
+}
+
+fn normalize_todo_note_body(body: String, allow_image_only: bool) -> Result<String, String> {
+    let normalized = body
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    if normalized.is_empty() {
+        if allow_image_only {
+            return Ok(String::new());
+        }
+        return Err("请输入备注内容".into());
+    }
+
+    if normalized.chars().count() > MAX_TODO_NOTE_CHARS {
+        return Err(format!("备注不能超过 {} 个字", MAX_TODO_NOTE_CHARS));
+    }
+
+    Ok(normalized)
+}
+
+fn normalize_todo_note_images(
+    images: Option<Vec<TodoImageInput>>,
+) -> Result<Vec<TodoImageInput>, String> {
+    let images = images.unwrap_or_default();
+
+    if images.len() > MAX_TODO_NOTE_IMAGES {
+        return Err(format!(
+            "每条备注最多添加 {} 张图片",
+            MAX_TODO_NOTE_IMAGES
+        ));
+    }
+
+    validate_todo_image_inputs(&images)?;
+    Ok(images)
+}
+
+fn validate_todo_image_inputs(images: &[TodoImageInput]) -> Result<(), String> {
+    for image in images {
+        let mime = image.mime_type.trim().to_ascii_lowercase();
+        if !matches!(
+            mime.as_str(),
+            "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+        ) {
+            return Err("仅支持 PNG、JPEG、WebP 或 GIF 图片".into());
+        }
+
+        if !image.data_url.starts_with("data:image/") {
+            return Err("图片数据格式无效".into());
+        }
+
+        let Some((_, payload)) = image.data_url.split_once(',') else {
+            return Err("图片数据格式无效".into());
+        };
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .map_err(|_| "图片数据格式无效".to_string())?;
+
+        if bytes.len() > MAX_TODO_IMAGE_BYTES {
+            return Err("单张图片不能超过 5MB".into());
+        }
+    }
+
+    Ok(())
+}
+
 fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
-    conn.query_row(
-        "SELECT id, title, completed, created_at, completed_at
+    let mut todo = conn
+        .query_row(
+            "SELECT id, title, completed, due_at, created_at, completed_at
          FROM todos
          WHERE id = ?1",
-        [id],
-        todo_from_row,
-    )
-    .optional()
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "待办不存在".into())
+            [id],
+            todo_from_row,
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "待办不存在".to_string())?;
+
+    hydrate_todo_images(conn, std::slice::from_mut(&mut todo))?;
+    hydrate_todo_notes(conn, std::slice::from_mut(&mut todo))?;
+    Ok(todo)
 }
 
 fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
@@ -897,7 +1176,150 @@ fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
         id: row.get(0)?,
         title: row.get(1)?,
         completed: row.get::<_, i64>(2)? != 0,
-        created_at: row.get(3)?,
-        completed_at: row.get(4)?,
+        due_at: row.get(3)?,
+        created_at: row.get(4)?,
+        completed_at: row.get(5)?,
+        images: Vec::new(),
+        notes: Vec::new(),
     })
+}
+
+fn insert_todo_images(
+    conn: &Connection,
+    todo_id: i64,
+    images: &[TodoImageInput],
+) -> Result<(), String> {
+    for image in images {
+        conn.execute(
+            "INSERT INTO todo_images (todo_id, data_url, mime_type, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                todo_id,
+                image.data_url,
+                image.mime_type.trim().to_ascii_lowercase(),
+                Local::now().to_rfc3339()
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn hydrate_todo_images(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), String> {
+    for todo in todos {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, todo_id, data_url, mime_type, created_at
+                 FROM todo_images
+                 WHERE todo_id = ?1
+                 ORDER BY id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([todo.id], |row| {
+                Ok(TodoImage {
+                    id: row.get(0)?,
+                    todo_id: row.get(1)?,
+                    data_url: row.get(2)?,
+                    mime_type: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        todo.images = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn insert_todo_note_images(
+    conn: &Connection,
+    note_id: i64,
+    images: &[TodoImageInput],
+) -> Result<(), String> {
+    for image in images {
+        conn.execute(
+            "INSERT INTO todo_note_images (note_id, data_url, mime_type, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                note_id,
+                image.data_url,
+                image.mime_type.trim().to_ascii_lowercase(),
+                Local::now().to_rfc3339()
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn hydrate_todo_notes(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), String> {
+    for todo in todos {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, todo_id, body, created_at
+                 FROM todo_notes
+                 WHERE todo_id = ?1
+                 ORDER BY id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([todo.id], |row| {
+                Ok(TodoNote {
+                    id: row.get(0)?,
+                    todo_id: row.get(1)?,
+                    body: row.get(2)?,
+                    created_at: row.get(3)?,
+                    images: Vec::new(),
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        let mut notes = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        hydrate_todo_note_images(conn, &mut notes)?;
+        todo.notes = notes;
+    }
+
+    Ok(())
+}
+
+fn hydrate_todo_note_images(conn: &Connection, notes: &mut [TodoNote]) -> Result<(), String> {
+    for note in notes {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, note_id, data_url, mime_type, created_at
+                 FROM todo_note_images
+                 WHERE note_id = ?1
+                 ORDER BY id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([note.id], |row| {
+                Ok(TodoNoteImage {
+                    id: row.get(0)?,
+                    note_id: row.get(1)?,
+                    data_url: row.get(2)?,
+                    mime_type: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        note.images = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }

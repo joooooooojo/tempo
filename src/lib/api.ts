@@ -6,9 +6,15 @@ import type {
   DailyReport,
   PomodoroState,
   Settings,
+  TodoImage,
   TodoItem,
   WeeklyReport,
 } from "@/types";
+
+export interface TodoImageInput {
+  data_url: string;
+  mime_type: string;
+}
 
 export const api = {
   getDashboard: () => invoke<DashboardData>("get_dashboard"),
@@ -29,11 +35,22 @@ export const api = {
   removeAppLimit: (appName: string) =>
     invoke<void>("remove_app_limit", { appName }),
   getTodos: () => invoke<TodoItem[]>("get_todos"),
-  addTodo: (title: string) => invoke<TodoItem>("add_todo", { title }),
+  addTodo: (title: string, dueAt?: string | null, images: TodoImageInput[] = []) =>
+    invoke<TodoItem>("add_todo", { title, dueAt, images }),
   updateTodoTitle: (id: number, title: string) =>
     invoke<TodoItem>("update_todo_title", { id, title }),
+  updateTodoDetails: (id: number, title: string, dueAt?: string | null) =>
+    invoke<TodoItem>("update_todo_details", { id, title, dueAt }),
   setTodoCompleted: (id: number, completed: boolean) =>
     invoke<TodoItem>("set_todo_completed", { id, completed }),
+  addTodoImage: (todoId: number, image: TodoImageInput) =>
+    invoke<TodoItem>("add_todo_image", { todoId, image }),
+  deleteTodoImage: (imageId: TodoImage["id"]) =>
+    invoke<TodoItem>("delete_todo_image", { imageId }),
+  addTodoNote: (todoId: number, body: string, images: TodoImageInput[] = []) =>
+    invoke<TodoItem>("add_todo_note", { todoId, body, images }),
+  deleteTodoNote: (noteId: number) =>
+    invoke<TodoItem>("delete_todo_note", { noteId }),
   deleteTodo: (id: number) => invoke<void>("delete_todo", { id }),
   clearCompletedTodos: () => invoke<number>("clear_completed_todos"),
   getKnownApps: () => invoke<AppUsage[]>("get_known_apps"),

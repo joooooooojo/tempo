@@ -177,6 +177,24 @@ body {
     0 0 36px var(--glow);
 }
 
+.todo-create-dialog {
+  --todo-field-bg: rgba(255, 255, 255, 0.74);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.72) inset,
+    0 18px 48px rgba(21, 64, 46, 0.16);
+}
+
+.dark .todo-create-dialog {
+  --todo-field-bg: rgba(255, 255, 255, 0.045);
+  background: rgba(20, 22, 27, 0.92);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.055) inset,
+    0 18px 52px rgba(0, 0, 0, 0.46);
+}
+
 .dark .glass-glow::before {
   background: conic-gradient(from 180deg, transparent, rgba(74, 222, 128, 0.04), transparent 30%);
 }
@@ -221,28 +239,89 @@ body {
 
 .flip-number {
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
   letter-spacing: 0;
-  transform: translateZ(0);
-}
-
-.flip-number-primary {
-  filter: drop-shadow(0 8px 22px hsl(var(--primary) / 0.14));
-}
-
-.flip-number-muted {
-  filter: drop-shadow(0 8px 18px hsl(var(--foreground) / 0.08));
-}
-
-.dark .flip-number-primary {
-  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.26));
-}
-
-.dark .flip-number-muted {
-  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.22));
 }
 
 .flip-number-digit {
+  position: relative;
+  display: inline-block;
+  width: var(--rolling-digit-width);
+  height: var(--rolling-digit-height);
+  overflow: hidden;
+  vertical-align: bottom;
+  color: var(--rolling-digit-color);
+  font-family: var(--font-sans);
+  font-size: calc(var(--rolling-digit-height) - 1px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  line-height: 1;
   text-shadow: 0 1px 0 hsl(var(--background) / 0.18);
+}
+
+.flip-number-primary .flip-number-digit {
+  text-shadow:
+    0 1px 0 hsl(var(--background) / 0.18),
+    0 8px 22px hsl(var(--primary) / 0.14);
+}
+
+.flip-number-muted .flip-number-digit {
+  text-shadow:
+    0 1px 0 hsl(var(--background) / 0.18),
+    0 8px 18px hsl(var(--foreground) / 0.08);
+}
+
+.dark .flip-number-primary .flip-number-digit {
+  text-shadow:
+    0 1px 0 hsl(var(--background) / 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.26);
+}
+
+.dark .flip-number-muted .flip-number-digit {
+  text-shadow:
+    0 1px 0 hsl(var(--background) / 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.22);
+}
+
+.rolling-digit-stack,
+.rolling-digit-cell {
+  width: 100%;
+}
+
+.rolling-digit-stack {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+
+.rolling-digit-stack.is-forward {
+  animation: rolling-digit-forward var(--rolling-digit-duration) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.rolling-digit-stack.is-backward {
+  animation: rolling-digit-backward var(--rolling-digit-duration) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.rolling-digit-cell {
+  display: flex;
+  height: var(--rolling-digit-height);
+  align-items: center;
+  justify-content: center;
+}
+
+.rolling-digit-stack .rolling-digit-cell {
+  flex: 0 0 var(--rolling-digit-height);
+}
+
+@keyframes rolling-digit-forward {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(var(--rolling-digit-distance) * -1)); }
+}
+
+@keyframes rolling-digit-backward {
+  from { transform: translateY(calc(var(--rolling-digit-distance) * -1)); }
+  to { transform: translateY(0); }
 }
 
 .progress-track {
@@ -481,6 +560,7 @@ body {
   .activity-spark,
   .rank-row,
   .progress-fill::after,
+  .rolling-digit-stack,
   .app-shell::before,
   .eye-care-screen::before,
   .eye-care-content,

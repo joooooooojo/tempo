@@ -5,9 +5,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function isMacOS() {
-  return navigator.userAgent.includes("Mac");
-}
+export const isMacTarget = __TAURI_TARGET_PLATFORM__ === "macos";
 
 export function getDurationParts(seconds: number) {
   const totalSeconds = Math.max(0, Math.floor(seconds));

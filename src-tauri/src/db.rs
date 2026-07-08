@@ -70,8 +70,38 @@ pub struct TodoItem {
     pub id: i64,
     pub title: String,
     pub completed: bool,
+    pub due_at: Option<String>,
     pub created_at: String,
     pub completed_at: Option<String>,
+    pub images: Vec<TodoImage>,
+    pub notes: Vec<TodoNote>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoImage {
+    pub id: i64,
+    pub todo_id: i64,
+    pub data_url: String,
+    pub mime_type: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoNote {
+    pub id: i64,
+    pub todo_id: i64,
+    pub body: String,
+    pub created_at: String,
+    pub images: Vec<TodoNoteImage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoNoteImage {
+    pub id: i64,
+    pub note_id: i64,
+    pub data_url: String,
+    pub mime_type: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,16 +263,44 @@ pub fn init_db(path: &PathBuf) -> Connection {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             completed INTEGER NOT NULL DEFAULT 0,
+            due_at TEXT,
             created_at TEXT NOT NULL,
             completed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS todo_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            todo_id INTEGER NOT NULL,
+            data_url TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS todo_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            todo_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS todo_note_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER NOT NULL,
+            data_url TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(note_id) REFERENCES todo_notes(id) ON DELETE CASCADE
         );
         ",
     )
     .expect("init schema");
     conn.execute("ALTER TABLE app_usage ADD COLUMN icon_data_url TEXT", [])
         .ok();
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;")
+    conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", [])
         .ok();
+    conn.execute_batch(
+        "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;",
+    )
+    .ok();
     conn
 }
 

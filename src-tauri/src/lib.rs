@@ -16,9 +16,10 @@ use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, WindowEvent,
+    Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_global_shortcut::ShortcutState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,6 +28,24 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcut("F2")
+                .expect("F2 is a valid global shortcut")
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        if let Err(error) = show_quick_todo_window(app) {
+                            let _ = app.emit(
+                                "toast",
+                                serde_json::json!({
+                                    "message": format!("快速新建窗口打开失败: {error}")
+                                }),
+                            );
+                        }
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![]),
@@ -47,7 +66,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 macos_dock::apply_branding(app.handle());
-                let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Regular);
+                let _ = app
+                    .handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Regular);
             }
 
             if let Some(window) = app.get_webview_window("main") {
@@ -58,7 +79,6 @@ pub fn run() {
                         commands::hide_to_tray(&app_handle);
                     }
                 });
-
             }
 
             Ok(())
@@ -80,7 +100,12 @@ pub fn run() {
             commands::get_todos,
             commands::add_todo,
             commands::update_todo_title,
+            commands::update_todo_details,
             commands::set_todo_completed,
+            commands::add_todo_image,
+            commands::delete_todo_image,
+            commands::add_todo_note,
+            commands::delete_todo_note,
             commands::delete_todo,
             commands::clear_completed_todos,
             commands::get_known_apps,
@@ -146,5 +171,37 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(app)?;
 
+    Ok(())
+}
+
+fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("quick-todo") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_shadow(false);
+        let _ = window.set_focus();
+        let _ = window.emit("quick-todo:read-clipboard", ());
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(
+        app,
+        "quick-todo",
+        WebviewUrl::App("/?view=quick-todo".into()),
+    )
+    .title("快速新建待办")
+    .inner_size(580.0, 620.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .center()
+    .focused(true)
+    .build()?;
+
+    window.set_focus()?;
     Ok(())
 }

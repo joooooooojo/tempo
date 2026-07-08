@@ -54,8 +54,35 @@ export interface TodoItem {
   id: number;
   title: string;
   completed: boolean;
+  due_at?: string | null;
   created_at: string;
   completed_at?: string | null;
+  images: TodoImage[];
+  notes: TodoNote[];
+}
+
+export interface TodoImage {
+  id: number;
+  todo_id: number;
+  data_url: string;
+  mime_type: string;
+  created_at: string;
+}
+
+export interface TodoNote {
+  id: number;
+  todo_id: number;
+  body: string;
+  created_at: string;
+  images: TodoNoteImage[];
+}
+
+export interface TodoNoteImage {
+  id: number;
+  note_id: number;
+  data_url: string;
+  mime_type: string;
+  created_at: string;
 }
 
 export interface Settings {

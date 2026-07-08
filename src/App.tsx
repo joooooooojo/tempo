@@ -11,9 +11,9 @@ import { HomePage } from "@/pages/HomePage";
 import { EyeCareReminderPage } from "@/pages/EyeCareReminderPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
-import { AboutPage } from "@/pages/AboutPage";
 import { PomodoroPage } from "@/pages/PomodoroPage";
 import { TodoPage } from "@/pages/TodoPage";
+import { QuickTodoPage } from "@/pages/QuickTodoPage";
 import { api } from "@/lib/api";
 import { playNotificationSound } from "@/lib/sound";
 import type { ReminderEvent, Settings } from "@/types";
@@ -21,8 +21,13 @@ import type { ReminderEvent, Settings } from "@/types";
 const EYE_CARE_REMINDER_LABEL = "eye-care-reminder";
 
 function App() {
-  if (new URLSearchParams(window.location.search).get("view") === "eye-care") {
+  const view = new URLSearchParams(window.location.search).get("view");
+  if (view === "eye-care") {
     return <EyeCareReminderPage />;
+  }
+
+  if (view === "quick-todo") {
+    return <QuickTodoPage />;
   }
 
   return <MainApp />;
@@ -89,7 +94,6 @@ function MainApp() {
             <Route path="todos" element={<TodoPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="about" element={<AboutPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
