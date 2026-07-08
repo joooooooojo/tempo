@@ -1,5 +1,7 @@
 use tauri::window::Color;
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+#[cfg(not(target_os = "macos"))]
+use tauri::LogicalPosition;
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const QUICK_TODO_PANEL_WIDTH: f64 = 420.0;
 pub const QUICK_TODO_PANEL_HEIGHT: f64 = 80.0;

@@ -16,9 +16,11 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     Emitter, Manager, WindowEvent,
 };
+#[cfg(not(target_os = "macos"))]
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -153,7 +155,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, "quit", "退出软件", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &reset, &quit])?;
 
-    let mut tray_builder = TrayIconBuilder::with_id("main")
+    let tray_builder = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
@@ -175,8 +177,8 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         });
 
     #[cfg(not(target_os = "macos"))]
-    {
-        tray_builder = tray_builder.on_tray_icon_event(|tray, event| {
+    let tray = tray_builder
+        .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -186,9 +188,10 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let app = tray.app_handle();
                 let _ = commands::show_window(app.clone());
             }
-        });
-    }
+        })
+        .build(app)?;
 
+    #[cfg(target_os = "macos")]
     let tray = tray_builder.build(app)?;
 
     tray.with_inner_tray_icon(|inner| {
