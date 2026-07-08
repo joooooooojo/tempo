@@ -10,7 +10,7 @@ const macOS = isMacTarget;
 
 const navItems = [
   { to: "/", label: "待办事项", icon: ListTodo },
-  { to: "/pomodoro", label: "番茄钟", icon: Timer },
+  { to: "/pomodoro", label: "番茄时钟", icon: Timer },
   { to: "/reports", label: "屏幕显示时间", icon: BarChart3 },
   { to: "/settings", label: "设置", icon: Settings },
 ];

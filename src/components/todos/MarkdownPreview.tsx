@@ -387,6 +387,7 @@ function renderLink(href: string, label: string, key: number) {
 function isSafeImageSrc(src: string) {
   if (/^data:image\/(png|jpeg|jpg|webp|gif);base64,/i.test(src)) return true;
   if (src.startsWith("blob:")) return true;
+  if (isTauriAssetUrl(src)) return true;
   return isHttpUrl(src);
 }
 
@@ -399,6 +400,15 @@ function isHttpUrl(value: string) {
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isTauriAssetUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "asset:" || url.hostname === "asset.localhost";
   } catch {
     return false;
   }

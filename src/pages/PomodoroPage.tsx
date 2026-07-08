@@ -108,7 +108,7 @@ export function PomodoroPage() {
       <div className="flex items-end justify-between">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-            番茄钟
+            番茄时钟
           </p>
           <h1 className="mt-1 text-2xl font-extrabold tracking-tight">
             {isIdle ? "准备开始专注" : meta.label}

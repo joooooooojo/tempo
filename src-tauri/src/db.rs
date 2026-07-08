@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
+pub const MAX_HOURLY_SECONDS: i64 = 60 * 60;
+pub const MAX_DAILY_SECONDS: i64 = 24 * MAX_HOURLY_SECONDS;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppUsage {
     pub app_name: String,
@@ -73,6 +76,7 @@ pub struct TodoItem {
     pub content: String,
     pub completed: bool,
     pub due_at: Option<String>,
+    pub pinned_at: Option<String>,
     pub created_at: String,
     pub completed_at: Option<String>,
     pub images: Vec<TodoImage>,
@@ -267,6 +271,7 @@ pub fn init_db(path: &PathBuf) -> Connection {
             content TEXT NOT NULL DEFAULT '',
             completed INTEGER NOT NULL DEFAULT 0,
             due_at TEXT,
+            pinned_at TEXT,
             created_at TEXT NOT NULL,
             completed_at TEXT
         );
@@ -299,6 +304,8 @@ pub fn init_db(path: &PathBuf) -> Connection {
     conn.execute("ALTER TABLE app_usage ADD COLUMN icon_data_url TEXT", [])
         .ok();
     conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", [])
+        .ok();
+    conn.execute("ALTER TABLE todos ADD COLUMN pinned_at TEXT", [])
         .ok();
     let added_todo_content = conn
         .execute("ALTER TABLE todos ADD COLUMN content TEXT NOT NULL DEFAULT ''", [])
@@ -498,23 +505,36 @@ pub fn is_system_host_usage(name: &str, process: &str) -> bool {
     )
 }
 
-pub fn add_screen_time(conn: &Connection, date: &str, hour: u32, seconds: i64) {
+pub fn add_screen_time(conn: &Connection, date: &str, hour: u32, seconds: i64) -> i64 {
     if seconds <= 0 {
-        return;
+        return 0;
+    }
+
+    let current_hour_seconds: i64 = conn
+        .query_row(
+            "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
+            params![date, hour as i64],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let seconds = seconds.min((MAX_HOURLY_SECONDS - current_hour_seconds).max(0));
+    if seconds <= 0 {
+        return 0;
     }
 
     conn.execute(
         "INSERT INTO screen_time_daily (date, total_seconds) VALUES (?1, ?2)
-         ON CONFLICT(date) DO UPDATE SET total_seconds = total_seconds + excluded.total_seconds",
-        params![date, seconds],
+         ON CONFLICT(date) DO UPDATE SET total_seconds = MIN(?3, total_seconds + excluded.total_seconds)",
+        params![date, seconds, MAX_DAILY_SECONDS],
     )
     .ok();
     conn.execute(
         "INSERT INTO screen_time_hourly (date, hour, seconds) VALUES (?1, ?2, ?3)
-         ON CONFLICT(date, hour) DO UPDATE SET seconds = seconds + excluded.seconds",
-        params![date, hour as i64, seconds],
+         ON CONFLICT(date, hour) DO UPDATE SET seconds = MIN(?4, seconds + excluded.seconds)",
+        params![date, hour as i64, seconds, MAX_HOURLY_SECONDS],
     )
     .ok();
+    seconds
 }
 
 pub fn add_app_time(
@@ -556,11 +576,13 @@ pub fn sum_range(conn: &Connection, days: i64) -> i64 {
     let today = Local::now().date_naive();
     let start = today - chrono::Duration::days(days - 1);
     conn.query_row(
-        "SELECT COALESCE(SUM(total_seconds), 0) FROM screen_time_daily
+        "SELECT COALESCE(SUM(CASE WHEN total_seconds > ?3 THEN ?3 ELSE total_seconds END), 0)
+         FROM screen_time_daily
          WHERE date >= ?1 AND date <= ?2",
         params![
             start.format("%Y-%m-%d").to_string(),
-            today.format("%Y-%m-%d").to_string()
+            today.format("%Y-%m-%d").to_string(),
+            MAX_DAILY_SECONDS
         ],
         |r| r.get(0),
     )
@@ -597,6 +619,7 @@ pub fn get_daily_total(conn: &Connection, date: &str) -> i64 {
         |r| r.get(0),
     )
     .unwrap_or(0)
+    .clamp(0, MAX_DAILY_SECONDS)
 }
 
 pub fn cleanup_old_data(conn: &Connection) {

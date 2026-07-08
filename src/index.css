@@ -594,6 +594,16 @@ body {
   animation: progress-sheen 2.4s ease-in-out infinite;
 }
 
+.usage-chart,
+.usage-chart :where(.recharts-wrapper, .recharts-surface, svg) {
+  outline: none;
+}
+
+.usage-chart :where(.recharts-wrapper, .recharts-surface, svg, g, path, rect):focus,
+.usage-chart :where(.recharts-wrapper, .recharts-surface, svg, g, path, rect):focus-visible {
+  outline: none;
+}
+
 .rank-row {
   animation: row-enter 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }

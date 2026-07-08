@@ -14,6 +14,7 @@ import { TodoPage } from "@/pages/TodoPage";
 import { QuickTodoPage } from "@/pages/QuickTodoPage";
 import { api } from "@/lib/api";
 import { playNotificationSound } from "@/lib/sound";
+import { appToastOptions } from "@/lib/toastOptions";
 import type { ReminderEvent, Settings } from "@/types";
 
 const EYE_CARE_REMINDER_LABEL = "eye-care-reminder";
@@ -102,7 +103,7 @@ function MainApp() {
 
       <ReminderDialog event={reminder} onDismiss={() => setReminder(null)} />
 
-      <Toaster position="top-center" richColors toastOptions={{ className: "glass rounded-lg" }} />
+      <Toaster position="top-center" richColors toastOptions={appToastOptions} />
     </>
   );
 }

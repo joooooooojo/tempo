@@ -19,7 +19,9 @@ use tauri::{
     Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_global_shortcut::ShortcutState;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+const QUICK_TODO_SHORTCUT: &str = "F2";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,15 +32,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcut("F2")
-                .expect("F2 is a valid global shortcut")
                 .with_handler(|app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         if let Err(error) = show_quick_todo_window(app) {
                             let _ = app.emit(
                                 "toast",
                                 serde_json::json!({
-                                    "message": format!("快速新建窗口打开失败: {error}")
+                                    "message": format!("快速待办窗口打开失败: {error}")
                                 }),
                             );
                         }
@@ -62,6 +62,7 @@ pub fn run() {
             app.manage(state);
 
             setup_tray(app)?;
+            register_quick_todo_shortcut(app.handle());
 
             #[cfg(target_os = "macos")]
             {
@@ -102,14 +103,20 @@ pub fn run() {
             commands::update_todo_title,
             commands::update_todo_details,
             commands::set_todo_completed,
+            commands::set_todo_pinned,
             commands::add_todo_image,
             commands::delete_todo_image,
             commands::add_todo_note,
             commands::delete_todo_note,
+            commands::restore_todo_note,
             commands::delete_todo,
+            commands::restore_todo,
             commands::clear_completed_todos,
             commands::get_known_apps,
             commands::export_report,
+            commands::export_todos_backup,
+            commands::import_todos_backup,
+            commands::save_markdown_image,
             commands::complete_onboarding,
             commands::quit_app,
             commands::hide_to_tray_command,
@@ -122,6 +129,18 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn register_quick_todo_shortcut(app: &tauri::AppHandle) {
+    if let Err(error) = app.global_shortcut().register(QUICK_TODO_SHORTCUT) {
+        eprintln!("Failed to register {QUICK_TODO_SHORTCUT} global shortcut: {error}");
+        let _ = app.emit(
+            "toast",
+            serde_json::json!({
+                "message": format!("{QUICK_TODO_SHORTCUT} shortcut unavailable: {error}")
+            }),
+        );
+    }
 }
 
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -184,8 +203,8 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
-    const QUICK_TODO_WIDTH: f64 = 520.0;
-    const QUICK_TODO_HEIGHT: f64 = 560.0;
+    const QUICK_TODO_WIDTH: f64 = 420.0;
+    const QUICK_TODO_HEIGHT: f64 = 80.0;
 
     if let Some(window) = app.get_webview_window("quick-todo") {
         let _ = window.show();
@@ -193,7 +212,7 @@ fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         let _ = window.set_always_on_top(true);
         let _ = window.set_shadow(true);
         let _ = window.set_focus();
-        let _ = window.emit("quick-todo:read-clipboard", ());
+        let _ = window.emit("quick-todo:focus-title", ());
         return Ok(());
     }
 
@@ -202,7 +221,7 @@ fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         "quick-todo",
         WebviewUrl::App("/?view=quick-todo".into()),
     )
-    .title("快速新建待办")
+    .title("快速待办")
     .inner_size(QUICK_TODO_WIDTH, QUICK_TODO_HEIGHT)
     .resizable(false)
     .decorations(false)

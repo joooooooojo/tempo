@@ -99,7 +99,7 @@ export function SettingsPage() {
         </Card>
       </Section>
 
-      <Section title="番茄钟">
+      <Section title="番茄时钟">
         <Card className="overflow-hidden">
           <div className="space-y-4 px-4 py-4">
             <div>

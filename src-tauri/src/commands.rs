@@ -2,14 +2,19 @@ use crate::db::{
     add_app_time, add_screen_time, cleanup_old_data, get_daily_total, is_blocked, load_settings,
     today_str, AppLimit, AppState, AppUsage, DailyReport, DashboardData, HourlyData, PomodoroState,
     Settings, TodoImage, TodoItem, TodoNote, TodoNoteImage, WeeklyDay, WeeklyReport,
+    MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS,
 };
 use crate::platform::{get_foreground_app, should_count_screen_time, should_count_time};
 use base64::Engine as _;
 use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::Instant;
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    time::Instant,
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
@@ -22,6 +27,13 @@ const MAX_TODO_NOTE_CHARS: usize = 1_000;
 pub struct TodoImageInput {
     data_url: String,
     mime_type: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TodoBackupFile {
+    format: String,
+    exported_at: String,
+    todos: Vec<TodoItem>,
 }
 
 pub fn start_tracker(app: AppHandle, state: AppState) {
@@ -61,7 +73,10 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
             {
                 let conn = state.db.lock();
                 for (bucket_date, bucket_hour, seconds) in second_buckets(now, elapsed_seconds) {
-                    add_screen_time(&conn, &bucket_date, bucket_hour, seconds);
+                    let tracked_seconds = add_screen_time(&conn, &bucket_date, bucket_hour, seconds);
+                    if tracked_seconds <= 0 {
+                        continue;
+                    }
 
                     if let Some(ref app_info) = foreground {
                         if !is_blocked(&conn, &app_info.name) {
@@ -70,7 +85,7 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
                                 &bucket_date,
                                 &app_info.name,
                                 &app_info.process_name,
-                                seconds,
+                                tracked_seconds,
                                 app_info.icon_data_url.as_deref(),
                             );
                         }
@@ -369,8 +384,6 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
     let date = date.unwrap_or_else(today_str);
     let (total, hourly, mut top_apps) = {
         let conn = state.db.lock();
-        let total = get_daily_total(&conn, &date);
-
         let mut hourly = Vec::new();
         for h in 0..24 {
             let secs: i64 = conn
@@ -382,9 +395,14 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
                 .unwrap_or(0);
             hourly.push(HourlyData {
                 hour: h,
-                seconds: secs,
+                seconds: secs.clamp(0, MAX_HOURLY_SECONDS),
             });
         }
+        let total = hourly
+            .iter()
+            .map(|item| item.seconds)
+            .sum::<i64>()
+            .min(MAX_DAILY_SECONDS);
 
         (total, hourly, crate::db::top_apps(&conn, &date, i64::MAX))
     };
@@ -678,30 +696,7 @@ pub fn remove_app_limit(state: tauri::State<AppState>, app_name: String) {
 #[tauri::command]
 pub fn get_todos(state: tauri::State<AppState>) -> Result<Vec<TodoItem>, String> {
     let conn = state.db.lock();
-    let mut todos = {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, title, content, completed, due_at, created_at, completed_at
-                 FROM todos
-                 ORDER BY completed ASC,
-                   CASE WHEN completed = 0 AND due_at IS NOT NULL THEN 0 ELSE 1 END ASC,
-                   CASE WHEN completed = 0 THEN datetime(due_at) END ASC,
-                   datetime(COALESCE(completed_at, created_at)) DESC,
-                   id DESC",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let rows = stmt
-            .query_map([], todo_from_row)
-            .map_err(|e| e.to_string())?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-    };
-
-    hydrate_todo_images(&conn, &mut todos)?;
-    hydrate_todo_notes(&conn, &mut todos)?;
-    Ok(todos)
+    list_todos(&conn)
 }
 
 #[tauri::command]
@@ -750,6 +745,7 @@ pub fn update_todo_title(
 
 #[tauri::command]
 pub fn update_todo_details(
+    app: AppHandle,
     state: tauri::State<AppState>,
     id: i64,
     title: String,
@@ -768,7 +764,9 @@ pub fn update_todo_details(
     )
     .map_err(|e| e.to_string())?;
 
-    fetch_todo(&conn, id)
+    let todo = fetch_todo(&conn, id)?;
+    cleanup_unreferenced_markdown_images(&app, &conn);
+    Ok(todo)
 }
 
 #[tauri::command]
@@ -782,6 +780,27 @@ pub fn set_todo_completed(
     conn.execute(
         "UPDATE todos SET completed = ?1, completed_at = ?2 WHERE id = ?3",
         params![if completed { 1 } else { 0 }, completed_at, id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    if conn.changes() == 0 {
+        return Err("待办不存在".into());
+    }
+
+    fetch_todo(&conn, id)
+}
+
+#[tauri::command]
+pub fn set_todo_pinned(
+    state: tauri::State<AppState>,
+    id: i64,
+    pinned: bool,
+) -> Result<TodoItem, String> {
+    let pinned_at = pinned.then(|| Local::now().to_rfc3339());
+    let conn = state.db.lock();
+    conn.execute(
+        "UPDATE todos SET pinned_at = ?1 WHERE id = ?2",
+        params![pinned_at, id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -885,6 +904,38 @@ pub fn delete_todo_note(state: tauri::State<AppState>, note_id: i64) -> Result<T
 }
 
 #[tauri::command]
+pub fn restore_todo_note(
+    state: tauri::State<AppState>,
+    note: TodoNote,
+) -> Result<TodoItem, String> {
+    let conn = state.db.lock();
+    let _existing = fetch_todo(&conn, note.todo_id)?;
+
+    conn.execute(
+        "INSERT INTO todo_notes (id, todo_id, body, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![note.id, note.todo_id, note.body, note.created_at],
+    )
+    .map_err(|e| e.to_string())?;
+
+    for image in note.images {
+        conn.execute(
+            "INSERT INTO todo_note_images (id, note_id, data_url, mime_type, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                image.id,
+                note.id,
+                image.data_url,
+                image.mime_type,
+                image.created_at
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    fetch_todo(&conn, note.todo_id)
+}
+
+#[tauri::command]
 pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
     let conn = state.db.lock();
     conn.execute(
@@ -904,6 +955,67 @@ pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String>
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn restore_todo(state: tauri::State<AppState>, todo: TodoItem) -> Result<TodoItem, String> {
+    let conn = state.db.lock();
+
+    conn.execute(
+        "INSERT INTO todos (id, title, content, completed, due_at, pinned_at, created_at, completed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            todo.id,
+            todo.title,
+            todo.content,
+            if todo.completed { 1 } else { 0 },
+            todo.due_at,
+            todo.pinned_at,
+            todo.created_at,
+            todo.completed_at
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    for image in todo.images {
+        conn.execute(
+            "INSERT INTO todo_images (id, todo_id, data_url, mime_type, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                image.id,
+                todo.id,
+                image.data_url,
+                image.mime_type,
+                image.created_at
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    for note in todo.notes {
+        conn.execute(
+            "INSERT INTO todo_notes (id, todo_id, body, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![note.id, todo.id, note.body, note.created_at],
+        )
+        .map_err(|e| e.to_string())?;
+
+        for image in note.images {
+            conn.execute(
+                "INSERT INTO todo_note_images (id, note_id, data_url, mime_type, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    image.id,
+                    note.id,
+                    image.data_url,
+                    image.mime_type,
+                    image.created_at
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    fetch_todo(&conn, todo.id)
 }
 
 #[tauri::command]
@@ -931,7 +1043,597 @@ pub fn clear_completed_todos(state: tauri::State<AppState>) -> Result<u64, Strin
     .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM todos WHERE completed = 1", [])
         .map_err(|e| e.to_string())?;
-    Ok(conn.changes())
+    let changes = conn.changes();
+    Ok(changes)
+}
+
+#[tauri::command]
+pub fn export_todos_backup(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    path: String,
+) -> Result<(), String> {
+    let conn = state.db.lock();
+    let mut todos = list_todos(&conn)?;
+    let markdown_dir = markdown_images_dir(&app)?;
+    let mut markdown_images = HashMap::<String, PathBuf>::new();
+
+    for todo in &mut todos {
+        todo.content = rewrite_markdown_images_for_backup(
+            &todo.content,
+            &markdown_dir,
+            &mut markdown_images,
+        );
+    }
+
+    let backup = TodoBackupFile {
+        format: "screen-time-app.todos.v2".into(),
+        exported_at: Local::now().to_rfc3339(),
+        todos,
+    };
+
+    let mut entries = vec![ZipEntryInput {
+        name: "todos.json".into(),
+        data: serde_json::to_vec_pretty(&backup).map_err(|e| e.to_string())?,
+    }];
+
+    let mut images = markdown_images.into_iter().collect::<Vec<_>>();
+    images.sort_by(|a, b| a.0.cmp(&b.0));
+    for (file_name, file_path) in images {
+        if let Ok(data) = std::fs::read(&file_path) {
+            entries.push(ZipEntryInput {
+                name: format!("markdown-images/{file_name}"),
+                data,
+            });
+        }
+    }
+
+    write_zip_archive(Path::new(&path), &entries)
+}
+
+#[tauri::command]
+pub fn import_todos_backup(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    path: String,
+) -> Result<Vec<TodoItem>, String> {
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let entries = read_backup_entries(&bytes)?;
+    let backup_bytes = entries
+        .get("todos.json")
+        .ok_or_else(|| "备份文件缺少 todos.json".to_string())?;
+    let backup: TodoBackupFile =
+        serde_json::from_slice(backup_bytes).map_err(|e| e.to_string())?;
+
+    if !backup.format.starts_with("screen-time-app.todos.") {
+        return Err("不是有效的待办备份文件".into());
+    }
+
+    let markdown_dir = markdown_images_dir(&app)?;
+    std::fs::create_dir_all(&markdown_dir).map_err(|e| e.to_string())?;
+    let mut markdown_image_urls = HashMap::<String, String>::new();
+
+    for (name, data) in &entries {
+        let Some(file_name) = backup_markdown_image_file_name(name) else {
+            continue;
+        };
+        let target = unique_markdown_image_path(&markdown_dir, &file_name);
+        std::fs::write(&target, data).map_err(|e| e.to_string())?;
+        markdown_image_urls.insert(name.clone(), asset_url_for_path(&target));
+    }
+
+    let conn = state.db.lock();
+    insert_imported_todos(&conn, &backup.todos, &markdown_image_urls)?;
+    cleanup_unreferenced_markdown_images(&app, &conn);
+    list_todos(&conn)
+}
+
+#[tauri::command]
+pub fn save_markdown_image(
+    app: AppHandle,
+    data_url: String,
+    mime_type: String,
+) -> Result<String, String> {
+    let mime = mime_type.trim().to_ascii_lowercase();
+    let extension = markdown_image_extension(&mime)?;
+    let prefix = format!("data:{mime};base64,");
+    let payload = data_url
+        .strip_prefix(&prefix)
+        .ok_or_else(|| "图片数据格式无效".to_string())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|_| "图片数据格式无效".to_string())?;
+
+    if bytes.len() > MAX_TODO_IMAGE_BYTES {
+        return Err("单张图片不能超过 5MB".into());
+    }
+
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("markdown-images");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let mut attempt = 0;
+    loop {
+        let timestamp = Local::now().timestamp_nanos_opt().unwrap_or_default();
+        let file_name = format!(
+            "todo-md-{timestamp}-{}-{attempt}.{extension}",
+            std::process::id()
+        );
+        let path = dir.join(file_name);
+
+        if path.exists() {
+            attempt += 1;
+            continue;
+        }
+
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        return Ok(path.to_string_lossy().into_owned());
+    }
+}
+
+struct ZipEntryInput {
+    name: String,
+    data: Vec<u8>,
+}
+
+struct ZipCentralEntry {
+    name: String,
+    crc32: u32,
+    size: u32,
+    local_offset: u32,
+}
+
+fn write_zip_archive(path: &Path, entries: &[ZipEntryInput]) -> Result<(), String> {
+    let mut data = Vec::<u8>::new();
+    let mut central_entries = Vec::<ZipCentralEntry>::new();
+
+    for entry in entries {
+        let name = entry.name.as_bytes();
+        if name.len() > u16::MAX as usize || entry.data.len() > u32::MAX as usize {
+            return Err("备份文件过大".into());
+        }
+
+        let local_offset = data.len() as u32;
+        let crc32 = crc32(&entry.data);
+        let size = entry.data.len() as u32;
+
+        push_u32(&mut data, 0x0403_4b50);
+        push_u16(&mut data, 20);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u32(&mut data, crc32);
+        push_u32(&mut data, size);
+        push_u32(&mut data, size);
+        push_u16(&mut data, name.len() as u16);
+        push_u16(&mut data, 0);
+        data.extend_from_slice(name);
+        data.extend_from_slice(&entry.data);
+
+        central_entries.push(ZipCentralEntry {
+            name: entry.name.clone(),
+            crc32,
+            size,
+            local_offset,
+        });
+    }
+
+    let central_offset = data.len() as u32;
+    for entry in &central_entries {
+        let name = entry.name.as_bytes();
+        push_u32(&mut data, 0x0201_4b50);
+        push_u16(&mut data, 20);
+        push_u16(&mut data, 20);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u32(&mut data, entry.crc32);
+        push_u32(&mut data, entry.size);
+        push_u32(&mut data, entry.size);
+        push_u16(&mut data, name.len() as u16);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u16(&mut data, 0);
+        push_u32(&mut data, 0);
+        push_u32(&mut data, entry.local_offset);
+        data.extend_from_slice(name);
+    }
+
+    let central_size = data.len() as u32 - central_offset;
+    if central_entries.len() > u16::MAX as usize {
+        return Err("备份条目过多".into());
+    }
+
+    push_u32(&mut data, 0x0605_4b50);
+    push_u16(&mut data, 0);
+    push_u16(&mut data, 0);
+    push_u16(&mut data, central_entries.len() as u16);
+    push_u16(&mut data, central_entries.len() as u16);
+    push_u32(&mut data, central_size);
+    push_u32(&mut data, central_offset);
+    push_u16(&mut data, 0);
+
+    std::fs::write(path, data).map_err(|e| e.to_string())
+}
+
+fn read_backup_entries(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, String> {
+    match read_zip_archive(bytes) {
+        Ok(entries) => Ok(entries),
+        Err(_) => {
+            let _: TodoBackupFile = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+            Ok(HashMap::from([("todos.json".to_string(), bytes.to_vec())]))
+        }
+    }
+}
+
+fn read_zip_archive(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, String> {
+    let eocd = find_eocd(bytes).ok_or_else(|| "备份文件格式无效".to_string())?;
+    let entry_count = read_u16(bytes, eocd + 10)? as usize;
+    let central_offset = read_u32(bytes, eocd + 16)? as usize;
+    let mut cursor = central_offset;
+    let mut entries = HashMap::new();
+
+    for _ in 0..entry_count {
+        if read_u32(bytes, cursor)? != 0x0201_4b50 {
+            return Err("备份文件目录损坏".into());
+        }
+
+        let method = read_u16(bytes, cursor + 10)?;
+        let compressed_size = read_u32(bytes, cursor + 20)? as usize;
+        let name_len = read_u16(bytes, cursor + 28)? as usize;
+        let extra_len = read_u16(bytes, cursor + 30)? as usize;
+        let comment_len = read_u16(bytes, cursor + 32)? as usize;
+        let local_offset = read_u32(bytes, cursor + 42)? as usize;
+        let name_start = cursor + 46;
+        let name_end = name_start + name_len;
+        let name = std::str::from_utf8(bytes.get(name_start..name_end).ok_or_else(|| {
+            "备份文件目录损坏".to_string()
+        })?)
+        .map_err(|_| "备份文件目录名称无效".to_string())?
+        .replace('\\', "/");
+
+        if method != 0 {
+            return Err("备份文件使用了不支持的压缩方式".into());
+        }
+        if !is_safe_zip_name(&name) {
+            return Err("备份文件包含不安全的路径".into());
+        }
+
+        if read_u32(bytes, local_offset)? != 0x0403_4b50 {
+            return Err("备份文件内容损坏".into());
+        }
+        let local_name_len = read_u16(bytes, local_offset + 26)? as usize;
+        let local_extra_len = read_u16(bytes, local_offset + 28)? as usize;
+        let data_start = local_offset + 30 + local_name_len + local_extra_len;
+        let data_end = data_start + compressed_size;
+        let data = bytes
+            .get(data_start..data_end)
+            .ok_or_else(|| "备份文件内容损坏".to_string())?
+            .to_vec();
+        entries.insert(name, data);
+        cursor = name_end + extra_len + comment_len;
+    }
+
+    Ok(entries)
+}
+
+fn insert_imported_todos(
+    conn: &Connection,
+    todos: &[TodoItem],
+    markdown_image_urls: &HashMap<String, String>,
+) -> Result<(), String> {
+    for todo in todos {
+        let content = restore_backup_markdown_image_urls(&todo.content, markdown_image_urls);
+        conn.execute(
+            "INSERT INTO todos (title, content, completed, due_at, pinned_at, created_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                todo.title,
+                content,
+                if todo.completed { 1 } else { 0 },
+                todo.due_at,
+                todo.pinned_at,
+                todo.created_at,
+                todo.completed_at
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        let todo_id = conn.last_insert_rowid();
+
+        for image in &todo.images {
+            conn.execute(
+                "INSERT INTO todo_images (todo_id, data_url, mime_type, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![todo_id, image.data_url, image.mime_type, image.created_at],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        for note in &todo.notes {
+            conn.execute(
+                "INSERT INTO todo_notes (todo_id, body, created_at) VALUES (?1, ?2, ?3)",
+                params![todo_id, note.body, note.created_at],
+            )
+            .map_err(|e| e.to_string())?;
+            let note_id = conn.last_insert_rowid();
+
+            for image in &note.images {
+                conn.execute(
+                    "INSERT INTO todo_note_images (note_id, data_url, mime_type, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![note_id, image.data_url, image.mime_type, image.created_at],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn rewrite_markdown_images_for_backup(
+    content: &str,
+    markdown_dir: &Path,
+    markdown_images: &mut HashMap<String, PathBuf>,
+) -> String {
+    let mut next = content.to_string();
+    for src in markdown_image_sources(content) {
+        let Some((file_name, file_path)) = markdown_image_reference(&src, markdown_dir) else {
+            continue;
+        };
+        markdown_images.insert(file_name.clone(), file_path);
+        next = next.replace(&src, &format!("markdown-images/{file_name}"));
+    }
+    next
+}
+
+fn restore_backup_markdown_image_urls(
+    content: &str,
+    markdown_image_urls: &HashMap<String, String>,
+) -> String {
+    let mut next = content.to_string();
+    for (relative, url) in markdown_image_urls {
+        next = next.replace(relative, url);
+    }
+    next
+}
+
+fn cleanup_unreferenced_markdown_images(app: &AppHandle, conn: &Connection) {
+    let Ok(markdown_dir) = markdown_images_dir(app) else {
+        return;
+    };
+    let mut referenced = HashSet::<String>::new();
+
+    if let Ok(mut stmt) = conn.prepare("SELECT content FROM todos") {
+        if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
+            for content in rows.filter_map(|row| row.ok()) {
+                for src in markdown_image_sources(&content) {
+                    if let Some((file_name, _)) = markdown_image_reference(&src, &markdown_dir) {
+                        referenced.insert(file_name);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir(&markdown_dir) {
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !referenced.contains(file_name) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
+fn markdown_image_sources(content: &str) -> Vec<String> {
+    let mut sources = Vec::new();
+    let mut rest = content;
+
+    while let Some(start) = rest.find("![") {
+        let after_start = &rest[start + 2..];
+        let Some(label_end) = after_start.find("](") else {
+            break;
+        };
+        let src_start = start + 2 + label_end + 2;
+        let after_src = &rest[src_start..];
+        let Some(src_end) = after_src.find(')') else {
+            break;
+        };
+        let src = after_src[..src_end].trim();
+        if !src.is_empty() {
+            sources.push(src.to_string());
+        }
+        rest = &after_src[src_end + 1..];
+    }
+
+    sources
+}
+
+fn markdown_image_reference(src: &str, markdown_dir: &Path) -> Option<(String, PathBuf)> {
+    let decoded = decode_asset_source_path(src);
+    if let Some(relative) = decoded.strip_prefix("markdown-images/") {
+        let file_name = backup_markdown_image_file_name(&format!("markdown-images/{relative}"))?;
+        return Some((file_name.clone(), markdown_dir.join(file_name)));
+    }
+
+    let path = PathBuf::from(&decoded);
+    let file_name = path.file_name()?.to_str()?.to_string();
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        return None;
+    }
+
+    let canonical_path = path.canonicalize().ok()?;
+    let canonical_markdown_dir = markdown_dir.canonicalize().ok()?;
+    if !canonical_path.starts_with(&canonical_markdown_dir) {
+        return None;
+    }
+
+    Some((file_name, canonical_path))
+}
+
+fn decode_asset_source_path(src: &str) -> String {
+    let path_part = src
+        .strip_prefix("http://asset.localhost/")
+        .or_else(|| src.strip_prefix("https://asset.localhost/"))
+        .or_else(|| src.strip_prefix("asset://localhost/"))
+        .unwrap_or(src);
+    percent_decode(path_part).replace('\\', "/")
+}
+
+fn backup_markdown_image_file_name(name: &str) -> Option<String> {
+    let rest = name.strip_prefix("markdown-images/")?;
+    if rest.is_empty()
+        || rest.contains('/')
+        || rest.contains('\\')
+        || rest.contains("..")
+        || rest.contains('\0')
+    {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+fn unique_markdown_image_path(markdown_dir: &Path, file_name: &str) -> PathBuf {
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image");
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("png");
+
+    for attempt in 0..10_000 {
+        let candidate = if attempt == 0 {
+            markdown_dir.join(format!("{stem}.{extension}"))
+        } else {
+            markdown_dir.join(format!("{stem}-import-{attempt}.{extension}"))
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    markdown_dir.join(format!(
+        "{stem}-import-{}.{extension}",
+        Local::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
+}
+
+fn markdown_images_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("markdown-images"))
+}
+
+fn asset_url_for_path(path: &Path) -> String {
+    let encoded = percent_encode(&path.to_string_lossy());
+    if cfg!(target_os = "windows") {
+        format!("http://asset.localhost/{encoded}")
+    } else {
+        format!("asset://localhost/{encoded}")
+    }
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~') {
+            output.push(*byte as char);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
+}
+
+fn percent_decode(value: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut index = 0;
+    let raw = value.as_bytes();
+    while index < raw.len() {
+        if raw[index] == b'%' && index + 2 < raw.len() {
+            if let Ok(hex) = std::str::from_utf8(&raw[index + 1..index + 3]) {
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    bytes.push(byte);
+                    index += 3;
+                    continue;
+                }
+            }
+        }
+        bytes.push(raw[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn is_safe_zip_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('/')
+        && !name.starts_with('\\')
+        && !name.contains(':')
+        && !name.contains('\0')
+        && !name.split('/').any(|part| part == ".." || part.is_empty())
+}
+
+fn find_eocd(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 22 {
+        return None;
+    }
+    (0..=bytes.len() - 22)
+        .rev()
+        .find(|index| bytes.get(*index..*index + 4) == Some(&[0x50, 0x4b, 0x05, 0x06]))
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
+    let slice = bytes
+        .get(offset..offset + 2)
+        .ok_or_else(|| "备份文件内容损坏".to_string())?;
+    Ok(u16::from_le_bytes([slice[0], slice[1]]))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let slice = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| "备份文件内容损坏".to_string())?;
+    Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+fn push_u16(data: &mut Vec<u8>, value: u16) {
+    data.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32(data: &mut Vec<u8>, value: u32) {
+    data.extend_from_slice(&value.to_le_bytes());
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= *byte as u32;
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 #[tauri::command]
@@ -1203,6 +1905,16 @@ fn normalize_todo_note_images(
     Ok(images)
 }
 
+fn markdown_image_extension(mime_type: &str) -> Result<&'static str, String> {
+    match mime_type {
+        "image/png" => Ok("png"),
+        "image/jpeg" => Ok("jpg"),
+        "image/webp" => Ok("webp"),
+        "image/gif" => Ok("gif"),
+        _ => Err("仅支持 PNG、JPEG、WebP 或 GIF 图片".into()),
+    }
+}
+
 fn validate_todo_image_inputs(images: &[TodoImageInput]) -> Result<(), String> {
     for image in images {
         let mime = image.mime_type.trim().to_ascii_lowercase();
@@ -1236,7 +1948,7 @@ fn validate_todo_image_inputs(images: &[TodoImageInput]) -> Result<(), String> {
 fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
     let mut todo = conn
         .query_row(
-            "SELECT id, title, content, completed, due_at, created_at, completed_at
+            "SELECT id, title, content, completed, due_at, pinned_at, created_at, completed_at
          FROM todos
          WHERE id = ?1",
             [id],
@@ -1251,6 +1963,35 @@ fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
     Ok(todo)
 }
 
+fn list_todos(conn: &Connection) -> Result<Vec<TodoItem>, String> {
+    let mut todos = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, title, content, completed, due_at, pinned_at, created_at, completed_at
+                 FROM todos
+                 ORDER BY completed ASC,
+                   CASE WHEN completed = 0 AND pinned_at IS NOT NULL THEN 0 ELSE 1 END ASC,
+                   CASE WHEN completed = 0 THEN datetime(pinned_at) END DESC,
+                   CASE WHEN completed = 0 AND due_at IS NOT NULL THEN 0 ELSE 1 END ASC,
+                   CASE WHEN completed = 0 THEN datetime(due_at) END ASC,
+                   datetime(COALESCE(completed_at, created_at)) DESC,
+                   id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([], todo_from_row)
+            .map_err(|e| e.to_string())?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    hydrate_todo_images(conn, &mut todos)?;
+    hydrate_todo_notes(conn, &mut todos)?;
+    Ok(todos)
+}
+
 fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
     Ok(TodoItem {
         id: row.get(0)?,
@@ -1258,8 +1999,9 @@ fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
         content: row.get(2)?,
         completed: row.get::<_, i64>(3)? != 0,
         due_at: row.get(4)?,
-        created_at: row.get(5)?,
-        completed_at: row.get(6)?,
+        pinned_at: row.get(5)?,
+        created_at: row.get(6)?,
+        completed_at: row.get(7)?,
         images: Vec::new(),
         notes: Vec::new(),
     })

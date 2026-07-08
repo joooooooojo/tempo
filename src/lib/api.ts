@@ -8,6 +8,7 @@ import type {
   Settings,
   TodoImage,
   TodoItem,
+  TodoNote,
   WeeklyReport,
 } from "@/types";
 
@@ -43,6 +44,8 @@ export const api = {
     invoke<TodoItem>("update_todo_details", { id, title, content, dueAt }),
   setTodoCompleted: (id: number, completed: boolean) =>
     invoke<TodoItem>("set_todo_completed", { id, completed }),
+  setTodoPinned: (id: number, pinned: boolean) =>
+    invoke<TodoItem>("set_todo_pinned", { id, pinned }),
   addTodoImage: (todoId: number, image: TodoImageInput) =>
     invoke<TodoItem>("add_todo_image", { todoId, image }),
   deleteTodoImage: (imageId: TodoImage["id"]) =>
@@ -51,10 +54,19 @@ export const api = {
     invoke<TodoItem>("add_todo_note", { todoId, body, images }),
   deleteTodoNote: (noteId: number) =>
     invoke<TodoItem>("delete_todo_note", { noteId }),
+  restoreTodoNote: (note: TodoNote) =>
+    invoke<TodoItem>("restore_todo_note", { note }),
   deleteTodo: (id: number) => invoke<void>("delete_todo", { id }),
+  restoreTodo: (todo: TodoItem) => invoke<TodoItem>("restore_todo", { todo }),
   clearCompletedTodos: () => invoke<number>("clear_completed_todos"),
   getKnownApps: () => invoke<AppUsage[]>("get_known_apps"),
   exportReport: (path: string) => invoke<void>("export_report", { path }),
+  exportTodosBackup: (path: string) =>
+    invoke<void>("export_todos_backup", { path }),
+  importTodosBackup: (path: string) =>
+    invoke<TodoItem[]>("import_todos_backup", { path }),
+  saveMarkdownImage: (dataUrl: string, mimeType: string) =>
+    invoke<string>("save_markdown_image", { dataUrl, mimeType }),
   completeOnboarding: () => invoke<void>("complete_onboarding"),
   quitApp: () => invoke<void>("quit_app"),
   hideToTray: () => invoke<void>("hide_to_tray_command"),

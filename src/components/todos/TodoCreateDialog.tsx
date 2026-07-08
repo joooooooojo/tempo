@@ -40,6 +40,7 @@ type TodoCreateDialogProps = {
   titlePlaceholder?: string;
   contentPlaceholder?: string;
   submitLabel?: string;
+  bodyExtra?: ReactNode;
   onOpenChange: (open: boolean) => void;
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
@@ -69,6 +70,7 @@ export function TodoCreateDialog({
   titlePlaceholder = "待办标题",
   contentPlaceholder = "待办内容（支持 Markdown，粘贴图片会嵌入正文）",
   submitLabel = "创建",
+  bodyExtra,
   onOpenChange,
   onTitleChange,
   onContentChange,
@@ -89,6 +91,7 @@ export function TodoCreateDialog({
           titlePlaceholder={titlePlaceholder}
           contentPlaceholder={contentPlaceholder}
           submitLabel={submitLabel}
+          bodyExtra={bodyExtra}
           titleElement={<DialogTitle className="text-[18px] font-bold">{heading}</DialogTitle>}
           cancelElement={
             <DialogClose asChild>
@@ -118,6 +121,7 @@ export function TodoCreateFormPanel({
   submitLabel = "创建",
   titleElement,
   cancelElement,
+  bodyExtra,
   layout = "dialog",
   onCancel,
   onTitleChange,
@@ -220,6 +224,7 @@ export function TodoCreateFormPanel({
               onPaste={handleContentPaste}
             />
           </div>
+          {bodyExtra}
         </div>
 
         <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">

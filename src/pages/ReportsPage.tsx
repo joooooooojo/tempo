@@ -12,6 +12,7 @@ import type { DailyReport, WeeklyReport } from "@/types";
 const ACCENT_DEEP = "#10b981";
 const AXIS = "#6b7f78";
 const GRID = "rgba(42, 84, 70, 0.1)";
+const HOUR_AXIS_TICKS = [0, 900, 1800, 2700, 3600];
 
 export function ReportsPage() {
   const [daily, setDaily] = useState<DailyReport | null>(null);
@@ -80,54 +81,61 @@ export function ReportsPage() {
                 </CardHeader>
                 <CardContent className="pt-5">
                   {hourlyChart.every((h) => h.seconds === 0) ? <EmptyState /> : (
-                    <ResponsiveContainer width="100%" height={210}>
-                      <BarChart data={hourlyChart} barSize={18} barCategoryGap="34%" margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="hourBar" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#5ee0a0" />
-                            <stop offset="100%" stopColor="#bbf7d0" />
-                          </linearGradient>
-                          <linearGradient id="hourBarPeak" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={ACCENT_DEEP} />
-                            <stop offset="100%" stopColor="#74e6ae" />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke={GRID} vertical={false} strokeDasharray="4 8" />
-                        <XAxis
-                          dataKey="hour"
-                          interval={0}
-                          tick={{ fontSize: 11, fill: AXIS }}
-                          tickFormatter={(v) => (Number(v) % 3 === 0 ? String(v) : "")}
-                          axisLine={false}
-                          tickLine={false}
-                          minTickGap={0}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 11, fill: AXIS }}
-                          tickFormatter={(v) => formatHourAxisTick(Number(v))}
-                          axisLine={false}
-                          tickLine={false}
-                          domain={[0, 3600]}
-                          ticks={[0, 900, 1800, 2700, 3600]}
-                          width={52}
-                        />
-                        <Tooltip cursor={{ fill: "rgba(16, 185, 129, 0.08)", radius: 6 }} content={<DurationTooltip />} />
-                        <Bar
-                          dataKey="seconds"
-                          radius={[5, 5, 3, 3]}
-                          animationBegin={80}
-                          animationDuration={720}
-                          animationEasing="ease-out"
-                        >
-                          {hourlyChart.map((entry) => (
-                            <Cell
-                              key={entry.label}
-                              fill={entry.seconds === 0 ? "transparent" : entry.isPeak ? "url(#hourBarPeak)" : "url(#hourBar)"}
-                            />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <div className="usage-chart h-[210px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={hourlyChart} barSize={18} barCategoryGap="34%" margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="hourBar" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#5ee0a0" />
+                              <stop offset="100%" stopColor="#bbf7d0" />
+                            </linearGradient>
+                            <linearGradient id="hourBarPeak" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={ACCENT_DEEP} />
+                              <stop offset="100%" stopColor="#74e6ae" />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid
+                            stroke={GRID}
+                            vertical={false}
+                            strokeDasharray="4 8"
+                            syncWithTicks
+                          />
+                          <XAxis
+                            dataKey="hour"
+                            interval={0}
+                            tick={{ fontSize: 11, fill: AXIS }}
+                            tickFormatter={(v) => (Number(v) % 3 === 0 ? String(v) : "")}
+                            axisLine={false}
+                            tickLine={false}
+                            minTickGap={0}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 11, fill: AXIS }}
+                            tickFormatter={(v) => formatHourAxisTick(Number(v))}
+                            axisLine={false}
+                            tickLine={false}
+                            domain={[0, 3600]}
+                            ticks={HOUR_AXIS_TICKS}
+                            width={52}
+                          />
+                          <Tooltip cursor={{ fill: "rgba(16, 185, 129, 0.08)", radius: 6 }} content={<DurationTooltip />} />
+                          <Bar
+                            dataKey="seconds"
+                            radius={[5, 5, 3, 3]}
+                            animationBegin={80}
+                            animationDuration={720}
+                            animationEasing="ease-out"
+                          >
+                            {hourlyChart.map((entry) => (
+                              <Cell
+                                key={entry.label}
+                                fill={entry.seconds === 0 ? "transparent" : entry.isPeak ? "url(#hourBarPeak)" : "url(#hourBar)"}
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -173,46 +181,52 @@ export function ReportsPage() {
                 <CardContent className="pt-5">
                   {weeklyChart.every((d) => d.seconds === 0) ? <EmptyState /> : (
                     <>
-                      <ResponsiveContainer width="100%" height={210}>
-                        <BarChart data={weeklyChart} barSize={28} barCategoryGap="30%" margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
-                          <defs>
-                            <linearGradient id="weekBar" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#5ee0a0" />
-                              <stop offset="100%" stopColor="#bbf7d0" />
-                            </linearGradient>
-                            <linearGradient id="weekBarPeak" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor={ACCENT_DEEP} />
-                              <stop offset="100%" stopColor="#74e6ae" />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid stroke={GRID} vertical={false} strokeDasharray="4 8" />
-                          <XAxis dataKey="date" tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} />
-                          <YAxis
-                            tick={{ fontSize: 11, fill: AXIS }}
-                            tickFormatter={(v) => formatWeeklyAxisTick(Number(v), weeklyAxis.max)}
-                            axisLine={false}
-                            tickLine={false}
-                            domain={[0, weeklyAxis.max]}
-                            ticks={weeklyAxis.ticks}
-                            width={52}
-                          />
-                          <Tooltip cursor={{ fill: "rgba(16, 185, 129, 0.08)", radius: 6 }} content={<DurationTooltip />} />
-                          <Bar
-                            dataKey="seconds"
-                            radius={[5, 5, 3, 3]}
-                            animationBegin={80}
-                            animationDuration={720}
-                            animationEasing="ease-out"
-                          >
-                            {weeklyChart.map((entry) => (
-                              <Cell
-                                key={entry.date}
-                                fill={entry.seconds === 0 ? "transparent" : entry.date === weeklyPeak.date ? "url(#weekBarPeak)" : "url(#weekBar)"}
-                              />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
+                      <div className="usage-chart h-[210px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={weeklyChart} barSize={28} barCategoryGap="30%" margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="weekBar" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#5ee0a0" />
+                                <stop offset="100%" stopColor="#bbf7d0" />
+                              </linearGradient>
+                              <linearGradient id="weekBarPeak" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={ACCENT_DEEP} />
+                                <stop offset="100%" stopColor="#74e6ae" />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid
+                              stroke={GRID}
+                              vertical={false}
+                              strokeDasharray="4 8"
+                            />
+                            <XAxis dataKey="date" tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} />
+                            <YAxis
+                              tick={{ fontSize: 11, fill: AXIS }}
+                              tickFormatter={(v) => formatWeeklyAxisTick(Number(v), weeklyAxis.max)}
+                              axisLine={false}
+                              tickLine={false}
+                              domain={[0, weeklyAxis.max]}
+                              ticks={weeklyAxis.ticks}
+                              width={52}
+                            />
+                            <Tooltip cursor={{ fill: "rgba(16, 185, 129, 0.08)", radius: 6 }} content={<DurationTooltip />} />
+                            <Bar
+                              dataKey="seconds"
+                              radius={[5, 5, 3, 3]}
+                              animationBegin={80}
+                              animationDuration={720}
+                              animationEasing="ease-out"
+                            >
+                              {weeklyChart.map((entry) => (
+                                <Cell
+                                  key={entry.date}
+                                  fill={entry.seconds === 0 ? "transparent" : entry.date === weeklyPeak.date ? "url(#weekBarPeak)" : "url(#weekBar)"}
+                                />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
                       {weekly.days.some((d) => d.is_over_limit) && (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {weekly.days.filter((d) => d.is_over_limit).map((d) => (
