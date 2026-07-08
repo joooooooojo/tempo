@@ -40,6 +40,7 @@ export interface WeeklyReport {
   days: WeeklyDay[];
   average_seconds: number;
   daily_limit_seconds: number;
+  top_apps: AppUsage[];
 }
 
 export interface AppLimit {
@@ -53,6 +54,7 @@ export interface AppLimit {
 export interface TodoItem {
   id: number;
   title: string;
+  content: string;
   completed: boolean;
   due_at?: string | null;
   created_at: string;

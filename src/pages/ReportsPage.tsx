@@ -2,11 +2,8 @@ import { useEffect, useState } from "react";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { Download } from "lucide-react";
-import { save } from "@tauri-apps/plugin-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 import { AppIcon } from "@/components/AppIcon";
 import { api } from "@/lib/api";
 import { formatDuration, formatDurationShort } from "@/lib/utils";
@@ -21,17 +18,27 @@ export function ReportsPage() {
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
 
   useEffect(() => {
-    api.getDailyReport().then(setDaily).catch(console.error);
-    api.getWeeklyReport().then(setWeekly).catch(console.error);
-  }, []);
+    let cancelled = false;
+    const refresh = () => {
+      api.getDailyReport()
+        .then((report) => {
+          if (!cancelled) setDaily(report);
+        })
+        .catch(console.error);
+      api.getWeeklyReport()
+        .then((report) => {
+          if (!cancelled) setWeekly(report);
+        })
+        .catch(console.error);
+    };
 
-  const handleExport = async () => {
-    const path = await save({
-      filters: [{ name: "CSV", extensions: ["csv"] }],
-      defaultPath: `时窗报表_${new Date().toISOString().slice(0, 10)}.csv`,
-    });
-    if (path) await api.exportReport(path);
-  };
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const hourlyChart = daily?.hourly.map((h) => ({
     hour: h.hour,
@@ -54,28 +61,14 @@ export function ReportsPage() {
   return (
     <div>
       <Tabs defaultValue="daily">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <TabsList className="w-fit">
-            <TabsTrigger value="daily">日报</TabsTrigger>
-            <TabsTrigger value="weekly">周报</TabsTrigger>
-          </TabsList>
-
-          <Button variant="outline" size="sm" className="h-9 rounded-lg px-4" onClick={handleExport}>
-            <Download className="mr-1.5 h-3.5 w-3.5" />
-            导出 CSV
-          </Button>
-        </div>
+        <TabsList className="mb-4 grid w-[240px] grid-cols-2">
+          <TabsTrigger value="daily" className="w-full">日报</TabsTrigger>
+          <TabsTrigger value="weekly" className="w-full">周报</TabsTrigger>
+        </TabsList>
 
         <TabsContent value="daily">
           {!daily ? <EmptyState /> : (
             <div className="space-y-4">
-              <div className="grid grid-cols-4 gap-3">
-                <MiniStat label="总时长" value={formatDuration(daily.total_seconds)} highlight />
-                <MiniStat label="均/小时" value={formatDuration(daily.average_seconds)} />
-                <MiniStat label="峰值时段" value={`${daily.peak_hour}:00`} />
-                <MiniStat label="高频应用" value={daily.top_apps[0]?.app_name ?? "—"} />
-              </div>
-
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between pb-0">
                   <CardTitle>每小时趋势</CardTitle>
@@ -140,7 +133,7 @@ export function ReportsPage() {
               </Card>
 
               <Card>
-                <CardHeader className="pb-0"><CardTitle>应用 TOP10</CardTitle></CardHeader>
+                <CardHeader className="pb-0"><CardTitle>应用排名</CardTitle></CardHeader>
                 <CardContent className="p-0 pt-2">
                   {daily.top_apps.length === 0 ? <div className="px-4 pb-4"><EmptyState /></div> : (
                     daily.top_apps.map((app, i) => (
@@ -168,10 +161,6 @@ export function ReportsPage() {
         <TabsContent value="weekly">
           {!weekly ? <EmptyState /> : (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <MiniStat label="日均时长" value={formatDuration(weekly.average_seconds)} highlight />
-                <MiniStat label="每日建议上限" value={formatLimitDuration(weekly.daily_limit_seconds)} />
-              </div>
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between pb-0">
                   <CardTitle>7 日对比</CardTitle>
@@ -234,6 +223,29 @@ export function ReportsPage() {
                         </div>
                       )}
                     </>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-0"><CardTitle>应用排名</CardTitle></CardHeader>
+                <CardContent className="p-0 pt-2">
+                  {weekly.top_apps.length === 0 ? <div className="px-4 pb-4"><EmptyState /></div> : (
+                    weekly.top_apps.map((app, i) => (
+                      <div key={app.app_name} className="list-row">
+                        <span className="flex min-w-0 items-center gap-3 text-[13px]">
+                          <span className="w-5 text-[11px] font-bold text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
+                          <AppIcon
+                            name={app.app_name}
+                            iconDataUrl={app.icon_data_url}
+                            size="sm"
+                            fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
+                          />
+                          <span className="truncate">{app.app_name}</span>
+                        </span>
+                        <span className="stat-value shrink-0 text-[13px] font-semibold text-primary">{formatDurationShort(app.seconds)}</span>
+                      </div>
+                    ))
                   )}
                 </CardContent>
               </Card>
@@ -305,21 +317,6 @@ function formatWeeklyAxisTick(seconds: number, axisMax: number) {
   if (axisMax <= 3600) return formatHourAxisTick(seconds);
   if (seconds <= 0) return "0h";
   return `${Math.round(seconds / 3600)}h`;
-}
-
-function formatLimitDuration(seconds: number) {
-  return formatDuration(seconds);
-}
-
-function MiniStat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <Card className={highlight ? "ring-1 ring-primary/30" : undefined}>
-      <CardContent className="p-3.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-        <p className={`stat-value mt-1 truncate text-[15px] font-bold ${highlight ? "gradient-text" : ""}`}>{value}</p>
-      </CardContent>
-    </Card>
-  );
 }
 
 function EmptyState() {

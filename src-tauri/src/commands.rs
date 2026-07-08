@@ -386,7 +386,7 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
             });
         }
 
-        (total, hourly, crate::db::top_apps(&conn, &date, 10))
+        (total, hourly, crate::db::top_apps(&conn, &date, i64::MAX))
     };
     hydrate_app_icons(&state, &date, &mut top_apps);
 
@@ -415,34 +415,75 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
 
 #[tauri::command]
 pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
-    let conn = state.db.lock();
     let today = Local::now().date_naive();
-    let mut days = Vec::new();
-    let mut total = 0i64;
+    let today_text = today.format("%Y-%m-%d").to_string();
+    let start_text = (today - chrono::Duration::days(6))
+        .format("%Y-%m-%d")
+        .to_string();
+    let (mut days, average, mut top_apps) = {
+        let conn = state.db.lock();
+        let mut days = Vec::new();
+        let mut total = 0i64;
 
-    for i in (0..7).rev() {
-        let d = today - chrono::Duration::days(i);
-        let ds = d.format("%Y-%m-%d").to_string();
-        let secs = get_daily_total(&conn, &ds);
-        total += secs;
-        days.push(WeeklyDay {
-            date: ds,
-            seconds: secs,
-            is_over_limit: false,
-        });
-    }
+        for i in (0..7).rev() {
+            let d = today - chrono::Duration::days(i);
+            let ds = d.format("%Y-%m-%d").to_string();
+            let secs = get_daily_total(&conn, &ds);
+            total += secs;
+            days.push(WeeklyDay {
+                date: ds,
+                seconds: secs,
+                is_over_limit: false,
+            });
+        }
 
-    let average = total / 7;
+        (days, total / 7, weekly_top_apps(&conn, &start_text, &today_text))
+    };
 
+    hydrate_app_icons(&state, &today_text, &mut top_apps);
     for day in &mut days {
         day.is_over_limit = day.seconds > DAILY_RECOMMENDED_LIMIT_SECONDS;
     }
-
     WeeklyReport {
         days,
         average_seconds: average,
         daily_limit_seconds: DAILY_RECOMMENDED_LIMIT_SECONDS,
+        top_apps,
     }
+}
+
+fn weekly_top_apps(conn: &Connection, start_date: &str, end_date: &str) -> Vec<AppUsage> {
+    let mut stmt = match conn.prepare(
+        "SELECT app_name,
+                COALESCE(MAX(process_name), ''),
+                COALESCE(MAX(category), ''),
+                COALESCE(SUM(seconds), 0),
+                MAX(icon_data_url)
+         FROM app_usage
+         WHERE date >= ?1 AND date <= ?2
+         GROUP BY app_name
+         ORDER BY SUM(seconds) DESC, app_name ASC",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return Vec::new(),
+    };
+
+    let rows = match stmt.query_map(params![start_date, end_date], |r| {
+        Ok(AppUsage {
+            app_name: r.get(0)?,
+            process_name: r.get(1)?,
+            category: r.get(2)?,
+            seconds: r.get(3)?,
+            icon_data_url: r.get(4)?,
+        })
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    rows.filter_map(|row| row.ok())
+        .filter(|app| !crate::db::is_system_host_usage(&app.app_name, &app.process_name))
+        .collect()
 }
 
 #[tauri::command]
@@ -640,7 +681,7 @@ pub fn get_todos(state: tauri::State<AppState>) -> Result<Vec<TodoItem>, String>
     let mut todos = {
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, completed, due_at, created_at, completed_at
+                "SELECT id, title, content, completed, due_at, created_at, completed_at
                  FROM todos
                  ORDER BY completed ASC,
                    CASE WHEN completed = 0 AND due_at IS NOT NULL THEN 0 ELSE 1 END ASC,
@@ -667,17 +708,19 @@ pub fn get_todos(state: tauri::State<AppState>) -> Result<Vec<TodoItem>, String>
 pub fn add_todo(
     state: tauri::State<AppState>,
     title: String,
+    content: Option<String>,
     due_at: Option<String>,
     images: Option<Vec<TodoImageInput>>,
 ) -> Result<TodoItem, String> {
     let images = normalize_todo_images(images)?;
-    let title = normalize_todo_title(title, !images.is_empty())?;
+    let content = normalize_todo_content(content.unwrap_or_default());
+    let title = normalize_todo_title(title, Some(&content), !images.is_empty())?;
     let due_at = normalize_due_at(due_at)?;
     let created_at = Local::now().to_rfc3339();
     let conn = state.db.lock();
     conn.execute(
-        "INSERT INTO todos (title, completed, due_at, created_at) VALUES (?1, 0, ?2, ?3)",
-        params![title, due_at, created_at],
+        "INSERT INTO todos (title, content, completed, due_at, created_at) VALUES (?1, ?2, 0, ?3, ?4)",
+        params![title, content, due_at, created_at],
     )
     .map_err(|e| e.to_string())?;
 
@@ -692,7 +735,7 @@ pub fn update_todo_title(
     id: i64,
     title: String,
 ) -> Result<TodoItem, String> {
-    let title = normalize_todo_title(title, false)?;
+    let title = normalize_todo_title(title, None, false)?;
     let conn = state.db.lock();
     let _existing = fetch_todo(&conn, id)?;
 
@@ -710,16 +753,18 @@ pub fn update_todo_details(
     state: tauri::State<AppState>,
     id: i64,
     title: String,
+    content: String,
     due_at: Option<String>,
 ) -> Result<TodoItem, String> {
-    let title = normalize_todo_title(title, false)?;
+    let content = normalize_todo_content(content);
+    let title = normalize_todo_title(title, Some(&content), false)?;
     let due_at = normalize_due_at(due_at)?;
     let conn = state.db.lock();
     let _existing = fetch_todo(&conn, id)?;
 
     conn.execute(
-        "UPDATE todos SET title = ?1, due_at = ?2 WHERE id = ?3",
-        params![title, due_at, id],
+        "UPDATE todos SET title = ?1, content = ?2, due_at = ?3 WHERE id = ?4",
+        params![title, content, due_at, id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -1035,27 +1080,62 @@ pub fn skip_pomodoro_phase(app: AppHandle, state: tauri::State<AppState>) -> Pom
     crate::pomodoro::skip_pomodoro_phase(&app, &state)
 }
 
-fn normalize_todo_title(title: String, allow_image_only: bool) -> Result<String, String> {
+fn normalize_todo_title(
+    title: String,
+    content: Option<&str>,
+    allow_image_only: bool,
+) -> Result<String, String> {
     let normalized = title
-        .lines()
-        .map(str::trim)
+        .split_whitespace()
         .collect::<Vec<_>>()
-        .join("\n")
+        .join(" ")
         .trim()
         .to_string();
 
     if normalized.is_empty() {
+        if let Some(derived) = content.and_then(derive_todo_title_from_content) {
+            return Ok(derived);
+        }
         if allow_image_only {
             return Ok("图片待办".into());
         }
-        return Err("请输入待办内容".into());
+        return Err("请输入待办标题".into());
     }
 
     if normalized.chars().count() > 120 {
-        return Err("待办内容不能超过 120 个字".into());
+        return Err("待办标题不能超过 120 个字".into());
     }
 
     Ok(normalized)
+}
+
+fn normalize_todo_content(content: String) -> String {
+    content.replace("\r\n", "\n").replace('\r', "\n").trim().to_string()
+}
+
+fn derive_todo_title_from_content(content: &str) -> Option<String> {
+    let first_line = content.lines().find_map(|line| {
+        let cleaned = strip_markdown_for_title(line).trim().to_string();
+        (!cleaned.is_empty()).then_some(cleaned)
+    })?;
+
+    let chars = first_line.chars().collect::<Vec<_>>();
+    if chars.len() <= 120 {
+        Some(first_line)
+    } else {
+        Some(chars.into_iter().take(120).collect())
+    }
+}
+
+fn strip_markdown_for_title(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches('#')
+        .trim_start_matches(|ch: char| matches!(ch, '-' | '*' | '+' | '>'))
+        .replace("**", "")
+        .replace("__", "")
+        .replace('`', "")
+        .replace("![", "[")
 }
 
 fn normalize_due_at(due_at: Option<String>) -> Result<Option<String>, String> {
@@ -1156,7 +1236,7 @@ fn validate_todo_image_inputs(images: &[TodoImageInput]) -> Result<(), String> {
 fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
     let mut todo = conn
         .query_row(
-            "SELECT id, title, completed, due_at, created_at, completed_at
+            "SELECT id, title, content, completed, due_at, created_at, completed_at
          FROM todos
          WHERE id = ?1",
             [id],
@@ -1175,10 +1255,11 @@ fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
     Ok(TodoItem {
         id: row.get(0)?,
         title: row.get(1)?,
-        completed: row.get::<_, i64>(2)? != 0,
-        due_at: row.get(3)?,
-        created_at: row.get(4)?,
-        completed_at: row.get(5)?,
+        content: row.get(2)?,
+        completed: row.get::<_, i64>(3)? != 0,
+        due_at: row.get(4)?,
+        created_at: row.get(5)?,
+        completed_at: row.get(6)?,
         images: Vec::new(),
         notes: Vec::new(),
     })

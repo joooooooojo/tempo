@@ -6,8 +6,6 @@ import { Toaster, toast } from "sonner";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { ReminderDialog } from "@/components/ReminderDialog";
-import { QuitDialog } from "@/components/QuitDialog";
-import { HomePage } from "@/pages/HomePage";
 import { EyeCareReminderPage } from "@/pages/EyeCareReminderPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -36,7 +34,6 @@ function App() {
 function MainApp() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
-  const [showQuit, setShowQuit] = useState(false);
 
   const applyTheme = useCallback((theme: Settings["theme"]) => {
     const root = document.documentElement;
@@ -71,15 +68,12 @@ function MainApp() {
       setReminder(e.payload);
     });
 
-    const unlistenQuit = listen("request-quit", () => setShowQuit(true));
-
     const unlistenToast = listen<{ message: string }>("toast", (e) => {
       toast.info(e.payload.message);
     });
 
     return () => {
       unlistenReminder.then((fn) => fn());
-      unlistenQuit.then((fn) => fn());
       unlistenToast.then((fn) => fn());
     };
   }, [applyTheme]);
@@ -89,7 +83,7 @@ function MainApp() {
       <BrowserRouter>
         <Routes>
           <Route element={<AppLayout />}>
-            <Route index element={<HomePage />} />
+            <Route index element={<TodoPage />} />
             <Route path="pomodoro" element={<PomodoroPage />} />
             <Route path="todos" element={<TodoPage />} />
             <Route path="reports" element={<ReportsPage />} />
@@ -107,15 +101,6 @@ function MainApp() {
       />
 
       <ReminderDialog event={reminder} onDismiss={() => setReminder(null)} />
-
-      <QuitDialog
-        open={showQuit}
-        onCancel={() => setShowQuit(false)}
-        onConfirm={async () => {
-          setShowQuit(false);
-          await api.quitApp();
-        }}
-      />
 
       <Toaster position="top-center" richColors toastOptions={{ className: "glass rounded-lg" }} />
     </>

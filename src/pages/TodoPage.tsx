@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
+import { MarkdownPreview } from "@/components/todos/MarkdownPreview";
 import { TodoCreateDialog, type DraftTodoImage } from "@/components/todos/TodoCreateDialog";
 import {
   Dialog,
@@ -34,6 +35,7 @@ import {
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api, type TodoImageInput } from "@/lib/api";
+import { clipboardHasImages, insertTextAtSelection, markdownImagesFromClipboard } from "@/lib/markdownImages";
 import { cn } from "@/lib/utils";
 import type { TodoImage, TodoItem, TodoNote, TodoNoteImage } from "@/types";
 
@@ -58,7 +60,6 @@ const filters: Array<{ value: TodoFilter; label: string }> = [
   { value: "completed", label: "已完成" },
 ];
 
-const MAX_IMAGES_PER_TODO = 4;
 const MAX_IMAGES_PER_NOTE = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_DUE_HOUR = "18";
@@ -69,16 +70,18 @@ const minuteOptions = ["00", "15", "30", "45"];
 export function TodoPage() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
   const [dueAt, setDueAt] = useState("");
-  const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
   const [noteDrafts, setNoteDrafts] = useState<Record<number, NoteDraft>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [detailId, setDetailId] = useState<number | null>(null);
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
   const [filter, setFilter] = useState<TodoFilter>("active");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
   const [editDueAt, setEditDueAt] = useState("");
 
   useEffect(() => {
@@ -125,11 +128,15 @@ export function TodoPage() {
     () => (editingId === null ? null : todos.find((todo) => todo.id === editingId) ?? null),
     [editingId, todos]
   );
+  const detailTodo = useMemo(
+    () => (detailId === null ? null : todos.find((todo) => todo.id === detailId) ?? null),
+    [detailId, todos]
+  );
 
   const resetDraft = () => {
     setTitle("");
+    setContent("");
     setDueAt("");
-    setDraftImages([]);
   };
 
   const handleCreateOpenChange = (nextOpen: boolean) => {
@@ -139,55 +146,26 @@ export function TodoPage() {
     if (!nextOpen) resetDraft();
   };
 
-  const handlePagePaste = async (event: ClipboardEvent<HTMLDivElement>) => {
-    const hasPastedImage = Array.from(event.clipboardData.items).some(
-      (item) => item.kind === "file" && item.type.startsWith("image/")
-    );
-    if (!hasPastedImage) return;
+  const handleMarkdownImagePaste = async (
+    event: ClipboardEvent<HTMLTextAreaElement>,
+    value: string,
+    onChange: (nextValue: string) => void
+  ) => {
+    if (!clipboardHasImages(event)) return;
 
     event.preventDefault();
     event.stopPropagation();
 
-    const pastedImages = await imagesFromClipboard(event);
-    if (pastedImages.length === 0) return;
+    const textarea = event.currentTarget;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    const { markdown, errors } = await markdownImagesFromClipboard(event);
 
-    if (editingId !== null) {
-      const target = todos.find((todo) => todo.id === editingId);
-      if (!target) return;
+    for (const error of errors) toast.error(error);
+    if (!markdown) return;
 
-      const available = MAX_IMAGES_PER_TODO - target.images.length;
-      if (available <= 0) {
-        toast.error(`每个待办最多添加 ${MAX_IMAGES_PER_TODO} 张图片`);
-        return;
-      }
-
-      await addImagesToExistingTodo(target, pastedImages.slice(0, available));
-      if (pastedImages.length > available) toast.info("已达到图片数量上限");
-      return;
-    }
-
-    const available = MAX_IMAGES_PER_TODO - draftImages.length;
-    if (available <= 0) {
-      toast.error(`每个待办最多添加 ${MAX_IMAGES_PER_TODO} 张图片`);
-      return;
-    }
-
-    setCreateOpen(true);
-    setDraftImages((current) => [...current, ...pastedImages.slice(0, available)]);
-    toast.success(pastedImages.length > available ? "已添加部分图片" : "已粘贴图片");
-  };
-
-  const addImagesToExistingTodo = async (todo: TodoItem, images: DraftImage[]) => {
-    try {
-      let updated = todo;
-      for (const image of images) {
-        updated = await api.addTodoImage(todo.id, toTodoImageInput(image));
-      }
-      setTodos((current) => replaceTodo(current, updated));
-      toast.success(images.length > 1 ? `已添加 ${images.length} 张图片` : "已粘贴图片");
-    } catch (error) {
-      toast.error(errorMessage(error));
-    }
+    onChange(insertTextAtSelection(value, markdown, selectionStart, selectionEnd));
+    toast.success("图片已嵌入到 Markdown 内容");
   };
 
   const updateNoteDraft = (todoId: number, update: (draft: NoteDraft) => NoteDraft) => {
@@ -266,8 +244,8 @@ export function TodoPage() {
 
   const handleAdd = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!title.trim() && draftImages.length === 0) {
-      toast.error("请输入待办内容");
+    if (!title.trim() && !content.trim()) {
+      toast.error("请输入待办标题或内容");
       return;
     }
 
@@ -275,8 +253,8 @@ export function TodoPage() {
     try {
       const created = await api.addTodo(
         title,
-        toIsoDateTime(dueAt),
-        draftImages.map(toTodoImageInput)
+        content,
+        toIsoDateTime(dueAt)
       );
       setTodos((current) => sortTodos([created, ...current]));
       resetDraft();
@@ -303,12 +281,14 @@ export function TodoPage() {
   const startEdit = (todo: TodoItem) => {
     setEditingId(todo.id);
     setEditTitle(todo.title);
+    setEditContent(todo.content);
     setEditDueAt(toDateTimeLocalValue(todo.due_at));
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditTitle("");
+    setEditContent("");
     setEditDueAt("");
   };
 
@@ -319,13 +299,13 @@ export function TodoPage() {
 
   const commitEdit = async (todo: TodoItem) => {
     const nextTitle = editTitle.trim();
-    if (!nextTitle) {
-      toast.error("请输入待办内容");
+    if (!nextTitle && !editContent.trim()) {
+      toast.error("请输入待办标题或内容");
       return;
     }
 
     try {
-      const updated = await api.updateTodoDetails(todo.id, nextTitle, toIsoDateTime(editDueAt));
+      const updated = await api.updateTodoDetails(todo.id, nextTitle, editContent, toIsoDateTime(editDueAt));
       setTodos((current) => replaceTodo(current, updated));
       cancelEdit();
       toast.success("已更新");
@@ -355,7 +335,7 @@ export function TodoPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5" onPaste={handlePagePaste}>
+    <div className="mx-auto max-w-3xl space-y-5">
       <div className="grid grid-cols-4 gap-3">
         <TodoStat label="未完成" value={activeCount} />
         <TodoStat label="即将截止" value={dueSoonCount} tone={dueSoonCount > 0 ? "warning" : "default"} />
@@ -381,15 +361,13 @@ export function TodoPage() {
       <TodoCreateDialog
         open={createOpen}
         todoTitle={title}
+        todoContent={content}
         dueAt={dueAt}
-        images={draftImages}
         saving={saving}
         onOpenChange={handleCreateOpenChange}
         onTitleChange={setTitle}
+        onContentChange={setContent}
         onDueAtChange={setDueAt}
-        onDeleteImage={(image) =>
-          setDraftImages((current) => current.filter((item) => item.local_id !== image.local_id))
-        }
         onSubmit={handleAdd}
       />
 
@@ -423,23 +401,30 @@ export function TodoPage() {
                     autoFocus
                     value={editTitle}
                     maxLength={120}
-                    placeholder="待办内容"
+                    className="min-h-11"
+                    placeholder="待办标题"
                     onChange={(event) => setEditTitle(event.target.value)}
                   />
                 </div>
 
                 <div>
-                  {editingTodo.images.length > 0 ? (
+                  <FloatingTextarea
+                    id="edit-todo-content"
+                    value={editContent}
+                    className="min-h-44"
+                    placeholder="待办内容（支持 Markdown，粘贴图片会嵌入正文）"
+                    onChange={(event) => setEditContent(event.target.value)}
+                    onPaste={(event) => void handleMarkdownImagePaste(event, editContent, setEditContent)}
+                  />
+                </div>
+
+                <div>
+                  {editingTodo.images.length > 0 && (
                     <TodoImages
                       images={editingTodo.images}
                       onDelete={deleteImage}
                       onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: editingTodo.title })}
                     />
-                  ) : (
-                    <div className="flex h-14 items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-background/46 text-muted-foreground">
-                      <ImagePlus className="h-4 w-4" />
-                      <span className="text-[13px]">暂无图片</span>
-                    </div>
                   )}
                 </div>
               </div>
@@ -455,6 +440,85 @@ export function TodoPage() {
                 </Button>
               </DialogFooter>
             </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(detailTodo)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setDetailId(null);
+        }}
+      >
+        <DialogContent className="todo-create-dialog max-w-[680px] gap-0 overflow-hidden rounded-xl border-border/80 p-0">
+          {detailTodo && (
+            <>
+              <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
+                <DialogTitle className="truncate text-[18px] font-bold">{detailTodo.title}</DialogTitle>
+              </DialogHeader>
+              <div className="max-h-[68vh] overflow-y-auto px-5 py-4">
+                <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span>
+                    {detailTodo.completed && detailTodo.completed_at
+                      ? `完成于 ${formatTodoDate(detailTodo.completed_at)}`
+                      : `创建于 ${formatTodoDate(detailTodo.created_at)}`}
+                  </span>
+                  {detailTodo.due_at && (
+                    <span className={cn("rounded-md px-1.5 py-0.5 font-medium", dueBadgeClass(detailTodo))}>
+                      截止 {formatTodoDate(detailTodo.due_at)}
+                    </span>
+                  )}
+                </div>
+
+                <MarkdownPreview value={detailTodo.content} />
+
+                <TodoImages
+                  images={detailTodo.images}
+                  onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: detailTodo.title })}
+                />
+                <TodoNotes
+                  notes={detailTodo.notes}
+                  onDelete={deleteNote}
+                  onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: detailTodo.title })}
+                />
+                <NoteComposer
+                  draft={noteDrafts[detailTodo.id] ?? { body: "", images: [] }}
+                  onBodyChange={(body) =>
+                    updateNoteDraft(detailTodo.id, (current) => ({ ...current, body, open: true }))
+                  }
+                  onPaste={(event) => void handleNotePaste(detailTodo.id, event)}
+                  onDeleteImage={(image) =>
+                    updateNoteDraft(detailTodo.id, (current) => ({
+                      ...current,
+                      images: current.images.filter((item) => item.local_id !== image.local_id),
+                    }))
+                  }
+                  onCancel={() => resetNoteDraft(detailTodo.id)}
+                  onSubmit={() => void submitNote(detailTodo)}
+                />
+              </div>
+              <DialogFooter className="gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-9 min-w-20 text-muted-foreground"
+                  onClick={() => updateNoteDraft(detailTodo.id, (current) => ({ ...current, open: true }))}
+                >
+                  添加备注
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 min-w-20"
+                  onClick={() => {
+                    setDetailId(null);
+                    startEdit(detailTodo);
+                  }}
+                >
+                  编辑
+                </Button>
+              </DialogFooter>
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -520,8 +584,6 @@ export function TodoPage() {
           ) : (
             <div className="divide-y divide-border/45">
               {visibleTodos.map((todo) => {
-                const noteDraft = noteDrafts[todo.id] ?? { body: "", images: [] };
-
                 return (
                   <div
                     key={todo.id}
@@ -545,14 +607,16 @@ export function TodoPage() {
 
                     <div className="min-w-0 text-left">
                       <div className="flex min-w-0 items-center gap-2">
-                        <p
+                        <button
+                          type="button"
                           className={cn(
-                            "truncate text-[14px] font-semibold transition-colors",
+                            "min-w-0 truncate text-left text-[14px] font-semibold transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                             todo.completed && "text-muted-foreground line-through"
                           )}
+                          onClick={() => setDetailId(todo.id)}
                         >
                           {todo.title}
-                        </p>
+                        </button>
                         {todo.images.length > 0 && (
                           <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-foreground/5 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
                             <ImagePlus className="h-3 w-3" />
@@ -572,30 +636,6 @@ export function TodoPage() {
                           </span>
                         )}
                       </div>
-                      <TodoImages
-                        images={todo.images}
-                        onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
-                      />
-                      <TodoNotes
-                        notes={todo.notes}
-                        onDelete={deleteNote}
-                        onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
-                      />
-                      <NoteComposer
-                        draft={noteDraft}
-                        onBodyChange={(body) =>
-                          updateNoteDraft(todo.id, (current) => ({ ...current, body, open: true }))
-                        }
-                        onPaste={(event) => void handleNotePaste(todo.id, event)}
-                        onDeleteImage={(image) =>
-                          updateNoteDraft(todo.id, (current) => ({
-                            ...current,
-                            images: current.images.filter((item) => item.local_id !== image.local_id),
-                          }))
-                        }
-                        onCancel={() => resetNoteDraft(todo.id)}
-                        onSubmit={() => void submitNote(todo)}
-                      />
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -604,7 +644,10 @@ export function TodoPage() {
                         size="icon"
                         className="h-8 w-8 text-muted-foreground"
                         aria-label="追加备注"
-                        onClick={() => updateNoteDraft(todo.id, (current) => ({ ...current, open: true }))}
+                        onClick={() => {
+                          setDetailId(todo.id);
+                          updateNoteDraft(todo.id, (current) => ({ ...current, open: true }));
+                        }}
                       >
                         <MessageSquarePlus className="h-3.5 w-3.5" />
                       </Button>

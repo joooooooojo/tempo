@@ -9,7 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { CalendarClock, ImagePlus, X } from "lucide-react";
+import { CalendarClock, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { TodoImageInput } from "@/lib/api";
+import { clipboardHasImages, insertTextAtSelection, markdownImagesFromClipboard } from "@/lib/markdownImages";
 import { cn } from "@/lib/utils";
 
 export interface DraftTodoImage extends TodoImageInput {
@@ -32,15 +34,16 @@ type TodoCreateDialogProps = {
   open: boolean;
   heading?: string;
   todoTitle: string;
+  todoContent: string;
   dueAt: string;
-  images: DraftTodoImage[];
   saving?: boolean;
   titlePlaceholder?: string;
+  contentPlaceholder?: string;
   submitLabel?: string;
   onOpenChange: (open: boolean) => void;
   onTitleChange: (value: string) => void;
+  onContentChange: (value: string) => void;
   onDueAtChange: (value: string) => void;
-  onDeleteImage: (image: DraftTodoImage) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 };
 
@@ -60,15 +63,16 @@ export function TodoCreateDialog({
   open,
   heading = "新建待办",
   todoTitle,
+  todoContent,
   dueAt,
-  images,
   saving = false,
-  titlePlaceholder = "待办内容",
+  titlePlaceholder = "待办标题",
+  contentPlaceholder = "待办内容（支持 Markdown，粘贴图片会嵌入正文）",
   submitLabel = "创建",
   onOpenChange,
   onTitleChange,
+  onContentChange,
   onDueAtChange,
-  onDeleteImage,
   onSubmit,
 }: TodoCreateDialogProps) {
   return (
@@ -79,10 +83,11 @@ export function TodoCreateDialog({
         <TodoCreateFormPanel
           heading={heading}
           todoTitle={todoTitle}
+          todoContent={todoContent}
           dueAt={dueAt}
-          images={images}
           saving={saving}
           titlePlaceholder={titlePlaceholder}
+          contentPlaceholder={contentPlaceholder}
           submitLabel={submitLabel}
           titleElement={<DialogTitle className="text-[18px] font-bold">{heading}</DialogTitle>}
           cancelElement={
@@ -93,8 +98,8 @@ export function TodoCreateDialog({
             </DialogClose>
           }
           onTitleChange={onTitleChange}
+          onContentChange={onContentChange}
           onDueAtChange={onDueAtChange}
-          onDeleteImage={onDeleteImage}
           onSubmit={onSubmit}
         />
       </DialogContent>
@@ -105,18 +110,19 @@ export function TodoCreateDialog({
 export function TodoCreateFormPanel({
   heading = "新建待办",
   todoTitle,
+  todoContent,
   dueAt,
-  images,
   saving = false,
-  titlePlaceholder = "待办内容",
+  titlePlaceholder = "待办标题",
+  contentPlaceholder = "待办内容（支持 Markdown，粘贴图片会嵌入正文）",
   submitLabel = "创建",
   titleElement,
   cancelElement,
   layout = "dialog",
   onCancel,
   onTitleChange,
+  onContentChange,
   onDueAtChange,
-  onDeleteImage,
   onSubmit,
 }: TodoCreateFormPanelProps) {
   const isWindowLayout = layout === "window";
@@ -126,6 +132,23 @@ export function TodoCreateFormPanel({
 
     event.preventDefault();
     getCurrentWindow().startDragging().catch(console.error);
+  };
+  const handleContentPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!clipboardHasImages(event)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const textarea = event.currentTarget;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    const { markdown, errors } = await markdownImagesFromClipboard(event);
+
+    for (const error of errors) toast.error(error);
+    if (!markdown) return;
+
+    onContentChange(insertTextAtSelection(todoContent, markdown, selectionStart, selectionEnd));
+    toast.success("图片已嵌入到 Markdown 内容");
   };
 
   return (
@@ -169,7 +192,7 @@ export function TodoCreateFormPanel({
           <div>
             <DueDateField
               value={dueAt}
-              className="h-10 w-full"
+              className="h-11 w-full"
               floatingLabel
               popoverPortalled={false}
               onChange={onDueAtChange}
@@ -177,7 +200,7 @@ export function TodoCreateFormPanel({
           </div>
 
           <div className={cn(isWindowLayout && "shrink-0")}>
-            <FloatingTextarea
+            <FloatingInput
               id="new-todo-title"
               autoFocus
               value={todoTitle}
@@ -188,19 +211,14 @@ export function TodoCreateFormPanel({
           </div>
 
           <div className={cn(isWindowLayout && "min-h-0 flex-1")}>
-            {images.length > 0 ? (
-              <ImageStrip images={images} onDelete={onDeleteImage} />
-            ) : (
-              <div
-                className={cn(
-                  "flex items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-background/46 text-muted-foreground",
-                  isWindowLayout ? "h-full min-h-18" : "h-14"
-                )}
-              >
-                <ImagePlus className="h-4 w-4" />
-                <span className="text-[13px]">暂无图片</span>
-              </div>
-            )}
+            <FloatingTextarea
+              id="new-todo-content"
+              value={todoContent}
+              placeholder={contentPlaceholder}
+              className={cn(isWindowLayout ? "h-full min-h-32" : "min-h-40")}
+              onChange={(event) => onContentChange(event.target.value)}
+              onPaste={handleContentPaste}
+            />
           </div>
         </div>
 
@@ -224,6 +242,74 @@ export function todoDateTimeLocalToIso(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
+}
+
+function FloatingInput({
+  id,
+  value,
+  placeholder,
+  maxLength,
+  autoFocus,
+  className,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  placeholder: string;
+  maxLength?: number;
+  autoFocus?: boolean;
+  className?: string;
+  onChange: ChangeEventHandler<HTMLInputElement>;
+}) {
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const floated = focused || value.length > 0;
+
+  useEffect(() => {
+    if (!autoFocus) return;
+
+    const frame = requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+
+      const end = input.value.length;
+      input.focus();
+      input.setSelectionRange(end, end);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [autoFocus]);
+
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        id={id}
+        autoFocus={autoFocus}
+        value={value}
+        maxLength={maxLength}
+        placeholder={floated ? "" : placeholder}
+        className={cn(
+          "block h-11 w-full rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[14px] font-semibold leading-5 shadow-sm shadow-emerald-950/[0.03] transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50",
+          floated && "border-primary/45",
+          className
+        )}
+        onChange={onChange}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+      <span
+        className={cn(
+          "pointer-events-none absolute left-3 top-px z-10 origin-left -translate-y-1/2 rounded-sm bg-[var(--todo-field-bg)] px-1 text-[11px] font-medium leading-none transition-all duration-150",
+          floated
+            ? cn("scale-100 opacity-100", focused ? "text-primary" : "text-muted-foreground")
+            : "scale-95 opacity-0"
+        )}
+      >
+        {placeholder}
+      </span>
+    </div>
+  );
 }
 
 function FloatingTextarea({
@@ -311,6 +397,7 @@ function DueDateField({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
   const selectedDate = parseDateTimeLocalValue(value);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(selectedDate ?? new Date()));
   const fallbackDate = getDefaultDueDate(new Date());
@@ -337,7 +424,8 @@ function DueDateField({
     setOpen(false);
   };
   const placeholder = "截止时间";
-  const floated = floatingLabel && (open || Boolean(value));
+  const active = open || focused || Boolean(value);
+  const floated = floatingLabel && active;
   const isBaseDateDisabled = isDueDateDisabled(baseDate);
   const todayDisabled = isDueDateDisabled(new Date());
 
@@ -348,7 +436,7 @@ function DueDateField({
           className={cn(
             "pointer-events-none absolute left-3 top-px z-10 origin-left -translate-y-1/2 rounded-sm bg-[var(--todo-field-bg)] px-1 text-[11px] font-medium leading-none transition-all duration-150",
             floated
-              ? cn("scale-100 opacity-100", open ? "text-primary" : "text-muted-foreground")
+              ? cn("scale-100 opacity-100", open || focused ? "text-primary" : "text-muted-foreground")
               : "scale-95 opacity-0"
           )}
         >
@@ -360,19 +448,21 @@ function DueDateField({
           <button
             type="button"
             className={cn(
-              "flex h-full w-full min-w-0 items-center gap-2 rounded-lg px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+              "flex h-full w-full min-w-0 items-center gap-2 rounded-lg px-3 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
               floatingLabel
                 ? cn(
                     "border border-border/70 bg-[var(--todo-field-bg)] shadow-sm shadow-emerald-950/[0.03] hover:brightness-[1.02]",
-                    floated && "border-primary/45"
+                    active && "border-primary/45"
                   )
                 : "glass-subtle hover:bg-white/45 dark:hover:bg-white/8",
               value ? "pr-9" : "pr-3"
             )}
             aria-label={placeholder}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
           >
             <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className={cn("min-w-0 truncate text-[13px] font-medium", value ? "text-foreground" : "text-muted-foreground")}>
+            <span className={cn("min-w-0 truncate", value ? "text-foreground" : "text-muted-foreground")}>
               {value ? formatDueFieldValue(value) : floated ? "" : placeholder}
             </span>
           </button>
@@ -514,32 +604,6 @@ function DueDateField({
           </div>
         </PopoverContent>
       </Popover>
-    </div>
-  );
-}
-
-function ImageStrip({
-  images,
-  onDelete,
-}: {
-  images: DraftTodoImage[];
-  onDelete: (image: DraftTodoImage) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {images.map((image) => (
-        <span key={image.local_id} className="group relative block h-20 w-24 overflow-hidden rounded-lg border border-border/60 bg-foreground/5">
-          <img src={image.data_url} alt="" className="h-full w-full object-cover" draggable={false} />
-          <button
-            type="button"
-            className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-md bg-background/85 text-muted-foreground shadow-sm hover:text-rose-600"
-            aria-label="删除图片"
-            onClick={() => onDelete(image)}
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </span>
-      ))}
     </div>
   );
 }

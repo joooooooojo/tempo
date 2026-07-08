@@ -5,24 +5,20 @@ import { toast, Toaster } from "sonner";
 import {
   TodoCreateFormPanel,
   todoDateTimeLocalToIso,
-  type DraftTodoImage,
 } from "@/components/todos/TodoCreateDialog";
-import { api, type TodoImageInput } from "@/lib/api";
+import { api } from "@/lib/api";
+import { markdownImageFromBlob } from "@/lib/markdownImages";
 import type { TodoItem } from "@/types";
-
-type DraftImage = DraftTodoImage;
 
 interface QuickClipboardContent {
   title: string;
-  images: DraftImage[];
+  content: string;
 }
-
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export function QuickTodoPage() {
   const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
   const [dueAt, setDueAt] = useState("");
-  const [images, setImages] = useState<DraftImage[]>([]);
   const [reading, setReading] = useState(true);
   const [saving, setSaving] = useState(false);
   const readRequest = useRef(0);
@@ -50,16 +46,16 @@ export function QuickTodoPage() {
     readRequest.current = request;
     setReading(true);
     setTitle("");
+    setContent("");
     setDueAt("");
-    setImages([]);
 
     try {
       const content = await readFirstClipboardTodoContent();
       if (readRequest.current !== request) return;
 
       setTitle(content.title);
-      setImages(content.images);
-      if (!content.title && content.images.length === 0) {
+      setContent(content.content);
+      if (!content.title && !content.content) {
         toast.info("剪贴板没有可用的文字或图片");
       }
     } catch (error) {
@@ -82,8 +78,8 @@ export function QuickTodoPage() {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!title.trim() && images.length === 0) {
-      toast.error("请输入待办内容");
+    if (!title.trim() && !content.trim()) {
+      toast.error("请输入待办标题或内容");
       return;
     }
 
@@ -91,8 +87,8 @@ export function QuickTodoPage() {
     try {
       const created = await api.addTodo(
         title,
-        todoDateTimeLocalToIso(dueAt),
-        images.map(toTodoImageInput)
+        content,
+        todoDateTimeLocalToIso(dueAt)
       );
       await emit<TodoItem>("todo-created", created);
       toast.success("已创建");
@@ -116,16 +112,15 @@ export function QuickTodoPage() {
           layout="window"
           heading="快速新建待办"
           todoTitle={title}
+          todoContent={content}
           dueAt={dueAt}
-          images={images}
           saving={reading || saving}
-          titlePlaceholder={reading ? "正在读取剪贴板" : "待办内容"}
+          titlePlaceholder={reading ? "正在读取剪贴板" : "待办标题"}
+          contentPlaceholder="待办内容（支持 Markdown，粘贴图片会嵌入正文）"
           onCancel={() => handleOpenChange(false)}
           onTitleChange={setTitle}
+          onContentChange={setContent}
           onDueAtChange={setDueAt}
-          onDeleteImage={(image) =>
-            setImages((current) => current.filter((item) => item.local_id !== image.local_id))
-          }
           onSubmit={submit}
         />
       </div>
@@ -157,14 +152,13 @@ async function readFirstClipboardTodoContent(): Promise<QuickClipboardContent> {
           ?? firstItem.types.find((type) => type.startsWith("text/"));
         if (textType) {
           const blob = await firstItem.getType(textType);
-          return { title: normalizeClipboardTodoTitle(await blob.text()), images: [] };
+          return normalizeClipboardTodoText(await blob.text());
         }
 
         const imageType = firstItem.types.find((type) => type.startsWith("image/"));
         if (imageType) {
           const blob = await firstItem.getType(imageType);
-          const image = await createDraftImageFromBlob(blob);
-          return { title: "", images: image ? [image] : [] };
+          return { title: "图片待办", content: await markdownImageFromBlob(blob) };
         }
       }
     } catch {
@@ -173,62 +167,33 @@ async function readFirstClipboardTodoContent(): Promise<QuickClipboardContent> {
   }
 
   const text = await clipboard.readText();
-  return { title: normalizeClipboardTodoTitle(text), images: [] };
+  return normalizeClipboardTodoText(text);
 }
 
-function normalizeClipboardTodoTitle(value: string) {
+function normalizeClipboardTodoText(value: string): QuickClipboardContent {
+  const content = value
+    .replace(/\r\n?/g, "\n")
+    .trim();
+  return { title: deriveClipboardTodoTitle(content), content };
+}
+
+function deriveClipboardTodoTitle(value: string) {
   const normalized = value
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .join("\n")
+    .find(Boolean) ?? "";
+  const plain = normalized
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+>]\s*/, "")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/`/g, "")
     .trim();
-  const chars = Array.from(normalized);
-  if (chars.length <= 120) return normalized;
+  const chars = Array.from(plain);
+  if (chars.length <= 120) return plain;
 
-  toast.info("剪贴板内容已截断到 120 个字");
+  toast.info("待办标题已按 120 个字自动截断");
   return chars.slice(0, 120).join("");
-}
-
-async function createDraftImageFromBlob(blob: Blob) {
-  if (blob.size > MAX_IMAGE_BYTES) {
-    toast.error("单张图片不能超过 5MB");
-    return null;
-  }
-
-  if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(blob.type)) {
-    toast.error("仅支持 PNG、JPEG、WebP 或 GIF 图片");
-    return null;
-  }
-
-  return {
-    local_id: createLocalId(),
-    data_url: await readFileAsDataUrl(blob),
-    mime_type: blob.type,
-  };
-}
-
-function readFileAsDataUrl(file: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("图片读取失败"));
-    reader.readAsDataURL(file);
-  });
-}
-
-function toTodoImageInput(image: DraftImage): TodoImageInput {
-  return {
-    data_url: image.data_url,
-    mime_type: image.mime_type,
-  };
-}
-
-function createLocalId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function errorMessage(error: unknown) {

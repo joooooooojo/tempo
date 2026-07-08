@@ -127,14 +127,14 @@ pub fn run() {
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItem::with_id(app, "show", "打开首页", true, None::<&str>)?;
     let reset = MenuItem::with_id(app, "reset", "清空当日数据", true, None::<&str>)?;
-    let export = MenuItem::with_id(app, "export", "导出报表", true, None::<&str>)?;
+    let export = MenuItem::with_id(app, "export", "导出屏幕显示时间", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出软件", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &reset, &export, &quit])?;
 
-    let _tray = TrayIconBuilder::with_id("main")
+    let mut tray_builder = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .tooltip("时窗: 加载中...")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
@@ -149,16 +149,19 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             "export" => {
                 let _ = app.emit(
                     "toast",
-                    serde_json::json!({ "message": "请在报表页面导出数据" }),
+                    serde_json::json!({ "message": "请在屏幕显示时间页面导出数据" }),
                 );
                 let _ = commands::show_window(app.clone());
             }
             "quit" => {
-                let _ = app.emit("request-quit", ());
+                commands::quit_app(app.clone());
             }
             _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
+        });
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        tray_builder = tray_builder.on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -168,8 +171,14 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let app = tray.app_handle();
                 let _ = commands::show_window(app.clone());
             }
-        })
-        .build(app)?;
+        });
+    }
+
+    let tray = tray_builder.build(app)?;
+
+    tray.with_inner_tray_icon(|inner| {
+        inner.set_show_menu_on_right_click(!cfg!(target_os = "macos"));
+    })?;
 
     Ok(())
 }

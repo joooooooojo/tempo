@@ -35,12 +35,12 @@ export const api = {
   removeAppLimit: (appName: string) =>
     invoke<void>("remove_app_limit", { appName }),
   getTodos: () => invoke<TodoItem[]>("get_todos"),
-  addTodo: (title: string, dueAt?: string | null, images: TodoImageInput[] = []) =>
-    invoke<TodoItem>("add_todo", { title, dueAt, images }),
+  addTodo: (title: string, content: string, dueAt?: string | null, images: TodoImageInput[] = []) =>
+    invoke<TodoItem>("add_todo", { title, content, dueAt, images }),
   updateTodoTitle: (id: number, title: string) =>
     invoke<TodoItem>("update_todo_title", { id, title }),
-  updateTodoDetails: (id: number, title: string, dueAt?: string | null) =>
-    invoke<TodoItem>("update_todo_details", { id, title, dueAt }),
+  updateTodoDetails: (id: number, title: string, content: string, dueAt?: string | null) =>
+    invoke<TodoItem>("update_todo_details", { id, title, content, dueAt }),
   setTodoCompleted: (id: number, completed: boolean) =>
     invoke<TodoItem>("set_todo_completed", { id, completed }),
   addTodoImage: (todoId: number, image: TodoImageInput) =>

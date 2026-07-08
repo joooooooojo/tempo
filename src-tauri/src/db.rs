@@ -54,6 +54,7 @@ pub struct WeeklyReport {
     pub days: Vec<WeeklyDay>,
     pub average_seconds: i64,
     pub daily_limit_seconds: i64,
+    pub top_apps: Vec<AppUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +70,7 @@ pub struct AppLimit {
 pub struct TodoItem {
     pub id: i64,
     pub title: String,
+    pub content: String,
     pub completed: bool,
     pub due_at: Option<String>,
     pub created_at: String,
@@ -262,6 +264,7 @@ pub fn init_db(path: &PathBuf) -> Connection {
         CREATE TABLE IF NOT EXISTS todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
             completed INTEGER NOT NULL DEFAULT 0,
             due_at TEXT,
             created_at TEXT NOT NULL,
@@ -297,6 +300,13 @@ pub fn init_db(path: &PathBuf) -> Connection {
         .ok();
     conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", [])
         .ok();
+    let added_todo_content = conn
+        .execute("ALTER TABLE todos ADD COLUMN content TEXT NOT NULL DEFAULT ''", [])
+        .is_ok();
+    if added_todo_content {
+        conn.execute("UPDATE todos SET content = title WHERE content = ''", [])
+            .ok();
+    }
     conn.execute_batch(
         "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;",
     )

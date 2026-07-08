@@ -210,6 +210,242 @@ body {
   background: hsl(var(--background));
 }
 
+.github-markdown {
+  color: hsl(var(--foreground));
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.github-markdown * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.github-markdown > :first-child {
+  margin-top: 0;
+}
+
+.github-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.github-markdown p,
+.github-markdown blockquote,
+.github-markdown ul,
+.github-markdown ol,
+.github-markdown pre,
+.github-markdown .github-markdown-table-wrap {
+  margin-bottom: 16px;
+}
+
+.github-markdown h1,
+.github-markdown h2,
+.github-markdown h3,
+.github-markdown h4,
+.github-markdown h5,
+.github-markdown h6 {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.github-markdown h1,
+.github-markdown h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.github-markdown h1 {
+  font-size: 2em;
+}
+
+.github-markdown h2 {
+  font-size: 1.5em;
+}
+
+.github-markdown h3 {
+  font-size: 1.25em;
+}
+
+.github-markdown h4 {
+  font-size: 1em;
+}
+
+.github-markdown h5 {
+  font-size: 0.875em;
+}
+
+.github-markdown h6 {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.85em;
+}
+
+.github-markdown a {
+  color: #0969da;
+  text-decoration: none;
+}
+
+.github-markdown a:hover {
+  text-decoration: underline;
+}
+
+.dark .github-markdown a {
+  color: #2f81f7;
+}
+
+.github-markdown blockquote {
+  padding: 0 1em;
+  color: hsl(var(--muted-foreground));
+  border-left: 0.25em solid hsl(var(--border));
+}
+
+.github-markdown ul,
+.github-markdown ol {
+  padding-left: 2em;
+}
+
+.github-markdown ul {
+  list-style: disc;
+}
+
+.github-markdown ol {
+  list-style: decimal;
+}
+
+.github-markdown li + li {
+  margin-top: 0.25em;
+}
+
+.github-markdown .contains-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.github-markdown .task-list-item {
+  position: relative;
+  list-style-type: none;
+}
+
+.github-markdown .task-list-item input[type="checkbox"] {
+  width: 1em;
+  height: 1em;
+  margin: 0 0.5em 0.25em 0;
+  vertical-align: middle;
+  accent-color: #0969da;
+}
+
+.dark .github-markdown .task-list-item input[type="checkbox"] {
+  accent-color: #2f81f7;
+}
+
+.github-markdown code {
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  background: rgba(175, 184, 193, 0.2);
+  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 85%;
+}
+
+.github-markdown pre {
+  overflow: auto;
+  padding: 16px;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #24292f;
+}
+
+.dark .github-markdown pre {
+  background: #161b22;
+  color: #c9d1d9;
+}
+
+.github-markdown pre code {
+  display: block;
+  padding: 0;
+  overflow-wrap: normal;
+  background: transparent;
+  border-radius: 0;
+  font-size: 85%;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.github-markdown-code-lang {
+  margin-bottom: 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.github-markdown img {
+  box-sizing: content-box;
+  max-width: 100%;
+  max-height: 360px;
+  margin: 8px 0 16px;
+  border-radius: 6px;
+  background: hsl(var(--card));
+  object-fit: contain;
+}
+
+.github-markdown .github-markdown-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.github-markdown table {
+  width: max-content;
+  max-width: 100%;
+  border-spacing: 0;
+  border-collapse: collapse;
+  display: block;
+}
+
+.github-markdown table th,
+.github-markdown table td {
+  padding: 6px 13px;
+  border: 1px solid #d0d7de;
+}
+
+.dark .github-markdown table th,
+.dark .github-markdown table td {
+  border-color: #30363d;
+}
+
+.github-markdown table th {
+  font-weight: 600;
+}
+
+.github-markdown table tr {
+  background-color: transparent;
+  border-top: 1px solid #d8dee4;
+}
+
+.dark .github-markdown table tr {
+  border-top-color: #21262d;
+}
+
+.github-markdown table tr:nth-child(2n) {
+  background-color: #f6f8fa;
+}
+
+.dark .github-markdown table tr:nth-child(2n) {
+  background-color: #161b22;
+}
+
+.github-markdown hr {
+  height: 0.25em;
+  padding: 0;
+  margin: 24px 0;
+  background-color: hsl(var(--border));
+  border: 0;
+}
+
 .dark .glass-glow::before {
   background: conic-gradient(from 180deg, transparent, rgba(74, 222, 128, 0.04), transparent 30%);
 }
