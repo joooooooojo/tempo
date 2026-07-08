@@ -281,8 +281,8 @@ export function TodoPage() {
 
   const handleAdd = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!title.trim() && !content.trim()) {
-      toast.error("请输入待办标题或内容");
+    if (!title.trim()) {
+      toast.error("请输入标题");
       return;
     }
 
@@ -374,8 +374,8 @@ export function TodoPage() {
 
   const commitEdit = async (todo: TodoItem) => {
     const nextTitle = editTitle.trim();
-    if (!nextTitle && !editContent.trim()) {
-      toast.error("请输入待办标题或内容");
+    if (!nextTitle) {
+      toast.error("请输入标题");
       return;
     }
 
@@ -466,7 +466,7 @@ export function TodoPage() {
 
       <TodoCreateDialog
         open={Boolean(editingTodo)}
-        heading="编辑待办"
+        heading="编辑待办事项"
         todoTitle={editTitle}
         todoContent={editContent}
         dueAt={editDueAt}

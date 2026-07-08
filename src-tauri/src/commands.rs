@@ -709,7 +709,7 @@ pub fn add_todo(
 ) -> Result<TodoItem, String> {
     let images = normalize_todo_images(images)?;
     let content = normalize_todo_content(content.unwrap_or_default());
-    let title = normalize_todo_title(title, Some(&content), !images.is_empty())?;
+    let title = normalize_todo_title(title, None, !images.is_empty())?;
     let due_at = normalize_due_at(due_at)?;
     let created_at = Local::now().to_rfc3339();
     let conn = state.db.lock();
@@ -753,7 +753,7 @@ pub fn update_todo_details(
     due_at: Option<String>,
 ) -> Result<TodoItem, String> {
     let content = normalize_todo_content(content);
-    let title = normalize_todo_title(title, Some(&content), false)?;
+    let title = normalize_todo_title(title, None, false)?;
     let due_at = normalize_due_at(due_at)?;
     let conn = state.db.lock();
     let _existing = fetch_todo(&conn, id)?;
@@ -1801,7 +1801,7 @@ fn normalize_todo_title(
         if allow_image_only {
             return Ok("图片待办".into());
         }
-        return Err("请输入待办标题".into());
+        return Err("请输入标题".into());
     }
 
     if normalized.chars().count() > 120 {

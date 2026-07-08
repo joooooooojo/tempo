@@ -62,13 +62,13 @@ const minuteOptions = ["00", "15", "30", "45"];
 
 export function TodoCreateDialog({
   open,
-  heading = "新建待办",
+  heading = "新建待办事项",
   todoTitle,
   todoContent,
   dueAt,
   saving = false,
-  titlePlaceholder = "待办标题",
-  contentPlaceholder = "待办内容（支持 Markdown，粘贴图片会嵌入正文）",
+  titlePlaceholder = "标题",
+  contentPlaceholder = "内容（支持 Markdown，粘贴图片会嵌入正文）",
   submitLabel = "创建",
   bodyExtra,
   onOpenChange,
@@ -111,13 +111,13 @@ export function TodoCreateDialog({
 }
 
 export function TodoCreateFormPanel({
-  heading = "新建待办",
+  heading = "新建待办事项",
   todoTitle,
   todoContent,
   dueAt,
   saving = false,
-  titlePlaceholder = "待办标题",
-  contentPlaceholder = "待办内容（支持 Markdown，粘贴图片会嵌入正文）",
+  titlePlaceholder = "标题",
+  contentPlaceholder = "内容（支持 Markdown，粘贴图片会嵌入正文）",
   submitLabel = "创建",
   titleElement,
   cancelElement,
@@ -207,6 +207,7 @@ export function TodoCreateFormPanel({
             <FloatingInput
               id="new-todo-title"
               autoFocus
+              required
               value={todoTitle}
               maxLength={120}
               placeholder={titlePlaceholder}
@@ -233,7 +234,7 @@ export function TodoCreateFormPanel({
               取消
             </Button>
           )}
-          <Button type="submit" className="h-9 min-w-24" disabled={saving}>
+          <Button type="submit" className="h-9 min-w-24" disabled={saving || !todoTitle.trim()}>
             {submitLabel}
           </Button>
         </DialogFooter>
@@ -255,6 +256,7 @@ function FloatingInput({
   placeholder,
   maxLength,
   autoFocus,
+  required,
   className,
   onChange,
 }: {
@@ -263,6 +265,7 @@ function FloatingInput({
   placeholder: string;
   maxLength?: number;
   autoFocus?: boolean;
+  required?: boolean;
   className?: string;
   onChange: ChangeEventHandler<HTMLInputElement>;
 }) {
@@ -291,6 +294,7 @@ function FloatingInput({
         ref={inputRef}
         id={id}
         autoFocus={autoFocus}
+        required={required}
         value={value}
         maxLength={maxLength}
         placeholder={floated ? "" : placeholder}

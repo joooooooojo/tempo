@@ -112,7 +112,7 @@ export function QuickTodoPage() {
             ref={inputRef}
             value={title}
             maxLength={120}
-            placeholder="输入待办标题"
+            placeholder="输入待办事项标题"
             disabled={saving}
             className={cn(
               "h-12 w-full rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[15px] font-medium text-foreground shadow-sm shadow-emerald-950/[0.03] outline-none transition-colors placeholder:text-muted-foreground",

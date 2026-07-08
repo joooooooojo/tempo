@@ -118,6 +118,12 @@ body {
 }
 
 /* Animated ambient background */
+.mac-titlebar-inset {
+  background: transparent;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
 .app-shell {
   position: relative;
   isolation: isolate;

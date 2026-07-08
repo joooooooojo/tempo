@@ -19,20 +19,20 @@ export function AppLayout() {
   const location = useLocation();
 
   return (
-    <div className="app-shell relative h-screen overflow-hidden">
+    <div className="app-shell relative flex h-screen flex-col overflow-hidden">
       {macOS ? (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-10 pl-[78px]">
-          <div data-tauri-drag-region className="pointer-events-auto h-full w-full" />
-        </div>
+        <>
+          <div data-tauri-drag-region className="mac-titlebar-inset h-8 shrink-0" aria-hidden="true" />
+        </>
       ) : (
         <WindowTitleBar />
       )}
 
-      <div className={cn("relative z-10 flex min-h-0", macOS ? "h-full" : "h-[calc(100%-40px)]")}>
+      <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={cn(
-            "flex w-[200px] shrink-0 flex-col border-r border-border/60 p-4",
-            macOS ? "pt-8" : "pt-5"
+            "flex w-[200px] shrink-0 flex-col border-r border-border/60 px-4 pb-4",
+            macOS ? "pt-0" : "pt-5"
           )}
         >
           <nav className="flex flex-1 flex-col gap-1">
@@ -68,23 +68,15 @@ export function AppLayout() {
               </NavLink>
             ))}
           </nav>
-
-          <div className="glass-subtle mt-auto rounded-lg p-3">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              状态
-            </p>
-            <div className="mt-1.5 flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-[3px] bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-[3px] bg-emerald-400" />
-              </span>
-              <span className="text-[11px] text-muted-foreground">后台统计中</span>
-            </div>
-          </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <main className="no-scrollbar flex-1 overflow-y-auto px-6 py-5">
+          <main
+            className={cn(
+              "no-scrollbar flex-1 overflow-y-auto px-6 pb-5",
+              macOS ? "pt-0" : "pt-5"
+            )}
+          >
             <div key={location.pathname} className="page-transition">
               <Outlet />
             </div>

@@ -5,6 +5,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppIcon } from "@/components/AppIcon";
+import { TrackingStatus } from "@/components/TrackingStatus";
 import { api } from "@/lib/api";
 import { formatDuration, formatDurationShort } from "@/lib/utils";
 import type { DailyReport, WeeklyReport } from "@/types";
@@ -62,10 +63,13 @@ export function ReportsPage() {
   return (
     <div>
       <Tabs defaultValue="daily">
-        <TabsList className="mb-4 grid w-[240px] grid-cols-2">
-          <TabsTrigger value="daily" className="w-full">日报</TabsTrigger>
-          <TabsTrigger value="weekly" className="w-full">周报</TabsTrigger>
-        </TabsList>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <TabsList className="w-[240px]">
+            <TabsTrigger value="daily" className="min-w-0 flex-1">日报</TabsTrigger>
+            <TabsTrigger value="weekly" className="min-w-0 flex-1">周报</TabsTrigger>
+          </TabsList>
+          <TrackingStatus className="shrink-0" />
+        </div>
 
         <TabsContent value="daily">
           {!daily ? <EmptyState /> : (
