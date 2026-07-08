@@ -5,8 +5,10 @@ import {
   type ChangeEventHandler,
   type ClipboardEvent,
   type FormEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CalendarClock, ImagePlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -118,13 +120,35 @@ export function TodoCreateFormPanel({
   onSubmit,
 }: TodoCreateFormPanelProps) {
   const isWindowLayout = layout === "window";
+  const startWindowDrag = (event: MouseEvent<HTMLElement>) => {
+    if (!isWindowLayout || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("[data-no-drag]")) return;
+
+    event.preventDefault();
+    getCurrentWindow().startDragging().catch(console.error);
+  };
 
   return (
     <>
-      <DialogHeader className="relative border-b border-border/60 px-5 py-4 pr-12">
-        {titleElement ?? <h1 className="text-[18px] font-bold leading-tight tracking-tight">{heading}</h1>}
+      <DialogHeader
+        data-tauri-drag-region={isWindowLayout ? "" : undefined}
+        className={cn(
+          "relative border-b border-border/60 px-5 py-4 pr-12",
+          isWindowLayout && "select-none"
+        )}
+        onMouseDown={startWindowDrag}
+      >
+        {titleElement ?? (
+          <h1
+            data-tauri-drag-region={isWindowLayout ? "" : undefined}
+            className="text-[18px] font-bold leading-tight tracking-tight"
+          >
+            {heading}
+          </h1>
+        )}
         {onCancel && (
           <button
+            data-no-drag
             type="button"
             className="absolute right-4 top-4 rounded-md p-1 opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 focus:outline-none dark:hover:bg-white/10"
             aria-label="关闭"
