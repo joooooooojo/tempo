@@ -30,8 +30,10 @@ export function QuickTodoPage() {
   useEffect(() => {
     const previousHtmlBackground = document.documentElement.style.background;
     const previousBodyBackground = document.body.style.background;
+    const previousBodyOverflow = document.body.style.overflow;
     document.documentElement.style.background = "transparent";
     document.body.style.background = "transparent";
+    document.body.style.overflow = "hidden";
 
     api.getSettings().then((settings) => {
       const root = document.documentElement;
@@ -45,6 +47,7 @@ export function QuickTodoPage() {
     return () => {
       document.documentElement.style.background = previousHtmlBackground;
       document.body.style.background = previousBodyBackground;
+      document.body.style.overflow = previousBodyOverflow;
     };
   }, []);
 
@@ -113,23 +116,23 @@ export function QuickTodoPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-start justify-center bg-transparent p-6 text-foreground">
-      <div className="todo-create-dialog w-full max-w-[520px] overflow-visible rounded-xl border border-border/80">
+    <div className="quick-todo-page min-h-screen bg-transparent text-foreground">
+      <div className="todo-create-dialog quick-todo-panel min-h-screen w-screen overflow-hidden border-0">
         <TodoCreateFormPanel
-        heading="快速新建待办"
-        todoTitle={title}
-        dueAt={dueAt}
-        images={images}
-        saving={reading || saving}
-        titlePlaceholder={reading ? "正在读取剪贴板" : "待办内容"}
-        onCancel={() => handleOpenChange(false)}
-        onTitleChange={setTitle}
-        onDueAtChange={setDueAt}
-        onDeleteImage={(image) =>
-          setImages((current) => current.filter((item) => item.local_id !== image.local_id))
-        }
-        onSubmit={submit}
-      />
+          heading="快速新建待办"
+          todoTitle={title}
+          dueAt={dueAt}
+          images={images}
+          saving={reading || saving}
+          titlePlaceholder={reading ? "正在读取剪贴板" : "待办内容"}
+          onCancel={() => handleOpenChange(false)}
+          onTitleChange={setTitle}
+          onDueAtChange={setDueAt}
+          onDeleteImage={(image) =>
+            setImages((current) => current.filter((item) => item.local_id !== image.local_id))
+          }
+          onSubmit={submit}
+        />
       </div>
 
       <Toaster position="top-center" richColors toastOptions={{ className: "glass rounded-lg" }} />

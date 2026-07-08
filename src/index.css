@@ -195,6 +195,16 @@ body {
     0 18px 52px rgba(0, 0, 0, 0.46);
 }
 
+.quick-todo-page {
+  overflow: hidden;
+}
+
+.quick-todo-panel,
+.dark .quick-todo-panel {
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .dark .glass-glow::before {
   background: conic-gradient(from 180deg, transparent, rgba(74, 222, 128, 0.04), transparent 30%);
 }

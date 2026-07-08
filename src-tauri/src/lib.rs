@@ -175,6 +175,9 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    const QUICK_TODO_WIDTH: f64 = 520.0;
+    const QUICK_TODO_HEIGHT: f64 = 420.0;
+
     if let Some(window) = app.get_webview_window("quick-todo") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -185,25 +188,21 @@ fn show_quick_todo_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
-    let builder = WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         "quick-todo",
         WebviewUrl::App("/?view=quick-todo".into()),
     )
     .title("快速新建待办")
-    .inner_size(580.0, 620.0)
+    .inner_size(QUICK_TODO_WIDTH, QUICK_TODO_HEIGHT)
     .resizable(false)
     .decorations(false)
     .shadow(false)
     .always_on_top(true)
     .skip_taskbar(true)
     .center()
-    .focused(true);
-
-    #[cfg(not(target_os = "macos"))]
-    let builder = builder.transparent(true);
-
-    let window = builder.build()?;
+    .focused(true)
+    .build()?;
 
     window.set_focus()?;
     Ok(())
