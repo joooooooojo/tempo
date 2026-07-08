@@ -4,6 +4,7 @@ import {
   useState,
   type ClipboardEvent,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { MarkdownPreview } from "@/components/todos/MarkdownPreview";
 import { TodoCreateDialog, type DraftTodoImage } from "@/components/todos/TodoCreateDialog";
+import { TodoSubtaskList } from "@/components/todos/TodoSubtasks";
 import {
   Dialog,
   DialogContent,
@@ -35,8 +37,9 @@ import {
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api, type TodoImageInput } from "@/lib/api";
+import { recurrenceLabel, subtaskProgress, todoReminderLabel } from "@/lib/todoMeta";
 import { cn } from "@/lib/utils";
-import type { TodoImage, TodoItem, TodoNote, TodoNoteImage } from "@/types";
+import type { TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoRecurrence, TodoSubtask } from "@/types";
 
 type TodoFilter = "active" | "completed";
 
@@ -66,6 +69,11 @@ export function TodoPage() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [dueAt, setDueAt] = useState("");
+  const [recurrence, setRecurrence] = useState<TodoRecurrence>("none");
+  const [remind1d, setRemind1d] = useState(false);
+  const [remind1h, setRemind1h] = useState(false);
+  const [remindCustomHours, setRemindCustomHours] = useState<number | null>(null);
+  const [subtasks, setSubtasks] = useState<string[]>([]);
   const [noteDrafts, setNoteDrafts] = useState<Record<number, NoteDraft>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
@@ -73,6 +81,7 @@ export function TodoPage() {
   const [filter, setFilter] = useState<TodoFilter>("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [actionMenuId, setActionMenuId] = useState<number | null>(null);
+  const [expandedTodoIds, setExpandedTodoIds] = useState<Set<number>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -81,13 +90,17 @@ export function TodoPage() {
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [editDueAt, setEditDueAt] = useState("");
+  const [editRecurrence, setEditRecurrence] = useState<TodoRecurrence>("none");
+  const [editRemind1d, setEditRemind1d] = useState(false);
+  const [editRemind1h, setEditRemind1h] = useState(false);
+  const [editRemindCustomHours, setEditRemindCustomHours] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     api.getTodos()
       .then((items) => {
-        if (!cancelled) setTodos(sortTodos(items));
+        if (!cancelled) setTodos(sortTodos(items.map(normalizeTodo)));
       })
       .catch((error) => {
         console.error(error);
@@ -104,7 +117,8 @@ export function TodoPage() {
 
   useEffect(() => {
     const unlisten = listen<TodoItem>("todo-created", (event) => {
-      setTodos((current) => sortTodos([event.payload, ...current.filter((todo) => todo.id !== event.payload.id)]));
+      const created = normalizeTodo(event.payload);
+      setTodos((current) => sortTodos([created, ...current.filter((todo) => todo.id !== created.id)]));
       setFilter("active");
     });
 
@@ -139,6 +153,68 @@ export function TodoPage() {
     setTitle("");
     setContent("");
     setDueAt("");
+    setRecurrence("none");
+    setRemind1d(false);
+    setRemind1h(false);
+    setRemindCustomHours(null);
+    setSubtasks([]);
+  };
+
+  const handleRecurrenceChange = (value: TodoRecurrence) => {
+    setRecurrence(value);
+    if (value !== "none") {
+      setDueAt("");
+      setRemind1d(false);
+      setRemind1h(false);
+      setRemindCustomHours(null);
+    }
+  };
+
+  const handleEditRecurrenceChange = (value: TodoRecurrence) => {
+    setEditRecurrence(value);
+    if (value !== "none") {
+      setEditDueAt("");
+      setEditRemind1d(false);
+      setEditRemind1h(false);
+      setEditRemindCustomHours(null);
+    }
+  };
+
+  const handleDueAtChange = (value: string) => {
+    setDueAt(value);
+    if (value) {
+      setRecurrence("none");
+    }
+    if (!value) {
+      setRemind1d(false);
+      setRemind1h(false);
+      setRemindCustomHours(null);
+    }
+  };
+
+  const handleEditDueAtChange = (value: string) => {
+    setEditDueAt(value);
+    if (value) {
+      setEditRecurrence("none");
+    }
+    if (!value) {
+      setEditRemind1d(false);
+      setEditRemind1h(false);
+      setEditRemindCustomHours(null);
+    }
+  };
+
+  const applyTodoUpdate = (todo: TodoItem) => {
+    setTodos((current) => replaceTodo(current, normalizeTodo(todo)));
+  };
+
+  const toggleTodoExpanded = (todoId: number) => {
+    setExpandedTodoIds((current) => {
+      const next = new Set(current);
+      if (next.has(todoId)) next.delete(todoId);
+      else next.add(todoId);
+      return next;
+    });
   };
 
   const handleCreateOpenChange = (nextOpen: boolean) => {
@@ -197,7 +273,7 @@ export function TodoPage() {
     setImporting(true);
     try {
       const items = await api.importTodosBackup(path);
-      setTodos(sortTodos(items));
+      setTodos(sortTodos(items.map(normalizeTodo)));
       setFilter("active");
       toast.success("待办备份已导入");
     } catch (error) {
@@ -291,7 +367,13 @@ export function TodoPage() {
       const created = await api.addTodo(
         title,
         content,
-        toIsoDateTime(dueAt)
+        toIsoDateTime(dueAt),
+        [],
+        recurrence,
+        remind1d,
+        remind1h,
+        remindCustomHours,
+        subtasks
       );
       setTodos((current) => sortTodos([created, ...current]));
       resetDraft();
@@ -308,8 +390,13 @@ export function TodoPage() {
   const toggleTodo = async (todo: TodoItem) => {
     try {
       const updated = await api.setTodoCompleted(todo.id, !todo.completed);
-      setTodos((current) => replaceTodo(current, updated));
-      toast.success(updated.completed ? "已完成" : "已恢复", {
+      applyTodoUpdate(updated);
+      toast.success(
+        updated.completed
+          ? todo.recurrence !== "none"
+            ? "已完成，下一周期将在开始时自动创建"
+            : "已完成"
+          : "已恢复", {
         action: {
           label: "撤销",
           onClick: async () => {
@@ -358,6 +445,10 @@ export function TodoPage() {
     setEditTitle(todo.title);
     setEditContent(todo.content);
     setEditDueAt(toDateTimeLocalValue(todo.due_at));
+    setEditRecurrence(todo.recurrence);
+    setEditRemind1d(todo.remind_1d);
+    setEditRemind1h(todo.remind_1h);
+    setEditRemindCustomHours(todo.remind_custom_hours ?? null);
   };
 
   const cancelEdit = () => {
@@ -365,6 +456,10 @@ export function TodoPage() {
     setEditTitle("");
     setEditContent("");
     setEditDueAt("");
+    setEditRecurrence("none");
+    setEditRemind1d(false);
+    setEditRemind1h(false);
+    setEditRemindCustomHours(null);
   };
 
   const handleEditOpenChange = (nextOpen: boolean) => {
@@ -381,7 +476,16 @@ export function TodoPage() {
 
     setSaving(true);
     try {
-      const updated = await api.updateTodoDetails(todo.id, nextTitle, editContent, toIsoDateTime(editDueAt));
+      const updated = await api.updateTodoDetails(
+        todo.id,
+        nextTitle,
+        editContent,
+        toIsoDateTime(editDueAt),
+        editRecurrence,
+        editRemind1d,
+        editRemind1h,
+        editRemindCustomHours
+      );
       setTodos((current) => replaceTodo(current, updated));
       cancelEdit();
       toast.success("已更新");
@@ -389,6 +493,33 @@ export function TodoPage() {
       toast.error(errorMessage(error));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const toggleSubtask = async (subtask: TodoSubtask, completed: boolean) => {
+    try {
+      const updated = await api.setTodoSubtaskCompleted(subtask.id, completed);
+      applyTodoUpdate(updated);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
+  const addSubtask = async (todoId: number, title: string) => {
+    try {
+      const updated = await api.addTodoSubtask(todoId, title);
+      applyTodoUpdate(updated);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
+  const deleteSubtask = async (subtask: TodoSubtask) => {
+    try {
+      const updated = await api.deleteTodoSubtask(subtask.id);
+      applyTodoUpdate(updated);
+    } catch (error) {
+      toast.error(errorMessage(error));
     }
   };
 
@@ -456,11 +587,21 @@ export function TodoPage() {
         todoTitle={title}
         todoContent={content}
         dueAt={dueAt}
+        recurrence={recurrence}
+        remind1d={remind1d}
+        remind1h={remind1h}
+        remindCustomHours={remindCustomHours}
+        subtasks={subtasks}
         saving={saving}
         onOpenChange={handleCreateOpenChange}
         onTitleChange={setTitle}
         onContentChange={setContent}
-        onDueAtChange={setDueAt}
+        onDueAtChange={handleDueAtChange}
+        onRecurrenceChange={handleRecurrenceChange}
+        onRemind1dChange={setRemind1d}
+        onRemind1hChange={setRemind1h}
+        onRemindCustomHoursChange={setRemindCustomHours}
+        onSubtasksChange={setSubtasks}
         onSubmit={handleAdd}
       />
 
@@ -470,21 +611,40 @@ export function TodoPage() {
         todoTitle={editTitle}
         todoContent={editContent}
         dueAt={editDueAt}
+        recurrence={editRecurrence}
+        remind1d={editRemind1d}
+        remind1h={editRemind1h}
+        remindCustomHours={editRemindCustomHours}
         saving={saving}
         submitLabel="保存"
         bodyExtra={
-          editingTodo?.images.length ? (
-            <TodoImages
-              images={editingTodo.images}
-              onDelete={deleteImage}
-              onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: editingTodo.title })}
-            />
-          ) : undefined
+          <>
+            {editingTodo?.images.length ? (
+              <TodoImages
+                images={editingTodo.images}
+                onDelete={deleteImage}
+                onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: editingTodo.title })}
+              />
+            ) : null}
+            {editingTodo && (
+              <TodoSubtaskList
+                subtasks={editingTodo.subtasks}
+                editable
+                onToggle={toggleSubtask}
+                onDelete={deleteSubtask}
+                onAdd={(value) => void addSubtask(editingTodo.id, value)}
+              />
+            )}
+          </>
         }
         onOpenChange={handleEditOpenChange}
         onTitleChange={setEditTitle}
         onContentChange={setEditContent}
-        onDueAtChange={setEditDueAt}
+        onDueAtChange={handleEditDueAtChange}
+        onRecurrenceChange={handleEditRecurrenceChange}
+        onRemind1dChange={setEditRemind1d}
+        onRemind1hChange={setEditRemind1h}
+        onRemindCustomHoursChange={setEditRemindCustomHours}
         onSubmit={(event) => {
           event.preventDefault();
           if (editingTodo) void commitEdit(editingTodo);
@@ -517,9 +677,21 @@ export function TodoPage() {
                       截止 {formatTodoDate(detailTodo.due_at)}
                     </span>
                   )}
+                  {detailTodo.recurrence !== "none" && (
+                    <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                      {recurrenceLabel(detailTodo.recurrence)}
+                    </span>
+                  )}
+                  {todoReminderLabel(detailTodo) && (
+                    <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">
+                      {todoReminderLabel(detailTodo)}
+                    </span>
+                  )}
                 </div>
 
                 <MarkdownPreview value={detailTodo.content} />
+
+                <TodoSubtaskList subtasks={detailTodo.subtasks} readOnly />
 
                 <TodoImages
                   images={detailTodo.images}
@@ -642,125 +814,173 @@ export function TodoPage() {
               {visibleTodos.map((todo) => {
                 const noteDraft = noteDrafts[todo.id] ?? { body: "", images: [] };
                 const summary = todoSummary(todo);
+                const checklist = subtaskProgress(todo.subtasks);
+                const hasExpandableContent = Boolean(
+                  (todo.subtasks.length > 0 && !todo.completed) ||
+                    summary ||
+                    todo.images.length > 0 ||
+                    todo.notes.length > 0
+                );
+                const isExpanded = expandedTodoIds.has(todo.id) || Boolean(noteDraft.open);
 
                 return (
                   <div
                     key={todo.id}
                     className={cn(
-                      "group/todo relative grid grid-cols-[36px_minmax(0,1fr)] items-start gap-3 px-4 py-3.5 transition-colors hover:bg-foreground/[0.03] focus-within:bg-foreground/[0.03]",
+                      "group/todo relative px-4 py-3 transition-colors hover:bg-foreground/[0.03] focus-within:bg-foreground/[0.03]",
                       todo.completed && "bg-foreground/[0.018]"
                     )}
                   >
-                    <button
-                      type="button"
-                      className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-primary"
-                      aria-label={todo.completed ? "恢复待办" : "完成待办"}
-                      onClick={() => void toggleTodo(todo)}
-                    >
-                      {todo.completed ? (
-                        <CheckCircle2 className="h-5 w-5 text-primary" />
-                      ) : (
-                        <Circle className="h-5 w-5" />
-                      )}
-                    </button>
+                    <div className="grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-x-3">
+                      <button
+                        type="button"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-primary"
+                        aria-label={todo.completed ? "恢复待办" : "完成待办"}
+                        onClick={() => void toggleTodo(todo)}
+                      >
+                        {todo.completed ? (
+                          <CheckCircle2 className="h-5 w-5 text-primary" />
+                        ) : (
+                          <Circle className="h-5 w-5" />
+                        )}
+                      </button>
 
-                    <div className="min-w-0 text-left">
-                      <div className="flex min-w-0 items-center gap-2 pr-9">
-                        {todo.pinned_at && !todo.completed && (
-                          <span
-                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
-                            aria-label="已置顶"
-                            title="已置顶"
-                          >
-                            <Pin className="h-3 w-3 fill-current" />
-                          </span>
+                      <div
+                        className={cn(
+                          "min-w-0 text-left",
+                          hasExpandableContent && "cursor-pointer rounded-md px-1 -mx-1"
                         )}
-                        <button
-                          type="button"
-                          className={cn(
-                            "min-w-0 truncate text-left text-[14px] font-semibold transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-                            todo.completed && "text-muted-foreground line-through"
-                          )}
-                          onClick={() => setDetailId(todo.id)}
-                        >
-                          <HighlightText value={todo.title} query={searchQuery} />
-                        </button>
-                        {todo.images.length > 0 && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-foreground/5 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                            <ImagePlus className="h-3 w-3" />
-                            {todo.images.length}
-                          </span>
-                        )}
+                        onClick={() => {
+                          if (!hasExpandableContent) return;
+                          toggleTodoExpanded(todo.id);
+                        }}
+                      >
+                          <div className="flex min-w-0 items-center gap-2">
+                            {todo.pinned_at && !todo.completed && (
+                              <span
+                                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
+                                aria-label="已置顶"
+                                title="已置顶"
+                              >
+                                <Pin className="h-3 w-3 fill-current" />
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              className={cn(
+                                "min-w-0 truncate text-left text-[14px] font-semibold transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                                todo.completed && "text-muted-foreground line-through"
+                              )}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setDetailId(todo.id);
+                              }}
+                            >
+                              <HighlightText value={todo.title} query={searchQuery} />
+                            </button>
+                            {todo.images.length > 0 && (
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-foreground/5 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                                <ImagePlus className="h-3 w-3" />
+                                {todo.images.length}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                            <span>
+                              {todo.completed && todo.completed_at
+                                ? `完成于 ${formatTodoDate(todo.completed_at)}`
+                                : `创建于 ${formatTodoDate(todo.created_at)}`}
+                            </span>
+                            {todo.due_at && (
+                              <span className={cn("rounded-md px-1.5 py-0.5 font-medium", dueBadgeClass(todo))}>
+                                截止 {formatTodoDate(todo.due_at)}
+                              </span>
+                            )}
+                            {todo.recurrence !== "none" && (
+                              <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                                {recurrenceLabel(todo.recurrence)}
+                              </span>
+                            )}
+                            {checklist && (
+                              <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">
+                                子任务 {checklist}
+                              </span>
+                            )}
+                          </div>
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 pr-9 text-[11px] text-muted-foreground">
-                        <span>
-                          {todo.completed && todo.completed_at
-                            ? `完成于 ${formatTodoDate(todo.completed_at)}`
-                            : `创建于 ${formatTodoDate(todo.created_at)}`}
-                        </span>
-                        {todo.due_at && (
-                          <span className={cn("rounded-md px-1.5 py-0.5 font-medium", dueBadgeClass(todo))}>
-                            截止 {formatTodoDate(todo.due_at)}
-                          </span>
-                        )}
+
+                      <div
+                        className="flex items-center self-center"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <TodoRowActionMenu
+                            open={actionMenuId === todo.id}
+                            onOpenChange={(open) => setActionMenuId(open ? todo.id : null)}
+                            onAddNote={() => {
+                              setActionMenuId(null);
+                              updateNoteDraft(todo.id, (current) => ({ ...current, open: true }));
+                            }}
+                            pinned={Boolean(todo.pinned_at)}
+                            onTogglePinned={() => {
+                              setActionMenuId(null);
+                              void toggleTodoPinned(todo);
+                            }}
+                            onEdit={() => {
+                              setActionMenuId(null);
+                              startEdit(todo);
+                            }}
+                            onDelete={() => {
+                              setActionMenuId(null);
+                              void deleteTodo(todo);
+                            }}
+                          />
                       </div>
-                      {summary && (
-                        <button
-                          type="button"
-                          className="mt-1.5 block max-w-full truncate text-left text-[12px] leading-5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                          onClick={() => setDetailId(todo.id)}
-                        >
-                          <HighlightText value={summary} query={searchQuery} />
-                        </button>
-                      )}
-                      <TodoImages
-                        images={todo.images}
-                        onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
-                      />
-                      <TodoNotes
-                        notes={todo.notes}
-                        searchQuery={searchQuery}
-                        onDelete={deleteNote}
-                        onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
-                      />
-                      <NoteComposer
-                        draft={noteDraft}
-                        onBodyChange={(body) =>
-                          updateNoteDraft(todo.id, (current) => ({ ...current, body, open: true }))
-                        }
-                        onPaste={(event) => void handleNotePaste(todo.id, event)}
-                        onDeleteImage={(image) =>
-                          updateNoteDraft(todo.id, (current) => ({
-                            ...current,
-                            images: current.images.filter((item) => item.local_id !== image.local_id),
-                          }))
-                        }
-                        onCancel={() => resetNoteDraft(todo.id)}
-                        onSubmit={() => void submitNote(todo)}
-                      />
                     </div>
-
-                    <TodoRowActionMenu
-                      open={actionMenuId === todo.id}
-                      onOpenChange={(open) => setActionMenuId(open ? todo.id : null)}
-                      onAddNote={() => {
-                        setActionMenuId(null);
-                        updateNoteDraft(todo.id, (current) => ({ ...current, open: true }));
-                      }}
-                      pinned={Boolean(todo.pinned_at)}
-                      onTogglePinned={() => {
-                        setActionMenuId(null);
-                        void toggleTodoPinned(todo);
-                      }}
-                      onEdit={() => {
-                        setActionMenuId(null);
-                        startEdit(todo);
-                      }}
-                      onDelete={() => {
-                        setActionMenuId(null);
-                        void deleteTodo(todo);
-                      }}
-                    />
+                    {(hasExpandableContent || noteDraft.open) && (
+                      <TodoExpandableSection open={isExpanded}>
+                        {todo.subtasks.length > 0 && !todo.completed && (
+                          <TodoSubtaskList
+                            subtasks={todo.subtasks}
+                            compact
+                            onToggle={toggleSubtask}
+                          />
+                        )}
+                        {summary && (
+                          <button
+                            type="button"
+                            className="mt-1.5 block max-w-full truncate text-left text-[12px] leading-5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                            onClick={() => setDetailId(todo.id)}
+                          >
+                            <HighlightText value={summary} query={searchQuery} />
+                          </button>
+                        )}
+                        <TodoImages
+                          images={todo.images}
+                          onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
+                        />
+                        <TodoNotes
+                          notes={todo.notes}
+                          searchQuery={searchQuery}
+                          onDelete={deleteNote}
+                          onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
+                        />
+                        <NoteComposer
+                          draft={noteDraft}
+                          onBodyChange={(body) =>
+                            updateNoteDraft(todo.id, (current) => ({ ...current, body, open: true }))
+                          }
+                          onPaste={(event) => void handleNotePaste(todo.id, event)}
+                          onDeleteImage={(image) =>
+                            updateNoteDraft(todo.id, (current) => ({
+                              ...current,
+                              images: current.images.filter((item) => item.local_id !== image.local_id),
+                            }))
+                          }
+                          onCancel={() => resetNoteDraft(todo.id)}
+                          onSubmit={() => void submitNote(todo)}
+                        />
+                      </TodoExpandableSection>
+                    )}
                   </div>
                 );
               })}
@@ -768,6 +988,35 @@ export function TodoPage() {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function TodoExpandableSection({
+  open,
+  children,
+}: {
+  open: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none",
+        open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+      )}
+    >
+      <div className="overflow-hidden">
+        <div
+          className={cn(
+            "mt-2 pl-12 transition-opacity duration-300 ease-in-out motion-reduce:transition-none",
+            open ? "opacity-100" : "opacity-0"
+          )}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
@@ -856,12 +1105,12 @@ function TodoRowActionMenu({
           variant="ghost"
           size="icon"
           className={cn(
-            "absolute right-3 top-3 h-8 w-8 text-muted-foreground transition-opacity hover:bg-foreground/6 hover:text-foreground",
+            "h-8 w-8 shrink-0 p-0 text-muted-foreground transition-opacity hover:bg-foreground/6 hover:text-foreground",
             open ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover/todo:opacity-100 sm:group-focus-within/todo:opacity-100"
           )}
           aria-label="更多操作"
         >
-          <MoreVertical className="h-4 w-4" />
+          <MoreVertical className="h-4 w-4 shrink-0" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" side="bottom" className="w-36 p-1">
@@ -1157,11 +1406,23 @@ function todoSummary(todo: TodoItem) {
   return cleaned;
 }
 
+function normalizeTodo(todo: TodoItem): TodoItem {
+  return {
+    ...todo,
+    recurrence: todo.recurrence ?? "none",
+    remind_1d: todo.remind_1d ?? false,
+    remind_1h: todo.remind_1h ?? false,
+    remind_custom_hours: todo.remind_custom_hours ?? null,
+    subtasks: todo.subtasks ?? [],
+  };
+}
+
 function matchesTodoSearch(todo: TodoItem, query: string) {
   return [
     todo.title,
     todo.content,
     ...todo.notes.map((note) => note.body),
+    ...todo.subtasks.map((subtask) => subtask.title),
   ].some((value) => normalizeSearch(value).includes(query));
 }
 

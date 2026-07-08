@@ -60,6 +60,16 @@ pub struct AppLimit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoSubtask {
+    pub id: i64,
+    pub todo_id: i64,
+    pub title: String,
+    pub completed: bool,
+    pub sort_order: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: i64,
     pub title: String,
@@ -69,8 +79,28 @@ pub struct TodoItem {
     pub pinned_at: Option<String>,
     pub created_at: String,
     pub completed_at: Option<String>,
+    #[serde(default = "default_recurrence")]
+    pub recurrence: String,
+    #[serde(default)]
+    pub remind_1d: bool,
+    #[serde(default)]
+    pub remind_1h: bool,
+    #[serde(default)]
+    pub remind_custom_hours: Option<i64>,
+    #[serde(default)]
+    pub recurrence_root_id: Option<i64>,
+    #[serde(default)]
+    pub next_recurrence_at: Option<String>,
+    #[serde(default)]
     pub images: Vec<TodoImage>,
+    #[serde(default)]
     pub notes: Vec<TodoNote>,
+    #[serde(default)]
+    pub subtasks: Vec<TodoSubtask>,
+}
+
+fn default_recurrence() -> String {
+    "none".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +318,15 @@ pub fn init_db(path: &PathBuf) -> Connection {
             created_at TEXT NOT NULL,
             FOREIGN KEY(note_id) REFERENCES todo_notes(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS todo_subtasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            todo_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+        );
         ",
     )
     .expect("init schema");
@@ -304,6 +343,69 @@ pub fn init_db(path: &PathBuf) -> Connection {
         conn.execute("UPDATE todos SET content = title WHERE content = ''", [])
             .ok();
     }
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none'",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN remind_1d INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN remind_1h INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN due_reminded_1d INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN due_reminded_1h INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN due_reminded_at INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute("ALTER TABLE todos ADD COLUMN remind_custom_hours INTEGER", [])
+        .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN due_reminded_custom INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute("ALTER TABLE todos ADD COLUMN recurrence_root_id INTEGER", [])
+        .ok();
+    conn.execute("ALTER TABLE todos ADD COLUMN next_recurrence_at TEXT", [])
+        .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN subtasks_completion_snapshot TEXT",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "UPDATE todos
+         SET due_at = NULL,
+             remind_1d = 0,
+             remind_1h = 0,
+             remind_custom_hours = NULL
+         WHERE recurrence != 'none'",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "UPDATE todos
+         SET recurrence_root_id = id
+         WHERE recurrence != 'none' AND recurrence_root_id IS NULL",
+        [],
+    )
+    .ok();
     conn.execute_batch(
         "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;",
     )

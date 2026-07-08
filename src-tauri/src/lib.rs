@@ -60,7 +60,8 @@ pub fn run() {
                 pomodoro: Arc::new(Mutex::new(PomodoroRuntime::default())),
             };
             commands::start_tracker(app.handle().clone(), state.clone());
-            app.manage(state);
+            app.manage(state.clone());
+            commands::check_pending_recurrences(app.handle(), &state);
 
             setup_tray(app)?;
             register_quick_todo_shortcut(app.handle());
@@ -104,6 +105,10 @@ pub fn run() {
             commands::update_todo_details,
             commands::set_todo_completed,
             commands::set_todo_pinned,
+            commands::add_todo_subtask,
+            commands::set_todo_subtask_completed,
+            commands::update_todo_subtask,
+            commands::delete_todo_subtask,
             commands::delete_todo_image,
             commands::add_todo_note,
             commands::delete_todo_note,

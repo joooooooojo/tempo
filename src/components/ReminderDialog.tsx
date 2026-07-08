@@ -58,7 +58,38 @@ function getConfig(event: DialogReminderEvent) {
       };
     case "pomodoro_phase_end":
       return getPomodoroConfig(event);
+    case "todo_due":
+      return getTodoDueConfig(event);
   }
+}
+
+function getTodoDueConfig(event: { title: string; lead: "1d" | "1h" | "due" | "custom"; hours?: number }) {
+  if (event.lead === "1d") {
+    return {
+      title: "待办即将截止",
+      description: `「${event.title}」将在 1 天后截止，记得处理。`,
+      action: "知道了",
+    };
+  }
+  if (event.lead === "1h") {
+    return {
+      title: "待办即将截止",
+      description: `「${event.title}」将在 1 小时后截止，请尽快完成。`,
+      action: "知道了",
+    };
+  }
+  if (event.lead === "custom" && event.hours) {
+    return {
+      title: "待办即将截止",
+      description: `「${event.title}」将在 ${event.hours} 小时后截止，请尽快完成。`,
+      action: "知道了",
+    };
+  }
+  return {
+    title: "待办已到截止时间",
+    description: `「${event.title}」已到截止时间。`,
+    action: "知道了",
+  };
 }
 
 function getPomodoroConfig(event: { phase: "work" | "short_break" | "long_break"; skipped: boolean }) {

@@ -42,6 +42,17 @@ export interface AppLimit {
   limit_sent: boolean;
 }
 
+export interface TodoSubtask {
+  id: number;
+  todo_id: number;
+  title: string;
+  completed: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+export type TodoRecurrence = "none" | "daily" | "weekly" | "monthly";
+
 export interface TodoItem {
   id: number;
   title: string;
@@ -51,8 +62,15 @@ export interface TodoItem {
   pinned_at?: string | null;
   created_at: string;
   completed_at?: string | null;
+  recurrence: TodoRecurrence;
+  remind_1d: boolean;
+  remind_1h: boolean;
+  remind_custom_hours?: number | null;
+  recurrence_root_id?: number | null;
+  next_recurrence_at?: string | null;
   images: TodoImage[];
   notes: TodoNote[];
+  subtasks: TodoSubtask[];
 }
 
 export interface TodoImage {
@@ -109,4 +127,5 @@ export type ReminderEvent =
   | { type: "night" }
   | { type: "app_limit_warn"; app_name: string; percent: number }
   | { type: "app_limit_reached"; app_name: string }
-  | { type: "pomodoro_phase_end"; phase: "work" | "short_break" | "long_break"; skipped: boolean };
+  | { type: "pomodoro_phase_end"; phase: "work" | "short_break" | "long_break"; skipped: boolean }
+  | { type: "todo_due"; todo_id: number; title: string; lead: "1d" | "1h" | "due" | "custom"; hours?: number };

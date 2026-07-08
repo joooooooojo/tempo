@@ -8,12 +8,13 @@ const PopoverAnchor = PopoverPrimitive.Anchor;
 
 type PopoverContentProps = React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content> & {
   portalled?: boolean;
+  container?: HTMLElement | null;
 };
 
 const PopoverContent = React.forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
   PopoverContentProps
->(({ className, align = "start", sideOffset = 8, portalled = true, ...props }, ref) => {
+>(({ className, align = "start", sideOffset = 8, portalled = true, container, ...props }, ref) => {
   const content = (
     <PopoverPrimitive.Content
       ref={ref}
@@ -28,7 +29,7 @@ const PopoverContent = React.forwardRef<
   );
 
   if (!portalled) return content;
-  return <PopoverPrimitive.Portal>{content}</PopoverPrimitive.Portal>;
+  return <PopoverPrimitive.Portal container={container}>{content}</PopoverPrimitive.Portal>;
 });
 PopoverContent.displayName = PopoverPrimitive.Content.displayName;
 

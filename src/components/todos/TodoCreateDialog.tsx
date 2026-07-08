@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { CalendarClock, X } from "lucide-react";
+import { CalendarClock, Repeat, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -23,8 +23,11 @@ import {
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { TodoImageInput } from "@/lib/api";
+import { recurrenceOptions, recurrenceLabel } from "@/lib/todoMeta";
 import { clipboardHasImages, insertTextAtSelection, markdownImagesFromClipboard } from "@/lib/markdownImages";
 import { cn } from "@/lib/utils";
+import type { TodoRecurrence } from "@/types";
+import { TodoSubtaskDraftList } from "@/components/todos/TodoSubtasks";
 
 export interface DraftTodoImage extends TodoImageInput {
   local_id: string;
@@ -36,6 +39,11 @@ type TodoCreateDialogProps = {
   todoTitle: string;
   todoContent: string;
   dueAt: string;
+  recurrence?: TodoRecurrence;
+  remind1d?: boolean;
+  remind1h?: boolean;
+  remindCustomHours?: number | null;
+  subtasks?: string[];
   saving?: boolean;
   titlePlaceholder?: string;
   contentPlaceholder?: string;
@@ -45,6 +53,11 @@ type TodoCreateDialogProps = {
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
   onDueAtChange: (value: string) => void;
+  onRecurrenceChange?: (value: TodoRecurrence) => void;
+  onRemind1dChange?: (value: boolean) => void;
+  onRemind1hChange?: (value: boolean) => void;
+  onRemindCustomHoursChange?: (value: number | null) => void;
+  onSubtasksChange?: (value: string[]) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 };
 
@@ -52,6 +65,7 @@ type TodoCreateFormPanelProps = Omit<TodoCreateDialogProps, "open" | "onOpenChan
   titleElement?: ReactNode;
   cancelElement?: ReactNode;
   layout?: "dialog" | "window";
+  popoverContainer?: HTMLElement | null;
   onCancel?: () => void;
 };
 
@@ -66,6 +80,11 @@ export function TodoCreateDialog({
   todoTitle,
   todoContent,
   dueAt,
+  recurrence = "none",
+  remind1d = false,
+  remind1h = false,
+  remindCustomHours = null,
+  subtasks = [],
   saving = false,
   titlePlaceholder = "标题",
   contentPlaceholder = "内容（支持 Markdown，粘贴图片会嵌入正文）",
@@ -75,23 +94,46 @@ export function TodoCreateDialog({
   onTitleChange,
   onContentChange,
   onDueAtChange,
+  onRecurrenceChange,
+  onRemind1dChange,
+  onRemind1hChange,
+  onRemindCustomHoursChange,
+  onSubtasksChange,
   onSubmit,
 }: TodoCreateDialogProps) {
+  const [popoverContainer, setPopoverContainer] = useState<HTMLDivElement | null>(null);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="todo-create-dialog max-w-[520px] gap-0 overflow-visible rounded-xl border-border/80 p-0"
+        ref={setPopoverContainer}
+        className="todo-create-dialog !flex max-h-[520px] max-w-[520px] flex-col gap-0 overflow-visible rounded-xl border-border/80 p-0"
+        onFocusOutside={(event) => {
+          if (isPopoverLayerTarget(event.target)) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (isPopoverLayerTarget(event.target)) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (isPopoverLayerTarget(event.target)) event.preventDefault();
+        }}
       >
         <TodoCreateFormPanel
           heading={heading}
           todoTitle={todoTitle}
           todoContent={todoContent}
           dueAt={dueAt}
+          recurrence={recurrence}
+          remind1d={remind1d}
+          remind1h={remind1h}
+          remindCustomHours={remindCustomHours}
+          subtasks={subtasks}
           saving={saving}
           titlePlaceholder={titlePlaceholder}
           contentPlaceholder={contentPlaceholder}
           submitLabel={submitLabel}
           bodyExtra={bodyExtra}
+          popoverContainer={popoverContainer}
           titleElement={<DialogTitle className="text-[18px] font-bold">{heading}</DialogTitle>}
           cancelElement={
             <DialogClose asChild>
@@ -103,6 +145,11 @@ export function TodoCreateDialog({
           onTitleChange={onTitleChange}
           onContentChange={onContentChange}
           onDueAtChange={onDueAtChange}
+          onRecurrenceChange={onRecurrenceChange}
+          onRemind1dChange={onRemind1dChange}
+          onRemind1hChange={onRemind1hChange}
+          onRemindCustomHoursChange={onRemindCustomHoursChange}
+          onSubtasksChange={onSubtasksChange}
           onSubmit={onSubmit}
         />
       </DialogContent>
@@ -115,6 +162,11 @@ export function TodoCreateFormPanel({
   todoTitle,
   todoContent,
   dueAt,
+  recurrence = "none",
+  remind1d = false,
+  remind1h = false,
+  remindCustomHours = null,
+  subtasks = [],
   saving = false,
   titlePlaceholder = "标题",
   contentPlaceholder = "内容（支持 Markdown，粘贴图片会嵌入正文）",
@@ -123,10 +175,16 @@ export function TodoCreateFormPanel({
   cancelElement,
   bodyExtra,
   layout = "dialog",
+  popoverContainer,
   onCancel,
   onTitleChange,
   onContentChange,
   onDueAtChange,
+  onRecurrenceChange,
+  onRemind1dChange,
+  onRemind1hChange,
+  onRemindCustomHoursChange,
+  onSubtasksChange,
   onSubmit,
 }: TodoCreateFormPanelProps) {
   const isWindowLayout = layout === "window";
@@ -160,7 +218,7 @@ export function TodoCreateFormPanel({
       <DialogHeader
         data-tauri-drag-region={isWindowLayout ? "" : undefined}
         className={cn(
-          "relative border-b border-border/60 px-5 py-4 pr-12",
+          "relative shrink-0 border-b border-border/60 px-5 py-4 pr-12",
           isWindowLayout && "select-none"
         )}
         onMouseDown={startWindowDrag}
@@ -185,24 +243,13 @@ export function TodoCreateFormPanel({
           </button>
         )}
       </DialogHeader>
-      <form className={cn(isWindowLayout ? "flex min-h-0 flex-1 flex-col" : "contents")} onSubmit={onSubmit}>
+      <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onSubmit={onSubmit}>
         <div
           className={cn(
-            isWindowLayout
-              ? "flex min-h-0 flex-1 flex-col gap-3.5 px-5 pb-4 pt-5"
-              : "space-y-4 px-5 pb-4 pt-5"
+            "no-scrollbar min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-5",
+            isWindowLayout ? "flex flex-col gap-3.5" : "space-y-4"
           )}
         >
-          <div>
-            <DueDateField
-              value={dueAt}
-              className="h-11 w-full"
-              floatingLabel
-              popoverPortalled={false}
-              onChange={onDueAtChange}
-            />
-          </div>
-
           <div className={cn(isWindowLayout && "shrink-0")}>
             <FloatingInput
               id="new-todo-title"
@@ -225,18 +272,53 @@ export function TodoCreateFormPanel({
               onPaste={handleContentPaste}
             />
           </div>
+
+          {onSubtasksChange && (
+            <TodoSubtaskDraftList items={subtasks} onChange={onSubtasksChange} />
+          )}
           {bodyExtra}
         </div>
 
-        <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
-          {cancelElement ?? (
-            <Button type="button" variant="outline" className="h-9 min-w-20" onClick={onCancel}>
-              取消
+        <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+            {onRecurrenceChange && (
+              <RecurrenceField
+                value={recurrence}
+                popoverContainer={popoverContainer}
+                popoverPortalled={!isWindowLayout}
+                popoverSide="top"
+                onChange={onRecurrenceChange}
+              />
+            )}
+            {recurrence === "none" && (
+              <DueDateField
+                value={dueAt}
+                className="h-9 min-w-0 flex-1"
+                bordered
+                compact
+                remind1d={remind1d}
+                remind1h={remind1h}
+                remindCustomHours={remindCustomHours}
+                popoverContainer={popoverContainer}
+                popoverPortalled={!isWindowLayout}
+                popoverSide="top"
+                onChange={onDueAtChange}
+                onRemind1dChange={onRemind1dChange}
+                onRemind1hChange={onRemind1hChange}
+                onRemindCustomHoursChange={onRemindCustomHoursChange}
+              />
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {cancelElement ?? (
+              <Button type="button" variant="outline" className="h-9 min-w-20" onClick={onCancel}>
+                取消
+              </Button>
+            )}
+            <Button type="submit" className="h-9 min-w-24" disabled={saving || !todoTitle.trim()}>
+              {submitLabel}
             </Button>
-          )}
-          <Button type="submit" className="h-9 min-w-24" disabled={saving || !todoTitle.trim()}>
-            {submitLabel}
-          </Button>
+          </div>
         </DialogFooter>
       </form>
     </>
@@ -248,6 +330,17 @@ export function todoDateTimeLocalToIso(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
+}
+
+function isPopoverLayerTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "[data-radix-popover-content], [data-radix-popper-content-wrapper], [data-radix-focus-guard]"
+      )
+    )
+  );
 }
 
 function FloatingInput({
@@ -392,21 +485,117 @@ function FloatingTextarea({
   );
 }
 
+function RecurrenceField({
+  value,
+  className,
+  popoverPortalled = true,
+  popoverContainer,
+  popoverSide = "bottom",
+  onChange,
+}: {
+  value: TodoRecurrence;
+  className?: string;
+  popoverPortalled?: boolean;
+  popoverContainer?: HTMLElement | null;
+  popoverSide?: "top" | "bottom";
+  onChange: (value: TodoRecurrence) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const inDialog = Boolean(popoverContainer);
+  const active = open || focused || value !== "none";
+  const label = recurrenceLabel(value);
+
+  return (
+    <div className={cn("relative min-h-9 shrink-0", className)}>
+      <Popover modal={inDialog} open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "flex h-9 min-w-[108px] items-center gap-2 rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-left text-[14px] font-semibold shadow-sm shadow-emerald-950/[0.03] transition-colors hover:brightness-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+              active && "border-primary/45"
+            )}
+            aria-label="重复"
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+          >
+            <Repeat className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className={cn("truncate", value !== "none" ? "text-foreground" : "text-muted-foreground")}>
+              {label}
+            </span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          side={popoverSide}
+          align="start"
+          collisionPadding={12}
+          portalled={popoverPortalled}
+          container={popoverContainer}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          className={cn("w-44 p-1.5", inDialog ? "z-[60]" : popoverPortalled && "z-[120]")}
+        >
+          {recurrenceOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={cn(
+                "flex h-9 w-full items-center rounded-md px-2.5 text-left text-[13px] transition-colors",
+                option.value === value
+                  ? "bg-primary/10 font-semibold text-primary"
+                  : "text-foreground hover:bg-foreground/6"
+              )}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
 function DueDateField({
   value,
   className,
   floatingLabel = false,
+  bordered = false,
+  compact = false,
+  remind1d = false,
+  remind1h = false,
+  remindCustomHours = null,
   popoverPortalled = true,
+  popoverContainer,
+  popoverSide = "bottom",
   onChange,
+  onRemind1dChange,
+  onRemind1hChange,
+  onRemindCustomHoursChange,
 }: {
   value: string;
   className?: string;
   floatingLabel?: boolean;
+  bordered?: boolean;
+  compact?: boolean;
+  remind1d?: boolean;
+  remind1h?: boolean;
+  remindCustomHours?: number | null;
   popoverPortalled?: boolean;
+  popoverContainer?: HTMLElement | null;
+  popoverSide?: "top" | "bottom";
   onChange: (value: string) => void;
+  onRemind1dChange?: (value: boolean) => void;
+  onRemind1hChange?: (value: boolean) => void;
+  onRemindCustomHoursChange?: (value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [customReminderEnabled, setCustomReminderEnabled] = useState(false);
+  const [customReminderDraft, setCustomReminderDraft] = useState("");
   const selectedDate = parseDateTimeLocalValue(value);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(selectedDate ?? new Date()));
   const fallbackDate = getDefaultDueDate(new Date());
@@ -418,6 +607,34 @@ function DueDateField({
   useEffect(() => {
     if (open) setVisibleMonth(startOfMonth(selectedDate ?? new Date()));
   }, [open, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const enabled = remindCustomHours != null;
+    setCustomReminderEnabled(enabled);
+    setCustomReminderDraft(enabled ? String(remindCustomHours) : "");
+  }, [open, remindCustomHours]);
+
+  const commitCustomReminderHours = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      onRemindCustomHoursChange?.(null);
+      return;
+    }
+    const hours = Number.parseInt(trimmed, 10);
+    if (Number.isNaN(hours)) return;
+    onRemindCustomHoursChange?.(Math.min(168, Math.max(1, hours)));
+  };
+
+  const clearOtherReminders = (keep: "1d" | "1h" | "custom") => {
+    if (keep !== "1d") onRemind1dChange?.(false);
+    if (keep !== "1h") onRemind1hChange?.(false);
+    if (keep !== "custom") {
+      onRemindCustomHoursChange?.(null);
+      setCustomReminderEnabled(false);
+      setCustomReminderDraft("");
+    }
+  };
 
   const commit = (date: Date, nextHour = hour, nextMinute = minute) => {
     const next = resolveDueDate(date, nextHour, nextMinute);
@@ -435,11 +652,18 @@ function DueDateField({
   const placeholder = "截止时间";
   const active = open || focused || Boolean(value);
   const floated = floatingLabel && active;
+  const useBorderedStyle = floatingLabel || bordered;
   const isBaseDateDisabled = isDueDateDisabled(baseDate);
   const todayDisabled = isDueDateDisabled(new Date());
+  const inDialog = Boolean(popoverContainer);
+  const hasReminderOptions = Boolean(
+    value && (onRemind1dChange || onRemind1hChange || onRemindCustomHoursChange)
+  );
+  const reminderSummary = formatDueReminderSummary(remind1d, remind1h, remindCustomHours);
+  const hasReminder = Boolean(remind1d || remind1h || remindCustomHours);
 
   return (
-    <div className={cn("relative h-10 shrink-0", className)}>
+    <div className={cn("relative shrink-0", compact ? "h-9" : "min-h-10", className)}>
       {floatingLabel && (
         <span
           className={cn(
@@ -452,53 +676,70 @@ function DueDateField({
           {placeholder}
         </span>
       )}
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover modal={inDialog} open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
             className={cn(
-              "flex h-full w-full min-w-0 items-center gap-2 rounded-lg px-3 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-              floatingLabel
+              "flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-3 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+              useBorderedStyle
                 ? cn(
                     "border border-border/70 bg-[var(--todo-field-bg)] shadow-sm shadow-emerald-950/[0.03] hover:brightness-[1.02]",
-                    active && "border-primary/45"
+                    active && "border-primary/45",
+                    compact && hasReminder && value && "border-primary/30 bg-primary/[0.035]"
                   )
                 : "glass-subtle hover:bg-white/45 dark:hover:bg-white/8",
               value ? "pr-9" : "pr-3"
             )}
             aria-label={placeholder}
+            title={compact && hasReminder ? reminderSummary || undefined : undefined}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
           >
-            <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className={cn("min-w-0 truncate", value ? "text-foreground" : "text-muted-foreground")}>
-              {value ? formatDueFieldValue(value) : floated ? "" : placeholder}
+            <span className="relative shrink-0">
+              <CalendarClock
+                className={cn(
+                  "h-4 w-4 transition-colors",
+                  hasReminder && value ? "text-primary" : "text-muted-foreground"
+                )}
+              />
+              {hasReminder && value && (
+                <span
+                  className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full border border-[var(--todo-field-bg)] bg-primary shadow-[0_0_0_1px_rgba(16,185,129,0.25)]"
+                  aria-hidden
+                />
+              )}
             </span>
+            {compact ? (
+              <span className="min-w-0 truncate">
+                <span className={cn(value ? "text-foreground" : "text-muted-foreground")}>
+                  {value ? formatDueFieldValue(value) : floated ? "" : placeholder}
+                </span>
+              </span>
+            ) : (
+              <span className="flex min-w-0 flex-col">
+                <span className={cn("truncate", value ? "text-foreground" : "text-muted-foreground")}>
+                  {value ? formatDueFieldValue(value) : floated ? "" : placeholder}
+                </span>
+                {value && reminderSummary && (
+                  <span className="truncate text-[11px] font-normal text-muted-foreground">{reminderSummary}</span>
+                )}
+              </span>
+            )}
           </button>
         </PopoverTrigger>
 
-        {value && (
-          <button
-            type="button"
-            className="absolute right-1.5 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/8 hover:text-foreground"
-            aria-label="清除截止时间"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onChange("");
-              setOpen(false);
-            }}
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-
         <PopoverContent
-          side="bottom"
+          side={popoverSide}
           align="start"
           collisionPadding={12}
           portalled={popoverPortalled}
-          className="w-[492px] overflow-hidden p-0"
+          container={popoverContainer}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          className={cn(
+            "w-[min(480px,calc(100vw-2.5rem))] overflow-hidden p-0",
+            inDialog ? "z-[60]" : popoverPortalled && "z-[120]"
+          )}
         >
           <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-3 p-3">
             <Calendar
@@ -556,7 +797,11 @@ function DueDateField({
                             : "bg-foreground/5 text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
                           disabled && "cursor-default bg-foreground/5 text-muted-foreground/35 shadow-none hover:bg-foreground/5 hover:text-muted-foreground/35"
                         )}
-                        onClick={() => commitAndClose(baseDate, hour, option)}
+                        onClick={() =>
+                          hasReminderOptions
+                            ? commit(baseDate, hour, option)
+                            : commitAndClose(baseDate, hour, option)
+                        }
                       >
                         {option}
                       </button>
@@ -566,6 +811,94 @@ function DueDateField({
               </div>
             </div>
           </div>
+          {hasReminderOptions && (
+            <div className="border-t border-border/60 px-3 py-3">
+              <span className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                提醒
+              </span>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 py-1">
+                <label className="flex items-center gap-1.5 text-[12px] text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={remind1d}
+                    className="accent-primary"
+                    onChange={(event) => {
+                      if (event.target.checked) {
+                        clearOtherReminders("1d");
+                        onRemind1dChange?.(true);
+                        return;
+                      }
+                      onRemind1dChange?.(false);
+                    }}
+                  />
+                  提前 1 天
+                </label>
+                <label className="flex items-center gap-1.5 text-[12px] text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={remind1h}
+                    className="accent-primary"
+                    onChange={(event) => {
+                      if (event.target.checked) {
+                        clearOtherReminders("1h");
+                        onRemind1hChange?.(true);
+                        return;
+                      }
+                      onRemind1hChange?.(false);
+                    }}
+                  />
+                  提前 1 小时
+                </label>
+                <label className="flex items-center gap-1.5 text-[12px] text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={customReminderEnabled}
+                    className="accent-primary"
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      if (enabled) {
+                        clearOtherReminders("custom");
+                        setCustomReminderEnabled(true);
+                        return;
+                      }
+                      setCustomReminderEnabled(false);
+                      setCustomReminderDraft("");
+                      onRemindCustomHoursChange?.(null);
+                    }}
+                  />
+                  <span className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      disabled={!customReminderEnabled}
+                      placeholder="自定义"
+                      value={customReminderDraft}
+                      className="h-6 w-14 border-0 border-b border-border/80 bg-transparent px-0 text-center text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:border-transparent disabled:opacity-40"
+                      onFocus={() => {
+                        if (!customReminderEnabled) {
+                          clearOtherReminders("custom");
+                          setCustomReminderEnabled(true);
+                        }
+                      }}
+                      onChange={(event) => {
+                        const next = event.target.value.replace(/[^\d]/g, "");
+                        setCustomReminderDraft(next);
+                        clearOtherReminders("custom");
+                        setCustomReminderEnabled(true);
+                        if (!next) {
+                          onRemindCustomHoursChange?.(null);
+                          return;
+                        }
+                        commitCustomReminderHours(next);
+                      }}
+                      onBlur={() => commitCustomReminderHours(customReminderDraft)}
+                    />
+                    <span className="text-muted-foreground">小时</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
           <div className="border-t border-border/60 p-3">
             <div className="flex items-center justify-between gap-2">
               <Button
@@ -613,6 +946,22 @@ function DueDateField({
           </div>
         </PopoverContent>
       </Popover>
+
+      {value && (
+        <button
+          type="button"
+          className="absolute right-1.5 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/8 hover:text-foreground"
+          aria-label="清除截止时间"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onChange("");
+            setOpen(false);
+          }}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }
@@ -627,6 +976,14 @@ function formatDueFieldValue(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatDueReminderSummary(remind1d: boolean, remind1h: boolean, remindCustomHours?: number | null) {
+  const parts: string[] = [];
+  if (remind1d) parts.push("提前 1 天");
+  if (remind1h) parts.push("提前 1 小时");
+  if (remindCustomHours) parts.push(`提前 ${remindCustomHours} 小时`);
+  return parts.join(" · ");
 }
 
 function parseDateTimeLocalValue(value?: string | null) {

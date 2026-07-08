@@ -13,6 +13,7 @@ import { PomodoroPage } from "@/pages/PomodoroPage";
 import { TodoPage } from "@/pages/TodoPage";
 import { QuickTodoPage } from "@/pages/QuickTodoPage";
 import { api } from "@/lib/api";
+import { notifyUser } from "@/lib/notifications";
 import { playNotificationSound } from "@/lib/sound";
 import { appToastOptions } from "@/lib/toastOptions";
 import type { ReminderEvent, Settings } from "@/types";
@@ -62,6 +63,19 @@ function MainApp() {
         api.getSettings().then((s) => {
           if (s.sound_enabled) playNotificationSound();
         });
+      }
+
+      if (e.payload.type === "todo_due") {
+        api.getSettings().then((s) => {
+          if (s.sound_enabled) playNotificationSound();
+        });
+        const leadText =
+          e.payload.lead === "1d"
+            ? "将在 1 天后截止"
+            : e.payload.lead === "1h"
+              ? "将在 1 小时后截止"
+              : "已到截止时间";
+        void notifyUser("待办提醒", `「${e.payload.title}」${leadText}`);
       }
 
       setReminder(e.payload);

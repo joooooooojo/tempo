@@ -8,6 +8,7 @@ import type {
   TodoImage,
   TodoItem,
   TodoNote,
+  TodoRecurrence,
   WeeklyReport,
 } from "@/types";
 
@@ -34,14 +35,60 @@ export const api = {
   removeAppLimit: (appName: string) =>
     invoke<void>("remove_app_limit", { appName }),
   getTodos: () => invoke<TodoItem[]>("get_todos"),
-  addTodo: (title: string, content: string, dueAt?: string | null, images: TodoImageInput[] = []) =>
-    invoke<TodoItem>("add_todo", { title, content, dueAt, images }),
-  updateTodoDetails: (id: number, title: string, content: string, dueAt?: string | null) =>
-    invoke<TodoItem>("update_todo_details", { id, title, content, dueAt }),
+  addTodo: (
+    title: string,
+    content: string,
+    dueAt?: string | null,
+    images: TodoImageInput[] = [],
+    recurrence: TodoRecurrence = "none",
+    remind1d = false,
+    remind1h = false,
+    remindCustomHours: number | null = null,
+    subtasks: string[] = []
+  ) =>
+    invoke<TodoItem>("add_todo", {
+      title,
+      content,
+      dueAt,
+      images,
+      recurrence,
+      remind1d,
+      remind1h,
+      remindCustomHours,
+      subtasks,
+    }),
+  updateTodoDetails: (
+    id: number,
+    title: string,
+    content: string,
+    dueAt?: string | null,
+    recurrence: TodoRecurrence = "none",
+    remind1d = false,
+    remind1h = false,
+    remindCustomHours: number | null = null
+  ) =>
+    invoke<TodoItem>("update_todo_details", {
+      id,
+      title,
+      content,
+      dueAt,
+      recurrence,
+      remind1d,
+      remind1h,
+      remindCustomHours,
+    }),
   setTodoCompleted: (id: number, completed: boolean) =>
     invoke<TodoItem>("set_todo_completed", { id, completed }),
   setTodoPinned: (id: number, pinned: boolean) =>
     invoke<TodoItem>("set_todo_pinned", { id, pinned }),
+  addTodoSubtask: (todoId: number, title: string) =>
+    invoke<TodoItem>("add_todo_subtask", { todoId, title }),
+  setTodoSubtaskCompleted: (subtaskId: number, completed: boolean) =>
+    invoke<TodoItem>("set_todo_subtask_completed", { subtaskId, completed }),
+  updateTodoSubtask: (subtaskId: number, title: string) =>
+    invoke<TodoItem>("update_todo_subtask", { subtaskId, title }),
+  deleteTodoSubtask: (subtaskId: number) =>
+    invoke<TodoItem>("delete_todo_subtask", { subtaskId }),
   deleteTodoImage: (imageId: TodoImage["id"]) =>
     invoke<TodoItem>("delete_todo_image", { imageId }),
   addTodoNote: (todoId: number, body: string, images: TodoImageInput[] = []) =>
