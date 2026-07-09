@@ -22,6 +22,13 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         let _ = window.hide();
     }
 
+    // Pre-create the eye-care overlay during startup so the first reminder does not
+    // build a WebView inside the invoke handler (Windows WebView2 can deadlock IPC).
+    if app.get_webview_window("eye-care-reminder").is_none() {
+        let window = build_eye_care_overlay_window(app)?;
+        let _ = window.hide();
+    }
+
     Ok(())
 }
 
@@ -68,7 +75,6 @@ pub fn show_eye_care_overlay_window(app: &AppHandle) -> tauri::Result<()> {
         let (x, y, width, height) = primary_monitor_bounds(app)?;
         let _ = window.set_position(LogicalPosition::new(x, y));
         let _ = window.set_size(LogicalSize::new(width, height));
-        let _ = window.set_fullscreen(true);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -95,9 +101,6 @@ pub fn hide_eye_care_overlay(app: AppHandle) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     let _ = window.set_simple_fullscreen(false);
-
-    #[cfg(target_os = "windows")]
-    let _ = window.set_fullscreen(false);
 
     window.hide().map_err(|error| error.to_string())
 }
