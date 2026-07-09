@@ -25,13 +25,10 @@ jobs:
         include:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
-            rust-target: aarch64-apple-darwin
           - platform: macos-latest
             args: --target x86_64-apple-darwin
-            rust-target: x86_64-apple-darwin
           - platform: windows-latest
             args: ""
-            rust-target: ""
 
     runs-on: ${{ matrix.platform }}
 
@@ -56,19 +53,9 @@ jobs:
 
       - run: npm ci
 
-      # Stub frontend so tauri-build can resolve frontendDist without a full Vite build.
-      - name: Stub frontend dist
-        shell: bash
-        run: |
-          mkdir -p dist
-          printf '<!doctype html><title>cache-warm</title>' > dist/index.html
-
-      - name: Compile Rust release dependencies
-        working-directory: src-tauri
-        shell: bash
-        run: |
-          if [ -n "${{ matrix.rust-target }}" ]; then
-            cargo build --release --target "${{ matrix.rust-target }}"
-          else
-            cargo build --release
-          fi
+      # Match Release's compile path (tauri-action), but skip packaging installers.
+      - name: Compile with tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --no-bundle ${{ matrix.args }}
