@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { BarChart3, ListTodo, Minus, Settings, Square, Timer, X } from "lucide-react";
-import { useState } from "react";
+import { BarChart3, Copy, ListTodo, Minus, Settings, Square, Timer, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { cn, isMacTarget } from "@/lib/utils";
 
@@ -30,7 +30,7 @@ export function AppLayout() {
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={cn(
-            "flex w-50 shrink-0 flex-col border-r border-border/60 px-4 pb-4", "pt-0"
+            "flex w-50 shrink-0 flex-col border-r border-border/60 px-4 pb-4 pt-1"
           )}
         >
           <nav className="flex flex-1 flex-col gap-1">
@@ -74,8 +74,7 @@ export function AppLayout() {
         <div className="flex min-w-0 flex-1 flex-col">
           <main
             className={cn(
-              "no-scrollbar flex-1 overflow-y-auto px-4 pb-4",
-               "pt-0"
+              "no-scrollbar flex-1 overflow-y-auto px-4 pb-4 pt-1"
             )}
           >
             <div key={location.pathname} className="page-transition">
@@ -90,7 +89,26 @@ export function AppLayout() {
 
 function WindowTitleBar() {
   const appWindow = getCurrentWindow();
-  const [hoveredControl, setHoveredControl] = useState<"minimize" | "close" | null>(null);
+  const [hoveredControl, setHoveredControl] = useState<"minimize" | "maximize" | "close" | null>(null);
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    const syncMaximized = async () => {
+      const next = await appWindow.isMaximized().catch(() => false);
+      if (!disposed) setMaximized(next);
+    };
+
+    void syncMaximized();
+    const unlistenPromise = appWindow.onResized(() => {
+      void syncMaximized();
+    });
+
+    return () => {
+      disposed = true;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
+    };
+  }, [appWindow]);
 
   const resetControlState = (button?: HTMLButtonElement | null) => {
     setHoveredControl(null);
@@ -100,6 +118,13 @@ function WindowTitleBar() {
   const minimizeWindow = async (button: HTMLButtonElement) => {
     resetControlState(button);
     await appWindow.minimize().catch(console.error);
+  };
+
+  const toggleMaximizeWindow = async (button: HTMLButtonElement) => {
+    resetControlState(button);
+    await appWindow.toggleMaximize().catch(console.error);
+    const next = await appWindow.isMaximized().catch(() => false);
+    setMaximized(next);
   };
 
   const hideWindow = async (button: HTMLButtonElement) => {
@@ -112,6 +137,7 @@ function WindowTitleBar() {
     <div
       data-tauri-drag-region
       className="window-titlebar relative z-20 flex h-10 shrink-0 select-none items-center pl-4"
+      onDoubleClick={() => void appWindow.toggleMaximize().catch(console.error)}
     >
       <div data-tauri-drag-region className="text-[13px] font-medium text-foreground/82">
         Tempo
@@ -134,11 +160,17 @@ function WindowTitleBar() {
         </button>
         <button
           type="button"
-          className="flex h-full w-11 items-center justify-center text-muted-foreground opacity-35 transition-colors focus:outline-none !cursor-default"
-          aria-label="最大化"
-          disabled
+          className={cn(
+            "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors focus:outline-none !cursor-default",
+            hoveredControl === "maximize" && "bg-foreground/5 text-foreground"
+          )}
+          aria-label={maximized ? "还原" : "最大化"}
+          onPointerEnter={() => setHoveredControl("maximize")}
+          onPointerLeave={() => setHoveredControl(null)}
+          onPointerDown={(event) => resetControlState(event.currentTarget)}
+          onClick={(event) => void toggleMaximizeWindow(event.currentTarget)}
         >
-          <Square className="h-3 w-3" />
+          {maximized ? <Copy className="h-3 w-3" /> : <Square className="h-3 w-3" />}
         </button>
         <button
           type="button"

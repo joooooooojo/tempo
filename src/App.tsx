@@ -13,6 +13,7 @@ import { PomodoroPage } from "@/pages/PomodoroPage";
 import { TodoPage } from "@/pages/TodoPage";
 import { QuickTodoPage } from "@/pages/QuickTodoPage";
 import { api } from "@/lib/api";
+import { revealAppShell } from "@/lib/boot";
 import { notifyUser } from "@/lib/notifications";
 import { playNotificationSound } from "@/lib/sound";
 import { appToastOptions } from "@/lib/toastOptions";
@@ -48,10 +49,22 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    api.getSettings().then((s) => {
-      applyTheme(s.theme);
-      if (!s.onboarding_completed) setShowOnboarding(true);
-    });
+    let cancelled = false;
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) void revealAppShell();
+    }, 8000);
+
+    api
+      .getSettings()
+      .then((s) => {
+        if (cancelled) return;
+        applyTheme(s.theme);
+        if (!s.onboarding_completed) setShowOnboarding(true);
+      })
+      .catch(console.error)
+      .finally(() => {
+        if (!cancelled) void revealAppShell();
+      });
 
     const unlistenReminder = listen<ReminderEvent>("reminder", (e) => {
       if (e.payload.type === "eye_care") {
@@ -86,6 +99,8 @@ function MainApp() {
     });
 
     return () => {
+      cancelled = true;
+      window.clearTimeout(safetyTimer);
       unlistenReminder.then((fn) => fn());
       unlistenToast.then((fn) => fn());
     };

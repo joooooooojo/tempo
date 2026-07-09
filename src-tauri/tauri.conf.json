@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tempo",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "identifier": "com.zekun.tempo",
   "build": {
     "beforeDevCommand": "node ./scripts/tauri-dev.mjs",
@@ -17,12 +17,28 @@
         "width": 900,
         "height": 640,
         "minWidth": 900,
-        "maxWidth": 900,
         "minHeight": 640,
-        "maxHeight": 640,
-        "resizable": false,
+        "resizable": true,
+        "maximizable": true,
         "center": true,
-        "decorations": false
+        "decorations": false,
+        "visible": false,
+        "backgroundColor": "#f3f8f5"
+      },
+      {
+        "label": "splashscreen",
+        "title": "Tempo",
+        "url": "splashscreen.html",
+        "width": 900,
+        "height": 640,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "center": true,
+        "decorations": false,
+        "visible": true,
+        "backgroundColor": "#f3f8f5"
       }
     ],
     "security": {
@@ -36,8 +52,20 @@
       }
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2OTcwMTE1RTMyRkM0N0YKUldSL3hDL2pGUUdYbHNXdE9wclZpeUZ0TVRVRnJmWmJuUTNrS285QTBYNk9aV2dySU9waEpCVDQK",
+      "endpoints": [
+        "https://github.com/joooooooojo/tempo/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "windows": {
       "wix": {

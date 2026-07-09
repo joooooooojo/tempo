@@ -47,7 +47,8 @@ export const api = {
     remind1d = false,
     remind1h = false,
     remindCustomHours: number | null = null,
-    subtasks: string[] = []
+    subtasks: string[] = [],
+    tags: string[] = []
   ) =>
     invoke<TodoItem>("add_todo", {
       title,
@@ -59,6 +60,7 @@ export const api = {
       remind1h,
       remindCustomHours,
       subtasks,
+      tags,
     }),
   updateTodoDetails: (
     id: number,
@@ -68,7 +70,8 @@ export const api = {
     recurrence: TodoRecurrence = "none",
     remind1d = false,
     remind1h = false,
-    remindCustomHours: number | null = null
+    remindCustomHours: number | null = null,
+    tags: string[] = []
   ) =>
     invoke<TodoItem>("update_todo_details", {
       id,
@@ -79,6 +82,7 @@ export const api = {
       remind1d,
       remind1h,
       remindCustomHours,
+      tags,
     }),
   setTodoCompleted: (id: number, completed: boolean) =>
     invoke<TodoItem>("set_todo_completed", { id, completed }),

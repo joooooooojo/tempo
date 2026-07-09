@@ -71,6 +71,7 @@ export interface TodoItem {
   images: TodoImage[];
   notes: TodoNote[];
   subtasks: TodoSubtask[];
+  tags: string[];
 }
 
 export interface TodoImage {

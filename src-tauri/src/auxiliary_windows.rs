@@ -1,9 +1,11 @@
 use tauri::window::Color;
 #[cfg(not(target_os = "macos"))]
-use tauri::LogicalPosition;
+use tauri::{Monitor, PhysicalPosition, PhysicalSize};
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
+
+const EYE_CARE_PRIMARY_LABEL: &str = "eye-care-reminder";
 
 pub const QUICK_TODO_PANEL_WIDTH: f64 = 420.0;
 pub const QUICK_TODO_PANEL_HEIGHT: f64 = 80.0;
@@ -24,11 +26,33 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         let _ = window.hide();
     }
 
-    // Pre-create the eye-care overlay during startup so the first reminder does not
+    // Pre-create eye-care overlays during startup so the first reminder does not
     // build a WebView inside the invoke handler (Windows WebView2 can deadlock IPC).
-    if app.get_webview_window("eye-care-reminder").is_none() {
-        let window = build_eye_care_overlay_window(app)?;
-        let _ = window.hide();
+    #[cfg(target_os = "macos")]
+    {
+        if app.get_webview_window(EYE_CARE_PRIMARY_LABEL).is_none() {
+            let window = build_eye_care_overlay_window(app, EYE_CARE_PRIMARY_LABEL)?;
+            let _ = window.hide();
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let monitors = ordered_monitors(app).unwrap_or_default();
+        let count = monitors.len().max(1);
+        for index in 0..count {
+            let label = eye_care_label(index);
+            let window = if let Some(window) = app.get_webview_window(&label) {
+                window
+            } else {
+                build_eye_care_overlay_window(app, &label)?
+            };
+
+            if let Some(monitor) = monitors.get(index) {
+                place_eye_care_window_on_monitor(&window, monitor);
+            }
+            let _ = window.hide();
+        }
     }
 
     Ok(())
@@ -60,69 +84,146 @@ pub fn show_eye_care_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 pub fn show_eye_care_overlay_window(app: &AppHandle) -> tauri::Result<()> {
-    let window = if let Some(window) = app.get_webview_window("eye-care-reminder") {
-        window
-    } else {
-        build_eye_care_overlay_window(app)?
-    };
-
     #[cfg(target_os = "macos")]
     {
+        // macOS: simple fullscreen on the primary display only.
+        // Multi-monitor window overlays look poor and are intentionally skipped.
+        let window = get_or_create_eye_care_window(app, EYE_CARE_PRIMARY_LABEL)?;
         let _ = window.set_simple_fullscreen(true);
         polish_macos_eye_care_overlay(&window);
+        present_eye_care_window(&window)?;
+        window.set_focus()?;
+        let _ = app.emit("eye-care:reveal", ());
+        return Ok(());
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "macos"))]
     {
-        let (x, y, width, height) = primary_monitor_bounds(app)?;
-        let _ = window.set_position(LogicalPosition::new(x, y));
-        let _ = window.set_size(LogicalSize::new(width, height));
-    }
+        let monitors = ordered_monitors(app)?;
+        if monitors.is_empty() {
+            return Err(tauri::Error::WindowNotFound);
+        }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let (x, y, width, height) = primary_monitor_bounds(app)?;
-        let _ = window.set_position(LogicalPosition::new(x, y));
-        let _ = window.set_size(LogicalSize::new(width, height));
-    }
+        for (index, monitor) in monitors.iter().enumerate() {
+            let label = eye_care_label(index);
+            let window = get_or_create_eye_care_window(app, &label)?;
+            // Place before and after show: first show on a secondary DPI display
+            // can ignore the initial move until the HWND is fully realized.
+            place_eye_care_window_on_monitor(&window, monitor);
+            present_eye_care_window(&window)?;
+            place_eye_care_window_on_monitor(&window, monitor);
+        }
 
-    let _ = window.set_always_on_top(true);
-    let _ = window.set_shadow(false);
-    let _ = window.set_background_color(Some(Color(239, 251, 244, 255)));
-    window.show()?;
-    window.set_focus()?;
-    let _ = app.emit_to("eye-care-reminder", "eye-care:reveal", ());
-    Ok(())
+        // Drop overlays left over from a previous session with more displays.
+        close_extra_eye_care_windows(app, monitors.len());
+
+        if let Some(primary) = app.get_webview_window(EYE_CARE_PRIMARY_LABEL) {
+            let _ = primary.set_focus();
+        }
+
+        let _ = app.emit("eye-care:reveal", ());
+        Ok(())
+    }
 }
 
 #[tauri::command]
 pub fn hide_eye_care_overlay(app: AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("eye-care-reminder") else {
-        return Ok(());
-    };
+    let windows = app.webview_windows();
+    for (label, window) in windows {
+        if !is_eye_care_label(&label) {
+            continue;
+        }
 
-    #[cfg(target_os = "macos")]
-    let _ = window.set_simple_fullscreen(false);
+        #[cfg(target_os = "macos")]
+        let _ = window.set_simple_fullscreen(false);
 
-    window.hide().map_err(|error| error.to_string())
+        if label == EYE_CARE_PRIMARY_LABEL {
+            window.hide().map_err(|error| error.to_string())?;
+        } else {
+            // Keep secondary overlays around so the next reminder does not recreate
+            // WebViews inside the invoke handler (Windows WebView2 can deadlock IPC).
+            let _ = window.hide();
+        }
+    }
+
+    Ok(())
+}
+
+fn eye_care_label(index: usize) -> String {
+    if index == 0 {
+        EYE_CARE_PRIMARY_LABEL.to_string()
+    } else {
+        format!("{EYE_CARE_PRIMARY_LABEL}-{index}")
+    }
+}
+
+fn is_eye_care_label(label: &str) -> bool {
+    label == EYE_CARE_PRIMARY_LABEL || label.starts_with(&format!("{EYE_CARE_PRIMARY_LABEL}-"))
+}
+
+fn get_or_create_eye_care_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(label) {
+        Ok(window)
+    } else {
+        build_eye_care_overlay_window(app, label)
+    }
+}
+
+fn present_eye_care_window(window: &WebviewWindow) -> tauri::Result<()> {
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_shadow(false);
+    let _ = window.set_background_color(Some(Color(239, 251, 244, 255)));
+    window.show()?;
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn primary_monitor_bounds(app: &AppHandle) -> tauri::Result<(f64, f64, f64, f64)> {
-    let monitor = app
-        .primary_monitor()?
-        .ok_or_else(|| tauri::Error::WindowNotFound)?;
+fn ordered_monitors(app: &AppHandle) -> tauri::Result<Vec<Monitor>> {
+    let mut monitors = app.available_monitors()?;
+    if let Some(primary) = app.primary_monitor()? {
+        if let Some(index) = monitors.iter().position(|monitor| same_monitor(monitor, &primary)) {
+            let primary_monitor = monitors.remove(index);
+            monitors.insert(0, primary_monitor);
+        } else {
+            monitors.insert(0, primary);
+        }
+    }
+    Ok(monitors)
+}
 
-    let size = monitor.size();
+#[cfg(not(target_os = "macos"))]
+fn same_monitor(left: &Monitor, right: &Monitor) -> bool {
+    left.position() == right.position() && left.size() == right.size()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn place_eye_care_window_on_monitor(window: &WebviewWindow, monitor: &Monitor) {
     let position = monitor.position();
-    let scale = monitor.scale_factor();
+    let size = monitor.size();
+    // Use physical pixels so mixed-DPI secondary monitors land correctly.
+    let _ = window.set_position(PhysicalPosition::new(position.x, position.y));
+    let _ = window.set_size(PhysicalSize::new(size.width, size.height));
+}
 
-    Ok((
-        position.x as f64 / scale,
-        position.y as f64 / scale,
-        size.width as f64 / scale,
-        size.height as f64 / scale,
-    ))
+#[cfg(not(target_os = "macos"))]
+fn close_extra_eye_care_windows(app: &AppHandle, active_count: usize) {
+    for (label, window) in app.webview_windows() {
+        if !is_eye_care_label(&label) || label == EYE_CARE_PRIMARY_LABEL {
+            continue;
+        }
+
+        let Some(suffix) = label.strip_prefix(&format!("{EYE_CARE_PRIMARY_LABEL}-")) else {
+            continue;
+        };
+        let Ok(index) = suffix.parse::<usize>() else {
+            let _ = window.close();
+            continue;
+        };
+
+        if index >= active_count {
+            let _ = window.close();
+        }
+    }
 }
 
 pub fn polish_quick_todo_window(window: &WebviewWindow) {
@@ -158,10 +259,10 @@ pub fn build_quick_todo_window(
     .build()
 }
 
-fn build_eye_care_overlay_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+fn build_eye_care_overlay_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(
         app,
-        "eye-care-reminder",
+        label,
         WebviewUrl::App("/?view=eye-care".into()),
     )
     .title("")

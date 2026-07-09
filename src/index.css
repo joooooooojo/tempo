@@ -183,6 +183,21 @@ body {
     0 0 36px var(--glow);
 }
 
+/* Top-row stats: cast shadow downward so it isn't clipped by the scroll container */
+.todo-stats-row > .glass {
+  box-shadow:
+    0 0 0 1px var(--glass-highlight) inset,
+    0 8px 20px -8px rgba(0, 0, 0, 0.08),
+    0 2px 6px -2px rgba(0, 0, 0, 0.04);
+}
+
+.dark .todo-stats-row > .glass {
+  box-shadow:
+    0 0 0 1px var(--glass-highlight) inset,
+    0 10px 26px -10px rgba(0, 0, 0, 0.5),
+    0 0 28px -4px var(--glow);
+}
+
 .todo-create-dialog {
   --todo-field-bg: rgba(255, 255, 255, 0.74);
   background: rgba(255, 255, 255, 0.9);
@@ -419,10 +434,32 @@ html.quick-todo-window #root {
   box-sizing: content-box;
   max-width: 100%;
   max-height: 360px;
-  margin: 8px 0 16px;
+  margin: 0;
   border-radius: 6px;
   background: hsl(var(--card));
   object-fit: contain;
+}
+
+.github-markdown-image-button {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px 0 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  border-radius: 6px;
+  transition: opacity 0.15s ease;
+}
+
+.github-markdown-image-button:hover {
+  opacity: 0.92;
+}
+
+.github-markdown-image-button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 .github-markdown .github-markdown-table-wrap {

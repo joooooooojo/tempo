@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          # Distinguish the two macOS targets that share the same runner OS.
+          # Tag runs restore from master via GitHub's default-branch cache fallback.
+          key: ${{ matrix.args }}
+          cache-on-failure: true
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Tempo v__VERSION__
+          releaseBody: |
+            ## Tempo v__VERSION__
+
+            在应用内打开「设置 → 关于」检查更新，或下载对应平台的安装包手动安装。
+          releaseDraft: false
+          prerelease: false
+          # We generate latest.json ourselves with public browser download URLs.
+          uploadUpdaterJson: false
+          args: ${{ matrix.args }}
+
+  publish-updater-json:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Generate and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v ]]; then
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+          export RELEASE_TAG="$TAG"
+          export RELEASE_NOTES="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).body || ''")"
+
+          node ./scripts/generate-latest-json.mjs
+
+          RELEASE_JSON="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
+          RELEASE_ID="$(node -p "JSON.parse(process.argv[1]).id" "$RELEASE_JSON")"
+          EXISTING_ID="$(node -p "const a=JSON.parse(process.argv[1]).assets.find(x=>x.name==='latest.json'); a?a.id:''" "$RELEASE_JSON")"
+          if [[ -n "${EXISTING_ID}" ]]; then
+            curl -fsSL -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${EXISTING_ID}"
+          fi
+
+          curl -fsSL \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            -H "Accept: application/vnd.github+json" \
+            --data-binary @latest.json \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=latest.json"

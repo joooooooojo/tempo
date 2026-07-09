@@ -97,6 +97,8 @@ pub struct TodoItem {
     pub notes: Vec<TodoNote>,
     #[serde(default)]
     pub subtasks: Vec<TodoSubtask>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_recurrence() -> String {
@@ -270,10 +272,7 @@ pub fn legacy_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn default_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let data_dir = app
-        .path()
-        .data_dir()
-        .map_err(|e| e.to_string())?;
+    let data_dir = app.path().data_dir().map_err(|e| e.to_string())?;
     Ok(data_dir.join(APP_STORAGE_FOLDER_NAME))
 }
 
@@ -472,6 +471,14 @@ pub fn init_db(path: &PathBuf) -> Connection {
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS todo_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            todo_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE,
+            UNIQUE(todo_id, name)
         );
         CREATE TABLE IF NOT EXISTS pomodoro_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1022,6 +1022,7 @@ pub fn add_todo(
     remind_1h: Option<bool>,
     remind_custom_hours: Option<i64>,
     subtasks: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
 ) -> Result<TodoItem, String> {
     let images = normalize_todo_images(images)?;
     let content = normalize_todo_content(content.unwrap_or_default());
@@ -1036,6 +1037,7 @@ pub fn add_todo(
             remind_custom_hours,
         )?;
     let subtask_titles = normalize_subtask_titles(subtasks)?;
+    let tag_names = normalize_todo_tags(tags)?;
     let created_at = Local::now().to_rfc3339();
     let conn = state.db.lock();
     conn.execute(
@@ -1064,6 +1066,7 @@ pub fn add_todo(
     }
     insert_todo_images(&conn, id, &images)?;
     insert_subtasks(&conn, id, &subtask_titles)?;
+    insert_todo_tags(&conn, id, &tag_names)?;
     fetch_todo(&conn, id)
 }
 
@@ -1079,6 +1082,7 @@ pub fn update_todo_details(
     remind_1d: Option<bool>,
     remind_1h: Option<bool>,
     remind_custom_hours: Option<i64>,
+    tags: Option<Vec<String>>,
 ) -> Result<TodoItem, String> {
     let content = normalize_todo_content(content);
     let title = normalize_todo_title(title, false)?;
@@ -1132,6 +1136,10 @@ pub fn update_todo_details(
             params![id],
         )
         .map_err(|e| e.to_string())?;
+    }
+
+    if tags.is_some() {
+        replace_todo_tags(&conn, id, &normalize_todo_tags(tags)?)?;
     }
 
     let todo = fetch_todo(&conn, id)?;
@@ -1450,6 +1458,8 @@ pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String>
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM todo_subtasks WHERE todo_id = ?1", [id])
         .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM todo_tags WHERE todo_id = ?1", [id])
+        .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM todos WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
 
@@ -1539,6 +1549,8 @@ pub fn restore_todo(state: tauri::State<AppState>, todo: TodoItem) -> Result<Tod
         )
         .map_err(|e| e.to_string())?;
     }
+
+    insert_todo_tags(&conn, todo.id, &todo.tags)?;
 
     fetch_todo(&conn, todo.id)
 }
@@ -1900,6 +1912,8 @@ fn insert_imported_todos(
             )
             .map_err(|e| e.to_string())?;
         }
+
+        insert_todo_tags(&conn, todo_id, &todo.tags)?;
     }
 
     Ok(())
@@ -2324,6 +2338,11 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
         window.unminimize().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     }
+
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        let _ = splash.close();
+    }
+
     Ok(())
 }
 
@@ -2541,6 +2560,7 @@ fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
     hydrate_todo_images(conn, std::slice::from_mut(&mut todo))?;
     hydrate_todo_notes(conn, std::slice::from_mut(&mut todo))?;
     hydrate_todo_subtasks(conn, std::slice::from_mut(&mut todo))?;
+    hydrate_todo_tags(conn, std::slice::from_mut(&mut todo))?;
     Ok(todo)
 }
 
@@ -2573,6 +2593,7 @@ fn list_todos(conn: &Connection) -> Result<Vec<TodoItem>, String> {
     hydrate_todo_images(conn, &mut todos)?;
     hydrate_todo_notes(conn, &mut todos)?;
     hydrate_todo_subtasks(conn, &mut todos)?;
+    hydrate_todo_tags(conn, &mut todos)?;
     Ok(todos)
 }
 
@@ -2597,6 +2618,7 @@ fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
         images: Vec::new(),
         notes: Vec::new(),
         subtasks: Vec::new(),
+        tags: Vec::new(),
     })
 }
 
@@ -2851,6 +2873,7 @@ fn spawn_recurring_todo(
         .map(|subtask| subtask.title.clone())
         .collect::<Vec<_>>();
     insert_subtasks(conn, id, &subtask_titles)?;
+    insert_todo_tags(conn, id, &source.tags)?;
     fetch_todo(conn, id)
 }
 
@@ -3017,6 +3040,79 @@ fn normalize_subtask_title(title: String) -> Result<String, String> {
         return Err("子任务标题不能超过 120 个字".into());
     }
     Ok(normalized)
+}
+
+fn normalize_todo_tag(name: String) -> Result<String, String> {
+    let normalized = name.trim().to_string();
+    if normalized.is_empty() {
+        return Err("标签不能为空".into());
+    }
+    if normalized.chars().count() > 32 {
+        return Err("标签不能超过 32 个字".into());
+    }
+    Ok(normalized)
+}
+
+fn normalize_todo_tags(tags: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    for tag in tags.unwrap_or_default() {
+        let tag = normalize_todo_tag(tag)?;
+        let key = tag.to_ascii_lowercase();
+        if seen.contains(&key) {
+            continue;
+        }
+        if normalized.len() >= 10 {
+            return Err("每个待办最多添加 10 个标签".into());
+        }
+        seen.insert(key);
+        normalized.push(tag);
+    }
+
+    Ok(normalized)
+}
+
+fn insert_todo_tags(conn: &Connection, todo_id: i64, tags: &[String]) -> Result<(), String> {
+    let created_at = Local::now().to_rfc3339();
+    for tag in tags {
+        conn.execute(
+            "INSERT INTO todo_tags (todo_id, name, created_at) VALUES (?1, ?2, ?3)",
+            params![todo_id, tag, created_at],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn replace_todo_tags(conn: &Connection, todo_id: i64, tags: &[String]) -> Result<(), String> {
+    conn.execute("DELETE FROM todo_tags WHERE todo_id = ?1", [todo_id])
+        .map_err(|e| e.to_string())?;
+    insert_todo_tags(conn, todo_id, tags)
+}
+
+fn hydrate_todo_tags(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), String> {
+    for todo in todos {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name
+                 FROM todo_tags
+                 WHERE todo_id = ?1
+                 ORDER BY id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([todo.id], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+
+        todo.tags = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 fn mark_due_reminder_sent(conn: &Connection, id: i64, flag: &str) -> Result<(), String> {

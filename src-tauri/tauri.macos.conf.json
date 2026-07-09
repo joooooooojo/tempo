@@ -9,15 +9,31 @@
         "width": 900,
         "height": 640,
         "minWidth": 900,
-        "maxWidth": 900,
         "minHeight": 640,
-        "maxHeight": 640,
-        "resizable": false,
+        "resizable": true,
+        "maximizable": true,
         "center": true,
         "decorations": true,
+        "visible": false,
+        "backgroundColor": "#f3f8f5",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": { "x": 14, "y": 18 }
+      },
+      {
+        "label": "splashscreen",
+        "title": "Tempo",
+        "url": "splashscreen.html",
+        "width": 900,
+        "height": 640,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "center": true,
+        "decorations": false,
+        "visible": true,
+        "backgroundColor": "#f3f8f5"
       }
     ]
   }
