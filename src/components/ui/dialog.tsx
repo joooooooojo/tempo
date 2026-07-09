@@ -28,7 +28,19 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
     showCloseButton?: boolean;
   }
->(({ className, children, showCloseButton = true, ...props }, ref) => (
+>(
+  (
+    {
+      className,
+      children,
+      showCloseButton = true,
+      onPointerDownOutside,
+      onInteractOutside,
+      onFocusOutside,
+      ...props
+    },
+    ref
+  ) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -37,6 +49,18 @@ const DialogContent = React.forwardRef<
         "fixed left-1/2 top-1/2 z-50 grid w-full max-w-sm -translate-x-1/2 -translate-y-1/2 gap-4 glass rounded-lg p-6 shadow-2xl duration-200",
         className
       )}
+      onPointerDownOutside={(event) => {
+        event.preventDefault();
+        onPointerDownOutside?.(event);
+      }}
+      onInteractOutside={(event) => {
+        event.preventDefault();
+        onInteractOutside?.(event);
+      }}
+      onFocusOutside={(event) => {
+        event.preventDefault();
+        onFocusOutside?.(event);
+      }}
       {...props}
     >
       {children}
@@ -48,7 +72,8 @@ const DialogContent = React.forwardRef<
       ) : null}
     </DialogPrimitive.Content>
   </DialogPortal>
-));
+  )
+);
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (

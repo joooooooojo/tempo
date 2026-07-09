@@ -73,7 +73,6 @@ export function TodoPage() {
   const [remindCustomHours, setRemindCustomHours] = useState<number | null>(null);
   const [subtasks, setSubtasks] = useState<string[]>([]);
   const [tags, setTags] = useState<string[]>([]);
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [noteDrafts, setNoteDrafts] = useState<Record<number, NoteDraft>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
@@ -151,15 +150,10 @@ export function TodoPage() {
     const filtered = filter === "active"
       ? todos.filter((todo) => !todo.completed)
       : todos.filter((todo) => todo.completed);
-    const tagFiltered = tagFilter
-      ? filtered.filter((todo) =>
-          todo.tags.some((tag) => tag.toLocaleLowerCase() === tagFilter.toLocaleLowerCase())
-        )
-      : filtered;
     const query = normalizeSearch(searchQuery);
-    if (!query) return tagFiltered;
-    return tagFiltered.filter((todo) => matchesTodoSearch(todo, query));
-  }, [filter, searchQuery, tagFilter, todos]);
+    if (!query) return filtered;
+    return filtered.filter((todo) => matchesTodoSearch(todo, query));
+  }, [filter, searchQuery, todos]);
 
   const tagSuggestions = useMemo(() => {
     const seen = new Set<string>();
@@ -842,16 +836,7 @@ export function TodoPage() {
 
                 {detailTodo.tags.length > 0 && (
                   <div className="mb-4">
-                    <TodoTagList
-                      tags={detailTodo.tags}
-                      interactive
-                      activeTag={tagFilter}
-                      onTagClick={(tag) =>
-                        setTagFilter((current) =>
-                          current?.toLocaleLowerCase() === tag.toLocaleLowerCase() ? null : tag
-                        )
-                      }
-                    />
+                    <TodoTagList tags={detailTodo.tags} />
                   </div>
                 )}
 
@@ -917,30 +902,6 @@ export function TodoPage() {
               </button>
             ))}
           </div>
-          {tagSuggestions.length > 0 && (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              <TodoTagList
-                tags={tagSuggestions}
-                compact
-                interactive
-                activeTag={tagFilter}
-                onTagClick={(tag) =>
-                  setTagFilter((current) =>
-                    current?.toLocaleLowerCase() === tag.toLocaleLowerCase() ? null : tag
-                  )
-                }
-              />
-              {tagFilter && (
-                <button
-                  type="button"
-                  className="rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-foreground/6 hover:text-foreground"
-                  onClick={() => setTagFilter(null)}
-                >
-                  清除筛选
-                </button>
-              )}
-            </div>
-          )}
         </div>
 
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
@@ -1023,12 +984,24 @@ export function TodoPage() {
                       todo.completed && "bg-foreground/[0.018]"
                     )}
                   >
-                    <div className="grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-x-3">
+                    <div
+                      className={cn(
+                        "grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-x-3",
+                        (hasExpandableContent || noteDraft.open) && "cursor-pointer"
+                      )}
+                      onClick={() => {
+                        if (!hasExpandableContent && !noteDraft.open) return;
+                        toggleTodoExpanded(todo.id);
+                      }}
+                    >
                       <button
                         type="button"
                         className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-primary"
                         aria-label={todo.completed ? "恢复待办" : "完成待办"}
-                        onClick={() => void toggleTodo(todo)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void toggleTodo(todo);
+                        }}
                       >
                         {todo.completed ? (
                           <CheckCircle2 className="h-5 w-5 text-primary" />
@@ -1037,16 +1010,7 @@ export function TodoPage() {
                         )}
                       </button>
 
-                      <div
-                        className={cn(
-                          "min-w-0 text-left",
-                          hasExpandableContent && "cursor-pointer rounded-md px-1 -mx-1"
-                        )}
-                        onClick={() => {
-                          if (!hasExpandableContent) return;
-                          toggleTodoExpanded(todo.id);
-                        }}
-                      >
+                      <div className="min-w-0 text-left">
                           <div className="flex min-w-0 items-center gap-2">
                             {todo.pinned_at && !todo.completed && (
                               <span
@@ -1099,17 +1063,7 @@ export function TodoPage() {
                               </span>
                             )}
                             {todo.tags.length > 0 && (
-                              <TodoTagList
-                                tags={todo.tags}
-                                compact
-                                interactive
-                                activeTag={tagFilter}
-                                onTagClick={(tag) =>
-                                  setTagFilter((current) =>
-                                    current?.toLocaleLowerCase() === tag.toLocaleLowerCase() ? null : tag
-                                  )
-                                }
-                              />
+                              <TodoTagList tags={todo.tags} compact />
                             )}
                             {focusSummaries[todo.id]?.sessions_today ? (
                               <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-600 dark:text-emerald-300">
@@ -1177,7 +1131,10 @@ export function TodoPage() {
                           <button
                             type="button"
                             className="mt-1.5 block max-w-full truncate text-left text-[12px] leading-5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                            onClick={() => setDetailId(todo.id)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDetailId(todo.id);
+                            }}
                           >
                             <HighlightText value={summary} query={searchQuery} />
                           </button>
@@ -1233,16 +1190,18 @@ function TodoExpandableSection({
         "grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none",
         open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
       )}
+      onClick={(event) => event.stopPropagation()}
     >
       <div className="overflow-hidden">
-        <div
-          className={cn(
-            "mt-2 pl-12 transition-opacity duration-300 ease-in-out motion-reduce:transition-none",
-            open ? "opacity-100" : "opacity-0"
-          )}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {children}
+        <div className="p-1">
+          <div
+            className={cn(
+              "mt-2 pl-12 transition-opacity duration-300 ease-in-out motion-reduce:transition-none",
+              open ? "opacity-100" : "opacity-0"
+            )}
+          >
+            {children}
+          </div>
         </div>
       </div>
     </div>
@@ -1673,7 +1632,7 @@ function NoteComposer({
         value={draft.body}
         maxLength={1000}
         placeholder="追加备注"
-        className="block min-h-16 w-full resize-none rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 py-2.5 text-[13px] leading-5 shadow-sm shadow-emerald-950/[0.03] transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        className="block min-h-16 w-full resize-none rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 py-2.5 text-[13px] leading-5 shadow-sm shadow-emerald-950/[0.03] transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
         onChange={(event) => onBodyChange(event.target.value)}
         onPaste={onPaste}
       />

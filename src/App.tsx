@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -17,6 +17,13 @@ import { revealAppShell } from "@/lib/boot";
 import { notifyUser } from "@/lib/notifications";
 import { playNotificationSound } from "@/lib/sound";
 import { appToastOptions } from "@/lib/toastOptions";
+import {
+  applyTheme,
+  emitThemeChange,
+  subscribeThemeChanges,
+  syncEyeCareWindowBackground,
+  watchSystemTheme,
+} from "@/lib/theme";
 import type { ReminderEvent, Settings } from "@/types";
 
 function App() {
@@ -36,20 +43,9 @@ function MainApp() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
 
-  const applyTheme = useCallback((theme: Settings["theme"]) => {
-    const root = document.documentElement;
-    if (theme === "dark") root.classList.add("dark");
-    else if (theme === "light") root.classList.remove("dark");
-    else {
-      root.classList.toggle(
-        "dark",
-        window.matchMedia("(prefers-color-scheme: dark)").matches
-      );
-    }
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
+    let currentTheme: Settings["theme"] = "system";
     const safetyTimer = window.setTimeout(() => {
       if (!cancelled) void revealAppShell();
     }, 8000);
@@ -58,13 +54,24 @@ function MainApp() {
       .getSettings()
       .then((s) => {
         if (cancelled) return;
-        applyTheme(s.theme);
+        currentTheme = s.theme;
+        applyTheme(currentTheme);
+        void syncEyeCareWindowBackground();
         if (!s.onboarding_completed) setShowOnboarding(true);
       })
       .catch(console.error)
       .finally(() => {
         if (!cancelled) void revealAppShell();
       });
+
+    const unwatchSystem = watchSystemTheme(
+      () => currentTheme,
+      () => void emitThemeChange("system")
+    );
+    const unsubscribeTheme = subscribeThemeChanges((theme) => {
+      currentTheme = theme;
+      applyTheme(theme);
+    });
 
     const unlistenReminder = listen<ReminderEvent>("reminder", (e) => {
       if (e.payload.type === "eye_care") {
@@ -101,10 +108,12 @@ function MainApp() {
     return () => {
       cancelled = true;
       window.clearTimeout(safetyTimer);
+      unwatchSystem();
+      unsubscribeTheme();
       unlistenReminder.then((fn) => fn());
       unlistenToast.then((fn) => fn());
     };
-  }, [applyTheme]);
+  }, []);
 
   return (
     <>

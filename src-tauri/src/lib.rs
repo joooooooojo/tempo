@@ -144,6 +144,7 @@ pub fn run() {
             commands::skip_pomodoro_phase,
             auxiliary_windows::show_eye_care_overlay,
             auxiliary_windows::hide_eye_care_overlay,
+            auxiliary_windows::sync_eye_care_window_background,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,8 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Eye } from "lucide-react";
 import { api } from "@/lib/api";
+import {
+  applyTheme,
+  subscribeThemeChanges,
+  syncEyeCareWindowBackground,
+} from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import type { Settings } from "@/types";
 
 export function EyeCareReminderPage() {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -39,10 +43,17 @@ export function EyeCareReminderPage() {
     document.body.classList.add("eye-care-window");
     void applyThemeFromSettings();
 
+    const unsubscribeTheme = subscribeThemeChanges((theme) => {
+      applyTheme(theme);
+      void syncEyeCareWindowBackground();
+    });
+
     const unlistenReveal = listen("eye-care:reveal", () => {
-      setRevealed(false);
-      window.requestAnimationFrame(() => {
-        revealOverlay();
+      void applyThemeFromSettings().then(() => {
+        setRevealed(false);
+        window.requestAnimationFrame(() => {
+          revealOverlay();
+        });
       });
     });
 
@@ -58,6 +69,7 @@ export function EyeCareReminderPage() {
     return () => {
       root.classList.remove("eye-care-window");
       document.body.classList.remove("eye-care-window");
+      unsubscribeTheme();
       void unlistenReveal.then((fn) => fn());
       window.removeEventListener("keydown", handleKeyDown);
     };
@@ -103,20 +115,5 @@ async function applyThemeFromSettings() {
   } catch {
     applyTheme("system");
   }
-}
-
-function applyTheme(theme: Settings["theme"]) {
-  const root = document.documentElement;
-
-  if (theme === "dark") {
-    root.classList.add("dark");
-    return;
-  }
-
-  if (theme === "light") {
-    root.classList.remove("dark");
-    return;
-  }
-
-  root.classList.toggle("dark", window.matchMedia("(prefers-color-scheme: dark)").matches);
+  await syncEyeCareWindowBackground();
 }

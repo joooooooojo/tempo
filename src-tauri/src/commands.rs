@@ -1186,20 +1186,26 @@ pub fn set_todo_completed(
             params![completed_at, next_recurrence_at, subtasks_snapshot, id],
         )
         .map_err(|e| e.to_string())?;
+        let todo_updated = conn.changes();
         conn.execute(
             "UPDATE todo_subtasks SET completed = 1 WHERE todo_id = ?1",
             [id],
         )
         .map_err(|e| e.to_string())?;
+
+        if todo_updated == 0 {
+            return Err("待办不存在".into());
+        }
     } else {
         let snapshot: Option<String> = conn
             .query_row(
                 "SELECT subtasks_completion_snapshot FROM todos WHERE id = ?1",
                 [id],
-                |row| row.get(0),
+                |row| row.get::<_, Option<String>>(0),
             )
             .optional()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .flatten();
 
         conn.execute(
             "UPDATE todos
@@ -1212,13 +1218,13 @@ pub fn set_todo_completed(
         )
         .map_err(|e| e.to_string())?;
 
+        if conn.changes() == 0 {
+            return Err("待办不存在".into());
+        }
+
         if let Some(snapshot) = snapshot {
             restore_subtask_completion_snapshot(&conn, id, &snapshot)?;
         }
-    }
-
-    if conn.changes() == 0 {
-        return Err("待办不存在".into());
     }
 
     fetch_todo(&conn, id)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "r
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "@/lib/api";
+import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import type { TodoItem } from "@/types";
 
@@ -28,10 +29,15 @@ export function QuickTodoPage() {
     document.body.style.overflow = "hidden";
     void applyThemeFromSettings();
 
+    const unsubscribeTheme = subscribeThemeChanges((theme) => {
+      applyTheme(theme);
+    });
+
     return () => {
       root.classList.remove("quick-todo-window");
       document.body.classList.remove("quick-todo-window");
       document.body.style.overflow = previousBodyOverflow;
+      unsubscribeTheme();
     };
   }, []);
 
@@ -130,13 +136,11 @@ export function QuickTodoPage() {
 }
 
 async function applyThemeFromSettings() {
-  const settings = await api.getSettings();
-  const root = document.documentElement;
-
-  if (settings.theme === "dark") root.classList.add("dark");
-  else if (settings.theme === "light") root.classList.remove("dark");
-  else {
-    root.classList.toggle("dark", window.matchMedia("(prefers-color-scheme: dark)").matches);
+  try {
+    const settings = await api.getSettings();
+    applyTheme(settings.theme);
+  } catch {
+    applyTheme("system");
   }
 }
 

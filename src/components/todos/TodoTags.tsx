@@ -1,6 +1,14 @@
-import { useMemo, useState } from "react";
-import { Plus, Tag, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
+import { createPortal } from "react-dom";
+import { Tag, X } from "lucide-react";
+import { getTagHistory, mergeTagSuggestions, recordTag } from "@/lib/tagHistory";
 import { cn } from "@/lib/utils";
 
 const TAG_PALETTE = [
@@ -11,6 +19,8 @@ const TAG_PALETTE = [
   "bg-teal-500/12 text-teal-700 ring-teal-500/20 dark:text-teal-300",
   "bg-orange-500/12 text-orange-700 ring-orange-500/20 dark:text-orange-300",
 ] as const;
+
+const MAX_VISIBLE_OPTIONS = 3;
 
 export function tagColorClass(name: string) {
   let hash = 0;
@@ -24,6 +34,12 @@ function normalizeTagInput(value: string) {
   return value.trim().replace(/[,，]/g, "");
 }
 
+type MenuPosition = {
+  top: number;
+  left: number;
+  width: number;
+};
+
 export function TodoTagDraftList({
   items,
   suggestions = [],
@@ -34,16 +50,74 @@ export function TodoTagDraftList({
   onChange: (items: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const [suppressMenu, setSuppressMenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  const visibleSuggestions = useMemo(() => {
-    const query = normalizeTagInput(draft).toLocaleLowerCase();
+  const allSuggestions = useMemo(
+    () => mergeTagSuggestions(getTagHistory(), suggestions),
+    [suggestions, historyVersion]
+  );
+
+  const draftValue = normalizeTagInput(draft);
+
+  const filteredOptions = useMemo(() => {
+    const query = draftValue.toLocaleLowerCase();
     if (!query) return [];
+
     const existing = new Set(items.map((item) => item.toLocaleLowerCase()));
-    return suggestions
+    return allSuggestions
       .filter((item) => !existing.has(item.toLocaleLowerCase()))
       .filter((item) => item.toLocaleLowerCase().includes(query))
-      .slice(0, 6);
-  }, [draft, items, suggestions]);
+      .slice(0, MAX_VISIBLE_OPTIONS);
+  }, [allSuggestions, draftValue, items]);
+
+  const showMenu = !suppressMenu && draftValue.length > 0 && filteredOptions.length > 0;
+
+  const updateMenuPosition = () => {
+    const input = inputRef.current;
+    if (!input) return;
+
+    const rect = input.getBoundingClientRect();
+    setMenuPosition({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: rect.width,
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (!showMenu) {
+      setMenuPosition(null);
+      return;
+    }
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [showMenu, draft, filteredOptions.length]);
+
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (inputRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setSuppressMenu(true);
+      setActiveIndex(-1);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [showMenu]);
 
   const addItem = (raw: string) => {
     const next = normalizeTagInput(raw);
@@ -51,17 +125,63 @@ export function TodoTagDraftList({
     if (items.length >= 10) return;
     if (items.some((item) => item.toLocaleLowerCase() === next.toLocaleLowerCase())) {
       setDraft("");
+      setSuppressMenu(false);
+      setActiveIndex(-1);
       return;
     }
+
+    recordTag(next);
+    setHistoryVersion((value) => value + 1);
     onChange([...items, next]);
     setDraft("");
+    setSuppressMenu(false);
+    setActiveIndex(-1);
+  };
+
+  const selectOption = (item: string) => {
+    addItem(item);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (filteredOptions.length === 0) return;
+      setSuppressMenu(false);
+      setActiveIndex((current) => (current + 1) % filteredOptions.length);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (filteredOptions.length === 0) return;
+      setSuppressMenu(false);
+      setActiveIndex((current) =>
+        current <= 0 ? filteredOptions.length - 1 : current - 1
+      );
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setSuppressMenu(true);
+      setActiveIndex(-1);
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === "," || event.key === "，") {
+      event.preventDefault();
+      if (showMenu && activeIndex >= 0 && filteredOptions[activeIndex]) {
+        selectOption(filteredOptions[activeIndex]);
+        return;
+      }
+      addItem(draft);
+    }
   };
 
   return (
     <div className="space-y-2">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        标签
-      </p>
+      <p className="text-[12px] font-semibold text-muted-foreground">标签</p>
       {items.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {items.map((item) => (
@@ -86,49 +206,56 @@ export function TodoTagDraftList({
           ))}
         </div>
       )}
-      <div className="space-y-1.5">
-        <div className="flex gap-2">
-          <input
-            value={draft}
-            maxLength={32}
-            placeholder="输入标签，回车添加"
-            className="h-9 min-w-0 flex-1 rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20"
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === "," || event.key === "，") {
-                event.preventDefault();
-                addItem(draft);
-              }
+
+      <input
+        ref={inputRef}
+        value={draft}
+        maxLength={32}
+        placeholder="搜索或输入新标签，回车添加"
+        className="h-9 w-full rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20"
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setSuppressMenu(false);
+          setActiveIndex(0);
+        }}
+        onKeyDown={handleKeyDown}
+      />
+
+      {showMenu &&
+        menuPosition &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="pointer-events-auto fixed z-[130] overflow-hidden rounded-lg border border-border/80 bg-popover/95 p-1 text-popover-foreground shadow-xl shadow-emerald-950/10 backdrop-blur-xl"
+            style={{
+              top: menuPosition.top,
+              left: menuPosition.left,
+              width: menuPosition.width,
             }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 shrink-0 px-3"
-            disabled={items.length >= 10}
-            onClick={() => addItem(draft)}
           >
-            <Plus className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-        {visibleSuggestions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {visibleSuggestions.map((item) => (
+            {filteredOptions.map((item, index) => (
               <button
                 key={item}
                 type="button"
                 className={cn(
-                  "rounded-md px-2 py-1 text-[11px] font-medium ring-1 ring-inset transition-opacity hover:opacity-80",
-                  tagColorClass(item)
+                  "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-[13px] transition-colors",
+                  index === activeIndex
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-foreground hover:bg-foreground/6"
                 )}
-                onClick={() => addItem(item)}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  selectOption(item);
+                }}
+                onMouseEnter={() => setActiveIndex(index)}
               >
-                {item}
+                <Tag className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                <span className="truncate">{item}</span>
               </button>
             ))}
-          </div>
+          </div>,
+          document.body
         )}
-      </div>
     </div>
   );
 }

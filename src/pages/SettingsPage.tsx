@@ -13,22 +13,17 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
+import { emitThemeChange } from "@/lib/theme";
 import {
   checkAndDownloadUpdate,
   getAppVersion,
   installAndRelaunch,
   type UpdateProgress,
 } from "@/lib/update";
-import { formatDurationShort } from "@/lib/utils";
-import type { AppLimit, AppUsage, Settings } from "@/types";
+import type { Settings } from "@/types";
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [blocked, setBlocked] = useState<string[]>([]);
-  const [limits, setLimits] = useState<AppLimit[]>([]);
-  const [knownApps, setKnownApps] = useState<AppUsage[]>([]);
-  const [limitApp, setLimitApp] = useState("");
-  const [limitHours, setLimitHours] = useState("2");
   const [migratingStorage, setMigratingStorage] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -38,32 +33,23 @@ export function SettingsPage() {
   const [pendingVersion, setPendingVersion] = useState("");
 
   const load = async () => {
-    const [s, b, l, a] = await Promise.all([
-      api.getSettings(), api.getBlockedApps(), api.getAppLimits(), api.getKnownApps(),
-    ]);
-    setSettings(s); setBlocked(b); setLimits(l); setKnownApps(a);
+    const s = await api.getSettings();
+    setSettings(s);
   };
 
   useEffect(() => {
     load().catch(console.error);
     getAppVersion().then(setAppVersion).catch(console.error);
-    const timer = setInterval(() => api.getAppLimits().then(setLimits), 10000);
-    return () => clearInterval(timer);
   }, []);
 
   const update = async (patch: Partial<Settings>) => {
     if (!settings) return;
     setSettings({ ...settings, ...patch });
     await api.updateSettings(patch);
-    applyTheme(patch.theme ?? settings.theme);
+    if (patch.theme !== undefined) {
+      await emitThemeChange(patch.theme);
+    }
     toast.success("已保存");
-  };
-
-  const applyTheme = (theme: Settings["theme"]) => {
-    const root = document.documentElement;
-    if (theme === "dark") root.classList.add("dark");
-    else if (theme === "light") root.classList.remove("dark");
-    else root.classList.toggle("dark", window.matchMedia("(prefers-color-scheme: dark)").matches);
   };
 
   const changeStorageDir = async () => {
@@ -238,51 +224,6 @@ export function SettingsPage() {
         </Card>
       </Section>
 
-      <Section title="应用限额">
-        <Card>
-          <CardContent className="space-y-3 p-4">
-            <div className="flex gap-2">
-              <Select value={limitApp} onValueChange={setLimitApp}>
-                <SelectTrigger className="flex-1 glass-subtle border-0"><SelectValue placeholder="选择应用" /></SelectTrigger>
-                <SelectContent searchable searchPlaceholder="搜索应用">
-                  {knownApps.map((a) => <SelectItem key={a.app_name} value={a.app_name}>{a.app_name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Input type="number" min={0.5} step={0.5} value={limitHours} onChange={(e) => setLimitHours(e.target.value)}
-                className="w-16 border-0 glass-subtle" placeholder="h" />
-              <Button size="sm" onClick={async () => {
-                if (!limitApp) return;
-                await api.setAppLimit(limitApp, Math.round(parseFloat(limitHours) * 3600));
-                setLimitApp(""); load(); toast.success("已设置");
-              }}>添加</Button>
-            </div>
-            {limits.map((l) => (
-              <div key={l.app_name} className="glass-subtle rounded-lg p-3">
-                <div className="flex items-start justify-between gap-3 text-[13px]">
-                  <span className="min-w-0 truncate font-semibold">{l.app_name}</span>
-                  <span className="stat-value shrink-0 text-muted-foreground">{formatDurationShort(l.used_seconds)} / {formatDurationShort(l.limit_seconds)}</span>
-                </div>
-                <Progress value={(l.used_seconds / l.limit_seconds) * 100} className="mt-2 h-1" />
-                <Button variant="ghost" size="sm" className="mt-1 h-6 text-[11px] text-rose-600 hover:bg-rose-500/10 dark:text-rose-300"
-                  onClick={async () => { await api.removeAppLimit(l.app_name); load(); }}>移除</Button>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </Section>
-
-      <Section title="应用屏蔽">
-        <Card className="overflow-hidden">
-          {knownApps.slice(0, 15).map((a) => (
-            <Row key={a.app_name} label={a.app_name}>
-              <Switch checked={blocked.includes(a.app_name)} onCheckedChange={async (v) => {
-                if (v) await api.blockApp(a.app_name); else await api.unblockApp(a.app_name); load();
-              }} />
-            </Row>
-          ))}
-        </Card>
-      </Section>
-
       <Section title="关于">
         <Card>
           <CardContent className="space-y-3 p-4">
@@ -313,7 +254,11 @@ export function SettingsPage() {
                   onClick={handleCheckUpdate}
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdate ? "animate-spin" : ""}`} />
-                  {checkingUpdate ? "下载中" : "检查更新"}
+                  {checkingUpdate
+                    ? updateProgress?.phase === "downloading"
+                      ? "下载中"
+                      : "检查中"
+                    : "检查更新"}
                 </Button>
               )}
             </div>

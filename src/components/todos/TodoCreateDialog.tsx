@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { CalendarClock, Repeat, X } from "lucide-react";
+import { CalendarClock, Repeat, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { TodoImageInput } from "@/lib/api";
-import { recurrenceOptions, recurrenceLabel } from "@/lib/todoMeta";
+import { recurrenceOptions } from "@/lib/todoMeta";
 import { clipboardHasImages, insertTextAtSelection, markdownImagesFromClipboard } from "@/lib/markdownImages";
 import { cn } from "@/lib/utils";
 import type { TodoRecurrence } from "@/types";
@@ -67,7 +67,6 @@ type TodoCreateFormPanelProps = Omit<TodoCreateDialogProps, "open" | "onOpenChan
   titleElement?: ReactNode;
   cancelElement?: ReactNode;
   layout?: "dialog" | "window";
-  popoverContainer?: HTMLElement | null;
   onCancel?: () => void;
 };
 
@@ -106,23 +105,9 @@ export function TodoCreateDialog({
   onTagsChange,
   onSubmit,
 }: TodoCreateDialogProps) {
-  const [popoverContainer, setPopoverContainer] = useState<HTMLDivElement | null>(null);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        ref={setPopoverContainer}
-        className="todo-create-dialog !flex max-h-[520px] max-w-[520px] flex-col gap-0 overflow-visible rounded-xl border-border/80 p-0"
-        onFocusOutside={(event) => {
-          if (isPopoverLayerTarget(event.target)) event.preventDefault();
-        }}
-        onInteractOutside={(event) => {
-          if (isPopoverLayerTarget(event.target)) event.preventDefault();
-        }}
-        onPointerDownOutside={(event) => {
-          if (isPopoverLayerTarget(event.target)) event.preventDefault();
-        }}
-      >
+      <DialogContent className="todo-create-dialog !flex max-h-[520px] max-w-[520px] flex-col gap-0 overflow-visible rounded-xl border-border/80 p-0">
         <TodoCreateFormPanel
           heading={heading}
           todoTitle={todoTitle}
@@ -140,7 +125,6 @@ export function TodoCreateDialog({
           contentPlaceholder={contentPlaceholder}
           submitLabel={submitLabel}
           bodyExtra={bodyExtra}
-          popoverContainer={popoverContainer}
           titleElement={<DialogTitle className="text-[18px] font-bold">{heading}</DialogTitle>}
           cancelElement={
             <DialogClose asChild>
@@ -185,7 +169,6 @@ export function TodoCreateFormPanel({
   cancelElement,
   bodyExtra,
   layout = "dialog",
-  popoverContainer,
   onCancel,
   onTitleChange,
   onContentChange,
@@ -279,47 +262,26 @@ export function TodoCreateFormPanel({
           {onSubtasksChange && (
             <TodoSubtaskDraftList items={subtasks} onChange={onSubtasksChange} />
           )}
-          {onTagsChange && (
-            <TodoTagDraftList
-              items={tags}
-              suggestions={tagSuggestions}
-              onChange={onTagsChange}
-            />
-          )}
           {bodyExtra}
         </div>
 
-        <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-            {onRecurrenceChange && (
-              <RecurrenceField
-                value={recurrence}
-                popoverContainer={popoverContainer}
-                popoverPortalled={!isWindowLayout}
-                popoverSide="top"
-                onChange={onRecurrenceChange}
-              />
-            )}
-            {recurrence === "none" && (
-              <DueDateField
-                value={dueAt}
-                className="h-9 min-w-0 flex-1"
-                bordered
-                compact
-                remind1d={remind1d}
-                remind1h={remind1h}
-                remindCustomHours={remindCustomHours}
-                popoverContainer={popoverContainer}
-                popoverPortalled={!isWindowLayout}
-                popoverSide="top"
-                onChange={onDueAtChange}
-                onRemind1dChange={onRemind1dChange}
-                onRemind1hChange={onRemind1hChange}
-                onRemindCustomHoursChange={onRemindCustomHoursChange}
-              />
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
+        <DialogFooter className="shrink-0 flex w-full flex-row items-center gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
+          <MoreSettingsDialog
+            tags={tags}
+            tagSuggestions={tagSuggestions}
+            recurrence={recurrence}
+            dueAt={dueAt}
+            remind1d={remind1d}
+            remind1h={remind1h}
+            remindCustomHours={remindCustomHours}
+            onTagsChange={onTagsChange}
+            onRecurrenceChange={onRecurrenceChange}
+            onDueAtChange={onDueAtChange}
+            onRemind1dChange={onRemind1dChange}
+            onRemind1hChange={onRemind1hChange}
+            onRemindCustomHoursChange={onRemindCustomHoursChange}
+          />
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {cancelElement ?? (
               <Button type="button" variant="outline" className="h-9 min-w-20" onClick={onCancel}>
                 取消
@@ -342,14 +304,33 @@ export function todoDateTimeLocalToIso(value: string) {
   return date.toISOString();
 }
 
-function isPopoverLayerTarget(target: EventTarget | null) {
+const FLOATING_LABEL_VARIANTS = {
+  input: "todo-floating-label--input",
+  textarea: "todo-floating-label--textarea",
+} as const;
+
+function FloatingFieldLabel({
+  placeholder,
+  floated,
+  focused,
+  variant,
+}: {
+  placeholder: string;
+  floated: boolean;
+  focused: boolean;
+  variant: keyof typeof FLOATING_LABEL_VARIANTS;
+}) {
   return (
-    target instanceof Element &&
-    Boolean(
-      target.closest(
-        "[data-radix-popover-content], [data-radix-popper-content-wrapper], [data-radix-focus-guard]"
-      )
-    )
+    <span
+      data-floated={floated || undefined}
+      className={cn(
+        "todo-floating-label",
+        FLOATING_LABEL_VARIANTS[variant],
+        floated && focused && "todo-floating-label--focused"
+      )}
+    >
+      {placeholder}
+    </span>
   );
 }
 
@@ -400,7 +381,7 @@ function FloatingInput({
         required={required}
         value={value}
         maxLength={maxLength}
-        placeholder={floated ? "" : placeholder}
+        placeholder=""
         className={cn(
           "block h-11 w-full rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[14px] font-semibold leading-5 shadow-sm shadow-emerald-950/[0.03] transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50",
           floated && "border-primary/45",
@@ -410,16 +391,12 @@ function FloatingInput({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
-      <span
-        className={cn(
-          "pointer-events-none absolute left-3 top-px z-10 origin-left -translate-y-1/2 rounded-sm bg-[var(--todo-field-bg)] px-1 text-[11px] font-medium leading-none transition-all duration-150",
-          floated
-            ? cn("scale-100 opacity-100", focused ? "text-primary" : "text-muted-foreground")
-            : "scale-95 opacity-0"
-        )}
-      >
-        {placeholder}
-      </span>
+      <FloatingFieldLabel
+        placeholder={placeholder}
+        floated={floated}
+        focused={focused}
+        variant="input"
+      />
     </div>
   );
 }
@@ -470,7 +447,7 @@ function FloatingTextarea({
         autoFocus={autoFocus}
         value={value}
         maxLength={maxLength}
-        placeholder={floated ? "" : placeholder}
+        placeholder=""
         className={cn(
           "block min-h-20 w-full resize-none rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 py-3 text-[14px] leading-5 shadow-sm shadow-emerald-950/[0.03] transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50",
           floated && "border-primary/45",
@@ -481,105 +458,157 @@ function FloatingTextarea({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
-      <span
-        className={cn(
-          "pointer-events-none absolute left-3 top-px z-10 origin-left -translate-y-1/2 rounded-sm bg-[var(--todo-field-bg)] px-1 text-[11px] font-medium leading-none transition-all duration-150",
-          floated
-            ? cn("scale-100 opacity-100", focused ? "text-primary" : "text-muted-foreground")
-            : "scale-95 opacity-0"
-        )}
-      >
-        {placeholder}
-      </span>
+      <FloatingFieldLabel
+        placeholder={placeholder}
+        floated={floated}
+        focused={focused}
+        variant="textarea"
+      />
     </div>
   );
 }
 
-function RecurrenceField({
-  value,
-  className,
-  popoverPortalled = true,
-  popoverContainer,
-  popoverSide = "bottom",
-  onChange,
+function hasMoreSettings(tags: string[], recurrence: TodoRecurrence, dueAt: string) {
+  return tags.length > 0 || recurrence !== "none" || Boolean(dueAt);
+}
+
+function MoreSettingsDialog({
+  tags,
+  tagSuggestions = [],
+  recurrence,
+  dueAt,
+  remind1d = false,
+  remind1h = false,
+  remindCustomHours = null,
+  onTagsChange,
+  onRecurrenceChange,
+  onDueAtChange,
+  onRemind1dChange,
+  onRemind1hChange,
+  onRemindCustomHoursChange,
 }: {
-  value: TodoRecurrence;
-  className?: string;
-  popoverPortalled?: boolean;
-  popoverContainer?: HTMLElement | null;
-  popoverSide?: "top" | "bottom";
-  onChange: (value: TodoRecurrence) => void;
+  tags: string[];
+  tagSuggestions?: string[];
+  recurrence: TodoRecurrence;
+  dueAt: string;
+  remind1d?: boolean;
+  remind1h?: boolean;
+  remindCustomHours?: number | null;
+  onTagsChange?: (value: string[]) => void;
+  onRecurrenceChange?: (value: TodoRecurrence) => void;
+  onDueAtChange: (value: string) => void;
+  onRemind1dChange?: (value: boolean) => void;
+  onRemind1hChange?: (value: boolean) => void;
+  onRemindCustomHoursChange?: (value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const inDialog = Boolean(popoverContainer);
-  const active = open || focused || value !== "none";
-  const label = recurrenceLabel(value);
+  const showTags = Boolean(onTagsChange);
+  const showRecurrence = Boolean(onRecurrenceChange);
+  const showDue = showRecurrence ? recurrence === "none" : true;
+  const hasActive = hasMoreSettings(tags, recurrence, dueAt);
+
+  if (!showTags && !showRecurrence) {
+    return null;
+  }
 
   return (
-    <div className={cn("relative min-h-9 shrink-0", className)}>
-      <Popover modal={inDialog} open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              "flex h-9 min-w-[108px] items-center gap-2 rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-left text-[14px] font-semibold shadow-sm shadow-emerald-950/[0.03] transition-colors hover:brightness-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-              active && "border-primary/45"
-            )}
-            aria-label="重复"
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-          >
-            <Repeat className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className={cn("truncate", value !== "none" ? "text-foreground" : "text-muted-foreground")}>
-              {label}
-            </span>
-          </button>
-        </PopoverTrigger>
-        <PopoverContent
-          side={popoverSide}
-          align="start"
-          collisionPadding={12}
-          portalled={popoverPortalled}
-          container={popoverContainer}
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "relative h-9 gap-1.5 px-2.5 text-muted-foreground hover:text-foreground",
+          hasActive && "text-foreground"
+        )}
+        onClick={() => setOpen(true)}
+      >
+        <SlidersHorizontal className="h-4 w-4 shrink-0" />
+        <span>更多配置</span>
+        {hasActive && <span className="todo-more-settings-dot" aria-hidden />}
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          className="todo-create-dialog z-[60] max-h-[min(520px,85vh)] max-w-[440px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
           onOpenAutoFocus={(event) => event.preventDefault()}
-          className={cn("w-44 p-1.5", inDialog ? "z-[60]" : popoverPortalled && "z-[120]")}
         >
-          {recurrenceOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={cn(
-                "flex h-9 w-full items-center rounded-md px-2.5 text-left text-[13px] transition-colors",
-                option.value === value
-                  ? "bg-primary/10 font-semibold text-primary"
-                  : "text-foreground hover:bg-foreground/6"
-              )}
-              onClick={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </PopoverContent>
-      </Popover>
-    </div>
+          <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
+            <DialogTitle className="text-[18px] font-bold">更多配置</DialogTitle>
+          </DialogHeader>
+
+          <div className="no-scrollbar max-h-[min(380px,60vh)] space-y-5 overflow-y-auto px-5 py-5">
+            {showTags && (
+              <TodoTagDraftList
+                items={tags}
+                suggestions={tagSuggestions}
+                onChange={onTagsChange!}
+              />
+            )}
+
+            {showRecurrence && (
+              <div className="space-y-2">
+                <p className="text-[12px] font-semibold text-muted-foreground">重复</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {recurrenceOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={cn(
+                        "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors",
+                        option.value === recurrence
+                          ? "border-primary/35 bg-primary/10 text-primary"
+                          : "border-border/70 bg-[var(--todo-field-bg)] text-foreground hover:border-primary/20"
+                      )}
+                      onClick={() => onRecurrenceChange?.(option.value)}
+                    >
+                      {option.value !== "none" && <Repeat className="h-3.5 w-3.5" />}
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {showDue && (
+              <div className="space-y-2">
+                <p className="text-[12px] font-semibold text-muted-foreground">截止时间</p>
+                <DueDateField
+                  value={dueAt}
+                  className="w-full"
+                  bordered
+                  remind1d={remind1d}
+                  remind1h={remind1h}
+                  remindCustomHours={remindCustomHours}
+                  popoverSide="bottom"
+                  onChange={onDueAtChange}
+                  onRemind1dChange={onRemind1dChange}
+                  onRemind1hChange={onRemind1hChange}
+                  onRemindCustomHoursChange={onRemindCustomHoursChange}
+                />
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="border-t border-border/60 bg-foreground/[0.018] px-5 py-3 sm:justify-end">
+            <Button type="button" className="h-9 min-w-20" onClick={() => setOpen(false)}>
+              完成
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 function DueDateField({
   value,
   className,
-  floatingLabel = false,
   bordered = false,
   compact = false,
   remind1d = false,
   remind1h = false,
   remindCustomHours = null,
-  popoverPortalled = true,
-  popoverContainer,
   popoverSide = "bottom",
   onChange,
   onRemind1dChange,
@@ -588,14 +617,11 @@ function DueDateField({
 }: {
   value: string;
   className?: string;
-  floatingLabel?: boolean;
   bordered?: boolean;
   compact?: boolean;
   remind1d?: boolean;
   remind1h?: boolean;
   remindCustomHours?: number | null;
-  popoverPortalled?: boolean;
-  popoverContainer?: HTMLElement | null;
   popoverSide?: "top" | "bottom";
   onChange: (value: string) => void;
   onRemind1dChange?: (value: boolean) => void;
@@ -661,37 +687,31 @@ function DueDateField({
   };
   const placeholder = "截止时间";
   const active = open || focused || Boolean(value);
-  const floated = floatingLabel && active;
-  const useBorderedStyle = floatingLabel || bordered;
+  const useBorderedStyle = bordered;
   const isBaseDateDisabled = isDueDateDisabled(baseDate);
   const todayDisabled = isDueDateDisabled(new Date());
-  const inDialog = Boolean(popoverContainer);
   const hasReminderOptions = Boolean(
     value && (onRemind1dChange || onRemind1hChange || onRemindCustomHoursChange)
   );
   const reminderSummary = formatDueReminderSummary(remind1d, remind1h, remindCustomHours);
   const hasReminder = Boolean(remind1d || remind1h || remindCustomHours);
+  const showReminderLine = Boolean(value && reminderSummary && !compact);
 
   return (
-    <div className={cn("relative shrink-0", compact ? "h-9" : "min-h-10", className)}>
-      {floatingLabel && (
-        <span
-          className={cn(
-            "pointer-events-none absolute left-3 top-px z-10 origin-left -translate-y-1/2 rounded-sm bg-[var(--todo-field-bg)] px-1 text-[11px] font-medium leading-none transition-all duration-150",
-            floated
-              ? cn("scale-100 opacity-100", open || focused ? "text-primary" : "text-muted-foreground")
-              : "scale-95 opacity-0"
-          )}
-        >
-          {placeholder}
-        </span>
+    <div
+      className={cn(
+        "relative shrink-0",
+        showReminderLine ? "min-h-10" : "h-9",
+        className
       )}
-      <Popover modal={inDialog} open={open} onOpenChange={setOpen}>
+    >
+      <Popover modal open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
             className={cn(
-              "flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-3 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+              "relative flex w-full min-w-0 items-center gap-2 rounded-lg px-3 text-left text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+              showReminderLine ? "min-h-10 py-1.5" : "h-9",
               useBorderedStyle
                 ? cn(
                     "border border-border/70 bg-[var(--todo-field-bg)] shadow-sm shadow-emerald-950/[0.03] hover:brightness-[1.02]",
@@ -706,10 +726,10 @@ function DueDateField({
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
           >
-            <span className="relative shrink-0">
+            <span className="relative inline-flex shrink-0 items-center justify-center self-center">
               <CalendarClock
                 className={cn(
-                  "h-4 w-4 transition-colors",
+                  "block h-4 w-4 shrink-0 transition-colors",
                   hasReminder && value ? "text-primary" : "text-muted-foreground"
                 )}
               />
@@ -720,20 +740,44 @@ function DueDateField({
                 />
               )}
             </span>
-            {compact ? (
-              <span className="min-w-0 truncate">
-                <span className={cn(value ? "text-foreground" : "text-muted-foreground")}>
-                  {value ? formatDueFieldValue(value) : floated ? "" : placeholder}
+            {showReminderLine ? (
+              <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 self-stretch">
+                <span className="truncate leading-5 text-foreground">{formatDueFieldValue(value)}</span>
+                <span className="truncate text-[11px] font-normal leading-none text-muted-foreground">
+                  {reminderSummary}
                 </span>
               </span>
             ) : (
-              <span className="flex min-w-0 flex-col">
-                <span className={cn("truncate", value ? "text-foreground" : "text-muted-foreground")}>
-                  {value ? formatDueFieldValue(value) : floated ? "" : placeholder}
-                </span>
-                {value && reminderSummary && (
-                  <span className="truncate text-[11px] font-normal text-muted-foreground">{reminderSummary}</span>
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate leading-5",
+                  value ? "text-foreground" : "text-muted-foreground"
                 )}
+              >
+                {value ? formatDueFieldValue(value) : placeholder}
+              </span>
+            )}
+            {value && (
+              <span
+                role="button"
+                tabIndex={0}
+                className="absolute right-1.5 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/8 hover:text-foreground"
+                aria-label="清除截止时间"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onChange("");
+                  setOpen(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onChange("");
+                  setOpen(false);
+                }}
+              >
+                <X className="block h-3.5 w-3.5 shrink-0" />
               </span>
             )}
           </button>
@@ -742,14 +786,10 @@ function DueDateField({
         <PopoverContent
           side={popoverSide}
           align="start"
-          collisionPadding={12}
-          portalled={popoverPortalled}
-          container={popoverContainer}
+          collisionPadding={16}
+          overlayLayer
           onOpenAutoFocus={(event) => event.preventDefault()}
-          className={cn(
-            "w-[min(480px,calc(100vw-2.5rem))] overflow-hidden p-0",
-            inDialog ? "z-[60]" : popoverPortalled && "z-[120]"
-          )}
+          className="w-[min(480px,calc(100vw-2.5rem))] overflow-hidden p-0"
         >
           <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-3 p-3">
             <Calendar
@@ -956,22 +996,6 @@ function DueDateField({
           </div>
         </PopoverContent>
       </Popover>
-
-      {value && (
-        <button
-          type="button"
-          className="absolute right-1.5 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/8 hover:text-foreground"
-          aria-label="清除截止时间"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onChange("");
-            setOpen(false);
-          }}
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      )}
     </div>
   );
 }

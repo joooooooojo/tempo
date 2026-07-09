@@ -169,10 +169,31 @@ fn get_or_create_eye_care_window(app: &AppHandle, label: &str) -> tauri::Result<
     }
 }
 
+fn eye_care_background_color(dark: bool) -> Color {
+    if dark {
+        Color(20, 36, 30, 255)
+    } else {
+        Color(239, 251, 244, 255)
+    }
+}
+
+#[tauri::command]
+pub fn sync_eye_care_window_background(app: AppHandle, dark: bool) -> Result<(), String> {
+    let color = eye_care_background_color(dark);
+    for (label, window) in app.webview_windows() {
+        if !is_eye_care_label(&label) {
+            continue;
+        }
+        window
+            .set_background_color(Some(color))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn present_eye_care_window(window: &WebviewWindow) -> tauri::Result<()> {
     let _ = window.set_always_on_top(true);
     let _ = window.set_shadow(false);
-    let _ = window.set_background_color(Some(Color(239, 251, 244, 255)));
     window.show()?;
     Ok(())
 }
