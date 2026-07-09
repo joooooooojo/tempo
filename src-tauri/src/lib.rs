@@ -77,7 +77,6 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                macos_dock::apply_branding(app.handle());
                 let _ = app
                     .handle()
                     .set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -166,7 +165,11 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let menu = Menu::with_items(app, &[&show, &reset, &quit])?;
 
     let tray_builder = TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(
+            app.default_window_icon()
+                .ok_or("missing default window icon")?
+                .clone(),
+        )
         .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .tooltip("Tempo: 加载中...")

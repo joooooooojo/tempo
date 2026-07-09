@@ -2323,11 +2323,6 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
         window.show().map_err(|e| e.to_string())?;
         window.unminimize().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
-
-        #[cfg(target_os = "macos")]
-        {
-            crate::macos_dock::apply_branding(&app);
-        }
     }
     Ok(())
 }
