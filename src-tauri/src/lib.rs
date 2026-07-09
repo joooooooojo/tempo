@@ -86,6 +86,7 @@ pub fn run() {
             }
 
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_maximizable(true);
                 let app_handle = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {

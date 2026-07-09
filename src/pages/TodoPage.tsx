@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode, type WheelEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -74,6 +74,24 @@ export function TodoPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const closingPreviewRef = useRef(false);
+
+  useEffect(() => {
+    setPreviewZoom(1);
+  }, [previewImage?.data_url]);
+
+  const closePreviewImage = () => {
+    closingPreviewRef.current = true;
+    setPreviewImage(null);
+    setPreviewZoom(1);
+    window.setTimeout(() => {
+      closingPreviewRef.current = false;
+    }, 100);
+  };
+
+  const shouldKeepUnderlyingDialog = () =>
+    Boolean(previewImage) || closingPreviewRef.current;
   const [filter, setFilter] = useState<TodoFilter>("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [actionMenuId, setActionMenuId] = useState<number | null>(null);
@@ -527,7 +545,10 @@ export function TodoPage() {
 
   const handleEditOpenChange = (nextOpen: boolean) => {
     if (saving) return;
-    if (!nextOpen) cancelEdit();
+    if (!nextOpen) {
+      if (shouldKeepUnderlyingDialog()) return;
+      cancelEdit();
+    }
   };
 
   const commitEdit = async (todo: TodoItem) => {
@@ -717,7 +738,10 @@ export function TodoPage() {
       <Dialog
         open={Boolean(detailTodo)}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen) setDetailId(null);
+          if (!nextOpen) {
+            if (shouldKeepUnderlyingDialog()) return;
+            setDetailId(null);
+          }
         }}
       >
         <DialogContent className="todo-create-dialog max-w-[680px] gap-0 overflow-hidden rounded-xl border-border/80 p-0">
@@ -799,19 +823,29 @@ export function TodoPage() {
       <Dialog
         open={Boolean(previewImage)}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen) setPreviewImage(null);
+          if (!nextOpen) closePreviewImage();
         }}
       >
-        <DialogContent className="max-w-[760px] gap-3 p-3">
-          <DialogHeader className="px-1 pr-8">
+        <DialogContent className="flex h-[90vh] w-[90vw] max-w-[90vw] flex-col gap-3 overflow-hidden p-3">
+          <DialogHeader className="shrink-0 px-1 pr-8">
             <DialogTitle className="truncate text-[15px]">图片预览</DialogTitle>
           </DialogHeader>
           {previewImage && (
-            <div className="flex max-h-[72vh] min-h-0 items-center justify-center overflow-hidden rounded-lg bg-foreground/[0.04]">
+            <div
+              className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-lg bg-foreground/[0.04]"
+              onWheel={(event: WheelEvent<HTMLDivElement>) => {
+                event.preventDefault();
+                const direction = event.deltaY < 0 ? 1 : -1;
+                setPreviewZoom((zoom) =>
+                  Math.min(5, Math.max(0.5, Number((zoom + direction * 0.15).toFixed(2))))
+                );
+              }}
+            >
               <img
                 src={previewImage.data_url}
                 alt={previewImage.label}
-                className="max-h-[72vh] w-full object-contain"
+                className="max-h-full max-w-full origin-center object-contain transition-transform duration-75"
+                style={{ transform: `scale(${previewZoom})` }}
                 draggable={false}
               />
             </div>
