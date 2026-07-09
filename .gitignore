@@ -43,3 +43,6 @@ Desktop.ini
 
 # Local overrides
 *.local
+
+# Generated updater manifest (uploaded to GitHub Releases by CI)
+/latest.json

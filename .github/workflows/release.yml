@@ -55,15 +55,11 @@ jobs:
             在应用内打开「设置 → 关于」检查更新，或下载对应平台的安装包手动安装。
           releaseDraft: false
           prerelease: false
-          # Keep MSI as the primary Windows updater target so users who
-          # installed via .msi continue updating with the same installer type.
-          updaterJsonPreferNsis: false
+          # We generate latest.json ourselves with public browser download URLs.
+          uploadUpdaterJson: false
           args: ${{ matrix.args }}
 
-  # tauri-action@v1 hardcodes GitHub API asset URLs into latest.json and no
-  # longer exposes a switch for browser_download_url. Those API URLs return
-  # 403 for unauthenticated updater downloads, so rewrite after publish.
-  fix-updater-json:
+  publish-updater-json:
     needs: publish
     runs-on: ubuntu-latest
     permissions:
@@ -71,56 +67,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Rewrite latest.json download URLs
+      - name: Generate and upload latest.json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           if [[ ! "$TAG" =~ ^v ]]; then
             TAG="v$(node -p "require('./package.json').version")"
           fi
+          export RELEASE_TAG="$TAG"
+          export RELEASE_NOTES="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).body || ''")"
 
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > release.json
-          node <<'NODE'
-          const fs = require('fs');
-          const release = JSON.parse(fs.readFileSync('release.json', 'utf8'));
-          const assetById = Object.fromEntries(
-            release.assets.map((asset) => [String(asset.id), asset.browser_download_url])
-          );
-          const latestAsset = release.assets.find((asset) => asset.name === 'latest.json');
-          if (!latestAsset) {
-            throw new Error('latest.json not found on release');
-          }
+          node ./scripts/generate-latest-json.mjs
 
-          const latest = JSON.parse(
-            require('child_process').execSync(
-              `gh api -H "Accept: application/octet-stream" repos/${process.env.GITHUB_REPOSITORY}/releases/assets/${latestAsset.id}`,
-              { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }
-            )
-          );
+          RELEASE_JSON="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
+          RELEASE_ID="$(node -p "JSON.parse(process.argv[1]).id" "$RELEASE_JSON")"
+          EXISTING_ID="$(node -p "const a=JSON.parse(process.argv[1]).assets.find(x=>x.name==='latest.json'); a?a.id:''" "$RELEASE_JSON")"
+          if [[ -n "${EXISTING_ID}" ]]; then
+            curl -fsSL -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${EXISTING_ID}"
+          fi
 
-          for (const platform of Object.values(latest.platforms || {})) {
-            const match = String(platform.url || '').match(/\/assets\/(\d+)$/);
-            if (!match) continue;
-            const mapped = assetById[match[1]];
-            if (mapped) platform.url = mapped;
-          }
-
-          // Prefer MSI for the primary Windows updater entry when available.
-          if (latest.platforms['windows-x86_64-msi']) {
-            latest.platforms['windows-x86_64'] = latest.platforms['windows-x86_64-msi'];
-          }
-
-          fs.writeFileSync('latest.json', `${JSON.stringify(latest, null, 2)}\n`);
-          console.log(JSON.stringify(latest.platforms, null, 2));
-          NODE
-
-          ASSET_ID=$(node -p "JSON.parse(require('fs').readFileSync('release.json','utf8')).assets.find(a => a.name === 'latest.json').id")
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}"
-          RELEASE_ID=$(node -p "JSON.parse(require('fs').readFileSync('release.json','utf8')).id")
-          gh api \
-            --method POST \
+          curl -fsSL \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Content-Type: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=latest.json" \
-            --input latest.json
+            -H "Accept: application/vnd.github+json" \
+            --data-binary @latest.json \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=latest.json"
