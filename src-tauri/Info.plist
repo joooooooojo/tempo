@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>时窗</string>
+	<string>Tempo</string>
 	<key>CFBundleName</key>
-	<string>时窗</string>
+	<string>Tempo</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.edesign.screen-time</string>
+	<string>com.zekun.tempo</string>
 	<key>CFBundleExecutable</key>
-	<string>screen-time-app</string>
+	<string>tempo</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSUIElement</key>

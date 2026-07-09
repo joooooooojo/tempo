@@ -408,7 +408,12 @@ function isHttpUrl(value: string) {
 function isTauriAssetUrl(value: string) {
   try {
     const url = new URL(value);
-    return url.protocol === "asset:" || url.hostname === "asset.localhost";
+    return (
+      url.protocol === "asset:" ||
+      url.hostname === "asset.localhost" ||
+      url.protocol === "tempo-image:" ||
+      url.hostname === "tempo-image.localhost"
+    );
   } catch {
     return false;
   }

@@ -2,7 +2,7 @@ use chrono::Local;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -145,6 +145,7 @@ pub struct Settings {
     pub pomodoro_short_break_minutes: u32,
     pub pomodoro_long_break_minutes: u32,
     pub pomodoro_sessions_per_cycle: u32,
+    pub storage_dir: String,
 }
 
 impl Default for Settings {
@@ -163,6 +164,7 @@ impl Default for Settings {
             pomodoro_short_break_minutes: 5,
             pomodoro_long_break_minutes: 15,
             pomodoro_sessions_per_cycle: 4,
+            storage_dir: String::new(),
         }
     }
 }
@@ -188,6 +190,8 @@ pub struct PomodoroRuntime {
     pub remaining_seconds: i64,
     pub phase_total_seconds: i64,
     pub cycle_count: u32,
+    pub active_todo_id: Option<i64>,
+    pub work_session_id: Option<i64>,
 }
 
 impl Default for PomodoroRuntime {
@@ -198,6 +202,8 @@ impl Default for PomodoroRuntime {
             remaining_seconds: 0,
             phase_total_seconds: 0,
             cycle_count: 0,
+            active_todo_id: None,
+            work_session_id: None,
         }
     }
 }
@@ -210,6 +216,18 @@ pub struct PomodoroState {
     pub phase_total_seconds: i64,
     pub sessions_today: u32,
     pub cycle_count: u32,
+    pub active_todo_id: Option<i64>,
+    pub active_todo_title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoFocusSummary {
+    pub todo_id: i64,
+    pub sessions_today: u32,
+    pub total_seconds_today: i64,
+    pub total_seconds_all: i64,
+    pub sessions_all: u32,
+    pub last_focused_at: Option<String>,
 }
 
 pub struct TrackerState {
@@ -239,10 +257,138 @@ pub fn today_str() -> String {
     Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// User-facing data folder name. Keep in sync with `productName` in tauri.conf.json.
+pub const APP_STORAGE_FOLDER_NAME: &str = "Tempo";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StorageConfig {
+    storage_dir: String,
+}
+
+pub fn legacy_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| e.to_string())
+}
+
+pub fn default_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let data_dir = app
+        .path()
+        .data_dir()
+        .map_err(|e| e.to_string())?;
+    Ok(data_dir.join(APP_STORAGE_FOLDER_NAME))
+}
+
+pub fn prepare_storage_dir(app: &AppHandle) -> Result<(), String> {
+    if has_custom_storage_config(app)? {
+        return Ok(());
+    }
+
+    let preferred = default_storage_dir(app)?;
+    if preferred.join("screen_time.db").exists() {
+        if let Some(parent) = preferred.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::create_dir_all(&preferred).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let legacy = legacy_app_data_dir(app)?;
+    if legacy.join("screen_time.db").exists() || storage_dir_has_data(&legacy) {
+        if let Some(parent) = preferred.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        copy_storage_dir(&legacy, &preferred)?;
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&preferred).map_err(|e| e.to_string())
+}
+
+fn has_custom_storage_config(app: &AppHandle) -> Result<bool, String> {
+    let config_path = storage_config_path(app)?;
+    let Ok(data) = std::fs::read_to_string(&config_path) else {
+        return Ok(false);
+    };
+    let Ok(config) = serde_json::from_str::<StorageConfig>(&data) else {
+        return Ok(false);
+    };
+    Ok(!config.storage_dir.trim().is_empty())
+}
+
+fn storage_dir_has_data(path: &Path) -> bool {
+    if path.join("markdown-images").exists() {
+        return true;
+    }
+
+    std::fs::read_dir(path)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
+}
+
+fn copy_storage_dir(source: &Path, target: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(target).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            copy_storage_dir(&source_path, &target_path)?;
+        } else if source_path.is_file() {
+            if let Some(parent) = target_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(&source_path, &target_path).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn storage_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("storage.json"))
+}
+
+pub fn current_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let config_path = storage_config_path(app)?;
+    let default_dir = default_storage_dir(app)?;
+    let Ok(data) = std::fs::read_to_string(&config_path) else {
+        return Ok(default_dir);
+    };
+    let Ok(config) = serde_json::from_str::<StorageConfig>(&data) else {
+        return Ok(default_dir);
+    };
+    let configured = config.storage_dir.trim();
+    if configured.is_empty() {
+        Ok(default_dir)
+    } else {
+        Ok(PathBuf::from(configured))
+    }
+}
+
+pub fn save_storage_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
+    let config_path = storage_config_path(app)?;
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let config = StorageConfig {
+        storage_dir: dir.to_string_lossy().into_owned(),
+    };
+    let data = serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(config_path, data).map_err(|e| e.to_string())
+}
+
 pub fn db_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_data_dir()
-        .expect("app data dir")
+    current_storage_dir(app)
+        .or_else(|_| default_storage_dir(app))
+        .expect("storage dir")
         .join("screen_time.db")
 }
 
@@ -327,6 +473,16 @@ pub fn init_db(path: &PathBuf) -> Connection {
             created_at TEXT NOT NULL,
             FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            todo_id INTEGER,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_seconds INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE SET NULL
+        );
         ",
     )
     .expect("init schema");
@@ -337,7 +493,10 @@ pub fn init_db(path: &PathBuf) -> Connection {
     conn.execute("ALTER TABLE todos ADD COLUMN pinned_at TEXT", [])
         .ok();
     let added_todo_content = conn
-        .execute("ALTER TABLE todos ADD COLUMN content TEXT NOT NULL DEFAULT ''", [])
+        .execute(
+            "ALTER TABLE todos ADD COLUMN content TEXT NOT NULL DEFAULT ''",
+            [],
+        )
         .is_ok();
     if added_todo_content {
         conn.execute("UPDATE todos SET content = title WHERE content = ''", [])
@@ -373,15 +532,21 @@ pub fn init_db(path: &PathBuf) -> Connection {
         [],
     )
     .ok();
-    conn.execute("ALTER TABLE todos ADD COLUMN remind_custom_hours INTEGER", [])
-        .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN remind_custom_hours INTEGER",
+        [],
+    )
+    .ok();
     conn.execute(
         "ALTER TABLE todos ADD COLUMN due_reminded_custom INTEGER NOT NULL DEFAULT 0",
         [],
     )
     .ok();
-    conn.execute("ALTER TABLE todos ADD COLUMN recurrence_root_id INTEGER", [])
-        .ok();
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN recurrence_root_id INTEGER",
+        [],
+    )
+    .ok();
     conn.execute("ALTER TABLE todos ADD COLUMN next_recurrence_at TEXT", [])
         .ok();
     conn.execute(
@@ -454,6 +619,7 @@ pub fn load_settings(conn: &Connection) -> Settings {
         pomodoro_sessions_per_cycle: get_setting(conn, "pomodoro_sessions_per_cycle", "4")
             .parse()
             .unwrap_or(4),
+        storage_dir: String::new(),
     }
 }
 
@@ -507,29 +673,104 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
 
 pub fn get_pomodoro_sessions_today(conn: &Connection) -> u32 {
     let today = today_str();
-    let stored_date = get_setting(conn, "pomodoro_sessions_date", "");
-    if stored_date != today {
-        return 0;
-    }
-    get_setting(conn, "pomodoro_sessions_count", "0")
-        .parse()
-        .unwrap_or(0)
+    conn.query_row(
+        "SELECT COUNT(*) FROM pomodoro_sessions
+         WHERE date(started_at) = ?1
+           AND ended_at IS NOT NULL
+           AND (completed = 1 OR skipped = 1)",
+        [today],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+    .max(0) as u32
 }
 
-pub fn increment_pomodoro_sessions(conn: &Connection) -> u32 {
+pub fn active_todo_title(conn: &Connection, todo_id: i64) -> Option<String> {
+    conn.query_row(
+        "SELECT title FROM todos WHERE id = ?1 AND completed = 0",
+        [todo_id],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+pub fn start_pomodoro_work_session(
+    conn: &Connection,
+    todo_id: Option<i64>,
+    started_at: &str,
+) -> Result<i64, rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO pomodoro_sessions (todo_id, started_at, duration_seconds, completed, skipped)
+         VALUES (?1, ?2, 0, 0, 0)",
+        params![todo_id, started_at],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn finalize_pomodoro_work_session(
+    conn: &Connection,
+    session_id: i64,
+    ended_at: &str,
+    duration_seconds: i64,
+    completed: bool,
+    skipped: bool,
+) {
+    conn.execute(
+        "UPDATE pomodoro_sessions
+         SET ended_at = ?1,
+             duration_seconds = ?2,
+             completed = ?3,
+             skipped = ?4
+         WHERE id = ?5",
+        params![
+            ended_at,
+            duration_seconds.max(0),
+            if completed { 1 } else { 0 },
+            if skipped { 1 } else { 0 },
+            session_id
+        ],
+    )
+    .ok();
+}
+
+pub fn get_todo_focus_summary(conn: &Connection, todo_id: i64) -> TodoFocusSummary {
     let today = today_str();
-    let stored_date = get_setting(conn, "pomodoro_sessions_date", "");
-    let count = if stored_date == today {
-        get_setting(conn, "pomodoro_sessions_count", "0")
-            .parse::<u32>()
-            .unwrap_or(0)
-            + 1
-    } else {
-        1
-    };
-    set_setting(conn, "pomodoro_sessions_date", &today);
-    set_setting(conn, "pomodoro_sessions_count", &count.to_string());
-    count
+    conn.query_row(
+        "SELECT
+            COALESCE(SUM(CASE WHEN completed = 1 AND date(started_at) = ?1 THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN date(started_at) = ?1 THEN duration_seconds ELSE 0 END), 0),
+            COALESCE(SUM(duration_seconds), 0),
+            COALESCE(SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END), 0),
+            MAX(started_at)
+         FROM pomodoro_sessions
+         WHERE todo_id = ?2",
+        params![today, todo_id],
+        |row| {
+            Ok(TodoFocusSummary {
+                todo_id,
+                sessions_today: row.get::<_, i64>(0)? as u32,
+                total_seconds_today: row.get(1)?,
+                total_seconds_all: row.get(2)?,
+                sessions_all: row.get::<_, i64>(3)? as u32,
+                last_focused_at: row.get(4)?,
+            })
+        },
+    )
+    .unwrap_or(TodoFocusSummary {
+        todo_id,
+        sessions_today: 0,
+        total_seconds_today: 0,
+        total_seconds_all: 0,
+        sessions_all: 0,
+        last_focused_at: None,
+    })
+}
+
+pub fn get_todo_focus_summaries(conn: &Connection, todo_ids: &[i64]) -> Vec<TodoFocusSummary> {
+    todo_ids
+        .iter()
+        .map(|todo_id| get_todo_focus_summary(conn, *todo_id))
+        .collect()
 }
 
 pub fn categorize(name: &str, process: &str) -> &'static str {
@@ -568,11 +809,13 @@ pub fn categorize(name: &str, process: &str) -> &'static str {
 pub fn is_system_host_usage(name: &str, process: &str) -> bool {
     let app_name = name.trim().to_lowercase();
     let process_name = process.trim().to_ascii_lowercase();
+    let app_stem = app_name.strip_suffix(".exe").unwrap_or(&app_name);
+    let process_stem = process_name.strip_suffix(".exe").unwrap_or(&process_name);
 
-    if app_name == "screen-time-app"
-        || app_name == "时窗"
-        || process_name == "screen-time-app"
-        || process_name.ends_with("screen-time-app")
+    if app_stem == "tempo"
+        || process_stem == "tempo"
+        || process_stem.ends_with("\\tempo")
+        || process_stem.ends_with("/tempo")
     {
         return true;
     }

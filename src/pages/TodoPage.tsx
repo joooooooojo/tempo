@@ -1,12 +1,6 @@
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type ClipboardEvent,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -19,6 +13,7 @@ import {
   Pencil,
   Pin,
   Search,
+  Timer,
   Trash2,
   Upload,
   X,
@@ -38,8 +33,8 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api, type TodoImageInput } from "@/lib/api";
 import { recurrenceLabel, subtaskProgress, todoReminderLabel } from "@/lib/todoMeta";
-import { cn } from "@/lib/utils";
-import type { TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoRecurrence, TodoSubtask } from "@/types";
+import { cn, formatDurationShort } from "@/lib/utils";
+import type { TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoRecurrence, TodoSubtask, TodoFocusSummary } from "@/types";
 
 type TodoFilter = "active" | "completed";
 
@@ -65,6 +60,7 @@ const filters: Array<{ value: TodoFilter; label: string }> = [
 const MAX_IMAGES_PER_NOTE = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export function TodoPage() {
+  const navigate = useNavigate();
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -94,6 +90,8 @@ export function TodoPage() {
   const [editRemind1d, setEditRemind1d] = useState(false);
   const [editRemind1h, setEditRemind1h] = useState(false);
   const [editRemindCustomHours, setEditRemindCustomHours] = useState<number | null>(null);
+  const [focusSummaries, setFocusSummaries] = useState<Record<number, TodoFocusSummary>>({});
+  const [detailFocusSummary, setDetailFocusSummary] = useState<TodoFocusSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +146,71 @@ export function TodoPage() {
     () => (detailId === null ? null : todos.find((todo) => todo.id === detailId) ?? null),
     [detailId, todos]
   );
+
+  const refreshFocusSummaries = async (todoIds: number[]) => {
+    if (todoIds.length === 0) return;
+    const summaries = await api.getTodoFocusSummaries(todoIds);
+    setFocusSummaries((current) => {
+      const next = { ...current };
+      for (const summary of summaries) {
+        next[summary.todo_id] = summary;
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (filter !== "active") return;
+    void refreshFocusSummaries(visibleTodos.map((todo) => todo.id)).catch(console.error);
+  }, [filter, visibleTodos]);
+
+  useEffect(() => {
+    if (!detailTodo) {
+      setDetailFocusSummary(null);
+      return;
+    }
+    void api.getTodoFocusSummary(detailTodo.id)
+      .then(setDetailFocusSummary)
+      .catch(console.error);
+  }, [detailTodo?.id]);
+
+  useEffect(() => {
+    const unlisten = listen<{ type: string; phase?: string; skipped?: boolean }>("reminder", (event) => {
+      if (
+        event.payload.type !== "pomodoro_phase_end" ||
+        event.payload.phase !== "work" ||
+        event.payload.skipped
+      ) {
+        return;
+      }
+
+      const activeIds = todos.filter((todo) => !todo.completed).map((todo) => todo.id);
+      void refreshFocusSummaries(activeIds).catch(console.error);
+      if (detailId !== null) {
+        void api.getTodoFocusSummary(detailId).then(setDetailFocusSummary).catch(console.error);
+      }
+    });
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [detailId, todos]);
+
+  const startFocusForTodo = async (todo: TodoItem) => {
+    try {
+      const current = await api.getPomodoroState();
+      if (current.status !== "idle") {
+        toast.error("已有进行中的番茄钟");
+        navigate("/pomodoro");
+        return;
+      }
+      await api.startPomodoro(todo.id);
+      navigate("/pomodoro");
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "无法开始专注");
+    }
+  };
 
   const resetDraft = () => {
     setTitle("");
@@ -661,9 +724,25 @@ export function TodoPage() {
           {detailTodo && (
             <>
               <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
-                <DialogTitle className="truncate text-[18px] font-bold">
-                  <HighlightText value={detailTodo.title} query={searchQuery} />
-                </DialogTitle>
+                <div className="flex items-start justify-between gap-3">
+                  <DialogTitle className="truncate text-[18px] font-bold">
+                    <HighlightText value={detailTodo.title} query={searchQuery} />
+                  </DialogTitle>
+                  {!detailTodo.completed && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 gap-1.5 border-emerald-500/20 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+                      onClick={() => {
+                        setDetailId(null);
+                        void startFocusForTodo(detailTodo);
+                      }}
+                    >
+                      <Timer className="h-3.5 w-3.5" />
+                      开始专注
+                    </Button>
+                  )}
+                </div>
               </DialogHeader>
               <div className="max-h-[68vh] overflow-y-auto px-5 py-4">
                 <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
@@ -688,6 +767,10 @@ export function TodoPage() {
                     </span>
                   )}
                 </div>
+
+                {detailFocusSummary && detailFocusSummary.sessions_all > 0 && (
+                  <TodoFocusStats summary={detailFocusSummary} />
+                )}
 
                 <MarkdownPreview value={detailTodo.content} />
 
@@ -906,16 +989,39 @@ export function TodoPage() {
                                 子任务 {checklist}
                               </span>
                             )}
+                            {focusSummaries[todo.id]?.sessions_today ? (
+                              <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-600 dark:text-emerald-300">
+                                今日专注 {focusSummaries[todo.id].sessions_today} 轮 · {formatDurationShort(focusSummaries[todo.id].total_seconds_today)}
+                              </span>
+                            ) : null}
                           </div>
                       </div>
 
                       <div
-                        className="flex items-center self-center"
+                        className="flex items-center self-center gap-1"
                         onClick={(event) => event.stopPropagation()}
                       >
+                        {!todo.completed && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 p-0 text-muted-foreground opacity-100 hover:bg-emerald-500/10 hover:text-emerald-600 sm:opacity-0 sm:group-hover/todo:opacity-100 sm:group-focus-within/todo:opacity-100 dark:hover:text-emerald-300"
+                            aria-label="开始专注"
+                            title="开始专注"
+                            onClick={() => void startFocusForTodo(todo)}
+                          >
+                            <Timer className="h-4 w-4 shrink-0" />
+                          </Button>
+                        )}
                         <TodoRowActionMenu
                             open={actionMenuId === todo.id}
                             onOpenChange={(open) => setActionMenuId(open ? todo.id : null)}
+                            showStartFocus={!todo.completed}
+                            onStartFocus={() => {
+                              setActionMenuId(null);
+                              void startFocusForTodo(todo);
+                            }}
                             onAddNote={() => {
                               setActionMenuId(null);
                               updateNoteDraft(todo.id, (current) => ({ ...current, open: true }));
@@ -1080,9 +1186,28 @@ function HighlightText({ value, query }: { value: string; query: string }) {
   );
 }
 
+function TodoFocusStats({ summary }: { summary: TodoFocusSummary }) {
+  return (
+    <div className="mb-4 rounded-lg border border-emerald-500/15 bg-emerald-500/8 px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700/80 dark:text-emerald-300/80">
+        专注记录
+      </p>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-emerald-950/75 dark:text-emerald-50/75">
+        <span>今日 {summary.sessions_today} 轮 · {formatDurationShort(summary.total_seconds_today)}</span>
+        <span>累计 {summary.sessions_all} 轮 · {formatDurationShort(summary.total_seconds_all)}</span>
+        {summary.last_focused_at && (
+          <span>上次专注 {formatTodoDate(summary.last_focused_at)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TodoRowActionMenu({
   open,
   onOpenChange,
+  showStartFocus,
+  onStartFocus,
   pinned,
   onTogglePinned,
   onAddNote,
@@ -1091,6 +1216,8 @@ function TodoRowActionMenu({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  showStartFocus?: boolean;
+  onStartFocus?: () => void;
   pinned: boolean;
   onTogglePinned: () => void;
   onAddNote: () => void;
@@ -1114,6 +1241,16 @@ function TodoRowActionMenu({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" side="bottom" className="w-36 p-1">
+        {showStartFocus && onStartFocus && (
+          <button
+            type="button"
+            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-popover-foreground transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+            onClick={onStartFocus}
+          >
+            <Timer className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-300" />
+            开始专注
+          </button>
+        )}
         <button
           type="button"
           className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-popover-foreground transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"

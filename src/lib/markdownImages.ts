@@ -1,4 +1,3 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "@/lib/api";
 
 export const MARKDOWN_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -44,8 +43,8 @@ export async function markdownImageFromBlob(blob: Blob, alt = "图片") {
     throw new Error("仅支持 PNG、JPEG、WebP 或 GIF 图片");
   }
 
-  const filePath = await api.saveMarkdownImage(await readFileAsDataUrl(blob), blob.type);
-  return `![${escapeMarkdownAlt(alt)}](${convertFileSrc(filePath)})`;
+  const imageUrl = await api.saveMarkdownImage(await readFileAsDataUrl(blob), blob.type);
+  return `![${escapeMarkdownAlt(alt)}](${imageUrl})`;
 }
 
 export function insertTextAtSelection(value: string, insertion: string, start: number, end: number) {

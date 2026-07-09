@@ -3,9 +3,9 @@ mod db;
 mod platform;
 mod pomodoro;
 
+mod auxiliary_windows;
 #[cfg(target_os = "macos")]
 mod macos_dock;
-mod auxiliary_windows;
 
 #[cfg(target_os = "macos")]
 #[macro_use]
@@ -14,13 +14,13 @@ extern crate objc;
 use db::{db_path, init_db, AppState, PomodoroRuntime, TrackerState};
 use parking_lot::Mutex;
 use std::sync::Arc;
+#[cfg(not(target_os = "macos"))]
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     Emitter, Manager, WindowEvent,
 };
-#[cfg(not(target_os = "macos"))]
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -29,6 +29,9 @@ const QUICK_TODO_SHORTCUT: &str = "F2";
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol(commands::MARKDOWN_IMAGE_PROTOCOL, |ctx, request| {
+            commands::markdown_image_protocol_response(ctx.app_handle(), request)
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -54,6 +57,9 @@ pub fn run() {
             Some(vec![]),
         ))
         .setup(|app| {
+            db::prepare_storage_dir(app.handle()).map_err(|error| {
+                Box::<dyn std::error::Error>::from(std::io::Error::other(error))
+            })?;
             let path = db_path(app.handle());
             let conn = init_db(&path);
             let state = AppState {
@@ -94,6 +100,7 @@ pub fn run() {
             commands::get_weekly_report,
             commands::get_settings,
             commands::update_settings,
+            commands::set_storage_dir,
             commands::reset_today,
             commands::reset_all,
             commands::get_blocked_apps,
@@ -126,7 +133,10 @@ pub fn run() {
             commands::hide_to_tray_command,
             commands::show_window,
             commands::get_pomodoro_state,
+            commands::set_pomodoro_todo,
             commands::start_pomodoro,
+            commands::get_todo_focus_summary,
+            commands::get_todo_focus_summaries,
             commands::pause_pomodoro,
             commands::stop_pomodoro,
             commands::skip_pomodoro_phase,
@@ -159,7 +169,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
-        .tooltip("时窗: 加载中...")
+        .tooltip("Tempo: 加载中...")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 let _ = commands::show_window(app.clone());

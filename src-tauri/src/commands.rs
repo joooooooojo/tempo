@@ -1,8 +1,8 @@
 use crate::db::{
-    add_app_time, add_screen_time, cleanup_old_data, get_daily_total, is_blocked, load_settings,
-    today_str, AppLimit, AppState, AppUsage, DailyReport, HourlyData, PomodoroState,
-    Settings, TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoSubtask, WeeklyDay, WeeklyReport,
-    MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS,
+    add_app_time, add_screen_time, cleanup_old_data, current_storage_dir, default_storage_dir,
+    get_daily_total, is_blocked, load_settings, save_storage_dir, today_str, AppLimit, AppState,
+    AppUsage, DailyReport, HourlyData, PomodoroState, Settings, TodoImage, TodoItem, TodoNote,
+    TodoNoteImage, TodoSubtask, WeeklyDay, WeeklyReport, MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS,
 };
 use crate::platform::{get_foreground_app, should_count_screen_time, should_count_time};
 use base64::Engine as _;
@@ -15,13 +15,20 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+    http::{
+        header::{CONTENT_LENGTH, CONTENT_TYPE},
+        Method, Request, Response, StatusCode,
+    },
+    AppHandle, Emitter, Manager,
+};
 
 const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
 const MAX_TODO_IMAGES: usize = 4;
 const MAX_TODO_NOTE_IMAGES: usize = 4;
 const MAX_TODO_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_TODO_NOTE_CHARS: usize = 1_000;
+pub const MARKDOWN_IMAGE_PROTOCOL: &str = "tempo-image";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TodoImageInput {
@@ -73,7 +80,8 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
             {
                 let conn = state.db.lock();
                 for (bucket_date, bucket_hour, seconds) in second_buckets(now, elapsed_seconds) {
-                    let tracked_seconds = add_screen_time(&conn, &bucket_date, bucket_hour, seconds);
+                    let tracked_seconds =
+                        add_screen_time(&conn, &bucket_date, bucket_hour, seconds);
                     if tracked_seconds <= 0 {
                         continue;
                     }
@@ -382,7 +390,10 @@ fn check_todo_due_reminders(app: &AppHandle, state: &AppState) {
             if !matched {
                 if let Some(hours) = remind_custom_hours {
                     let threshold = hours * 3_600;
-                    if !reminded_custom && seconds_until <= threshold && seconds_until > threshold - 60 {
+                    if !reminded_custom
+                        && seconds_until <= threshold
+                        && seconds_until > threshold - 60
+                    {
                         pending.push((
                             id,
                             title.clone(),
@@ -515,7 +526,11 @@ pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
             });
         }
 
-        (days, total / 7, weekly_top_apps(&conn, &start_text, &today_text))
+        (
+            days,
+            total / 7,
+            weekly_top_apps(&conn, &start_text, &today_text),
+        )
     };
 
     hydrate_app_icons(&state, &today_text, &mut top_apps);
@@ -565,9 +580,14 @@ fn weekly_top_apps(conn: &Connection, start_date: &str, end_date: &str) -> Vec<A
 }
 
 #[tauri::command]
-pub fn get_settings(state: tauri::State<AppState>) -> Settings {
+pub fn get_settings(app: AppHandle, state: tauri::State<AppState>) -> Settings {
     let conn = state.db.lock();
-    load_settings(&conn)
+    let mut settings = load_settings(&conn);
+    settings.storage_dir = current_storage_dir(&app)
+        .or_else(|_| default_storage_dir(&app))
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    settings
 }
 
 #[tauri::command]
@@ -649,6 +669,207 @@ pub fn update_settings(
     let conn = state.db.lock();
     crate::db::save_settings(&conn, &current);
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_storage_dir(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    storage_dir: String,
+) -> Result<Settings, String> {
+    let target_dir = normalize_storage_dir(&storage_dir)?;
+    let current_dir = current_storage_dir(&app).or_else(|_| default_storage_dir(&app))?;
+    let current_dir = ensure_storage_dir(&current_dir)?;
+    let target_dir = ensure_storage_dir(&target_dir)?;
+
+    if same_path(&current_dir, &target_dir) {
+        return Ok(settings_with_storage_dir(&app, &state));
+    }
+
+    let current_markdown_dir = current_dir.join("markdown-images");
+    let canonical_current_markdown_dir = current_markdown_dir
+        .canonicalize()
+        .unwrap_or_else(|_| current_markdown_dir.clone());
+    if path_is_within_or_same(&target_dir, &canonical_current_markdown_dir) {
+        return Err("请选择 markdown-images 之外的位置".into());
+    }
+
+    let current_db = current_dir.join("screen_time.db");
+    let target_db = target_dir.join("screen_time.db");
+    if target_db.exists() {
+        return Err("目标位置已存在 Tempo 数据，请选择一个空目录".into());
+    }
+
+    let target_markdown_dir = target_dir.join("markdown-images");
+
+    let mut conn_guard = state.db.lock();
+    conn_guard
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .ok();
+    vacuum_database_into(&conn_guard, &target_db)?;
+    copy_dir_contents(&current_markdown_dir, &target_markdown_dir)?;
+
+    let next_conn = crate::db::init_db(&target_db);
+    rewrite_markdown_storage_urls(&next_conn, &current_markdown_dir, &target_markdown_dir)?;
+    save_storage_dir(&app, &target_dir)?;
+    *conn_guard = next_conn;
+    drop(conn_guard);
+
+    cleanup_old_storage_files(
+        &current_dir,
+        &target_dir,
+        &current_db,
+        &current_markdown_dir,
+    );
+
+    Ok(settings_with_storage_dir(&app, &state))
+}
+
+fn settings_with_storage_dir(app: &AppHandle, state: &AppState) -> Settings {
+    let conn = state.db.lock();
+    let mut settings = load_settings(&conn);
+    settings.storage_dir = current_storage_dir(app)
+        .or_else(|_| default_storage_dir(app))
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    settings
+}
+
+fn normalize_storage_dir(value: &str) -> Result<PathBuf, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("请选择文件存储位置".into());
+    }
+
+    let path = PathBuf::from(trimmed);
+    if path
+        .file_name()
+        .is_some_and(|name| name == "markdown-images")
+        || path
+            .file_name()
+            .is_some_and(|name| name == "screen_time.db")
+    {
+        return Err("请选择一个文件夹作为存储位置".into());
+    }
+
+    Ok(path)
+}
+
+fn ensure_storage_dir(path: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(path).map_err(|e| e.to_string())?;
+    assert_storage_dir_writable(path)?;
+    path.canonicalize().map_err(|e| e.to_string())
+}
+
+fn assert_storage_dir_writable(path: &Path) -> Result<(), String> {
+    let probe = path.join(format!(".tempo-write-test-{}", std::process::id()));
+    std::fs::write(&probe, b"tempo").map_err(|e| format!("目标位置不可写: {e}"))?;
+    std::fs::remove_file(&probe).map_err(|e| format!("目标位置不可写: {e}"))
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
+
+fn path_is_within_or_same(path: &Path, parent: &Path) -> bool {
+    path.ancestors().any(|ancestor| same_path(ancestor, parent))
+}
+
+fn vacuum_database_into(conn: &Connection, target_db: &Path) -> Result<(), String> {
+    if let Some(parent) = target_db.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let sql_path = target_db.to_string_lossy().replace('\'', "''");
+    conn.execute_batch(&format!("VACUUM INTO '{sql_path}';"))
+        .map_err(|e| e.to_string())
+}
+
+fn copy_dir_contents(source: &Path, target: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(target).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            copy_dir_contents(&source_path, &target_path)?;
+        } else if source_path.is_file() {
+            if let Some(parent) = target_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(&source_path, &target_path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_markdown_storage_urls(
+    conn: &Connection,
+    old_markdown_dir: &Path,
+    new_markdown_dir: &Path,
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, content FROM todos
+             WHERE content LIKE '%asset.localhost/%' OR content LIKE '%asset://localhost/%'",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    for (todo_id, content) in rows {
+        let mut next = content.clone();
+        for src in markdown_image_sources(&content) {
+            let Some((file_name, _)) = markdown_image_reference(&src, old_markdown_dir) else {
+                continue;
+            };
+            let new_path = new_markdown_dir.join(file_name);
+            let Some(new_url) = markdown_image_url_for_path(&new_path) else {
+                continue;
+            };
+            next = next.replace(&src, &new_url);
+        }
+
+        if next != content {
+            conn.execute(
+                "UPDATE todos SET content = ?1 WHERE id = ?2",
+                params![next, todo_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+fn cleanup_old_storage_files(
+    old_dir: &Path,
+    new_dir: &Path,
+    old_db: &Path,
+    old_markdown_dir: &Path,
+) {
+    if same_path(old_dir, new_dir) {
+        return;
+    }
+
+    let _ = std::fs::remove_file(old_db);
+    let _ = std::fs::remove_file(old_dir.join("screen_time.db-wal"));
+    let _ = std::fs::remove_file(old_dir.join("screen_time.db-shm"));
+    let _ = std::fs::remove_dir_all(old_markdown_dir);
 }
 
 #[tauri::command]
@@ -1098,7 +1319,10 @@ pub fn update_todo_subtask(
 }
 
 #[tauri::command]
-pub fn delete_todo_subtask(state: tauri::State<AppState>, subtask_id: i64) -> Result<TodoItem, String> {
+pub fn delete_todo_subtask(
+    state: tauri::State<AppState>,
+    subtask_id: i64,
+) -> Result<TodoItem, String> {
     let conn = state.db.lock();
     let todo_id: i64 = conn
         .query_row(
@@ -1172,11 +1396,8 @@ pub fn delete_todo_note(state: tauri::State<AppState>, note_id: i64) -> Result<T
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "备注不存在".to_string())?;
 
-    conn.execute(
-        "DELETE FROM todo_note_images WHERE note_id = ?1",
-        [note_id],
-    )
-    .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM todo_note_images WHERE note_id = ?1", [note_id])
+        .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM todo_notes WHERE id = ?1", [note_id])
         .map_err(|e| e.to_string())?;
 
@@ -1334,15 +1555,12 @@ pub fn export_todos_backup(
     let mut markdown_images = HashMap::<String, PathBuf>::new();
 
     for todo in &mut todos {
-        todo.content = rewrite_markdown_images_for_backup(
-            &todo.content,
-            &markdown_dir,
-            &mut markdown_images,
-        );
+        todo.content =
+            rewrite_markdown_images_for_backup(&todo.content, &markdown_dir, &mut markdown_images);
     }
 
     let backup = TodoBackupFile {
-        format: "screen-time-app.todos.v3".into(),
+        format: "tempo.todos.v3".into(),
         exported_at: Local::now().to_rfc3339(),
         todos,
     };
@@ -1377,10 +1595,9 @@ pub fn import_todos_backup(
     let backup_bytes = entries
         .get("todos.json")
         .ok_or_else(|| "备份文件缺少 todos.json".to_string())?;
-    let backup: TodoBackupFile =
-        serde_json::from_slice(backup_bytes).map_err(|e| e.to_string())?;
+    let backup: TodoBackupFile = serde_json::from_slice(backup_bytes).map_err(|e| e.to_string())?;
 
-    if !backup.format.starts_with("screen-time-app.todos.") {
+    if !backup.format.starts_with("tempo.todos.") {
         return Err("不是有效的待办备份文件".into());
     }
 
@@ -1394,7 +1611,9 @@ pub fn import_todos_backup(
         };
         let target = unique_markdown_image_path(&markdown_dir, &file_name);
         std::fs::write(&target, data).map_err(|e| e.to_string())?;
-        markdown_image_urls.insert(name.clone(), asset_url_for_path(&target));
+        let image_url =
+            markdown_image_url_for_path(&target).ok_or_else(|| "图片文件名无效".to_string())?;
+        markdown_image_urls.insert(name.clone(), image_url);
     }
 
     let conn = state.db.lock();
@@ -1423,11 +1642,7 @@ pub fn save_markdown_image(
         return Err("单张图片不能超过 5MB".into());
     }
 
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("markdown-images");
+    let dir = markdown_images_dir(&app)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let mut attempt = 0;
@@ -1445,7 +1660,7 @@ pub fn save_markdown_image(
         }
 
         std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-        return Ok(path.to_string_lossy().into_owned());
+        return markdown_image_url_for_path(&path).ok_or_else(|| "图片文件名无效".to_string());
     }
 }
 
@@ -1567,9 +1782,11 @@ fn read_zip_archive(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, String> {
         let local_offset = read_u32(bytes, cursor + 42)? as usize;
         let name_start = cursor + 46;
         let name_end = name_start + name_len;
-        let name = std::str::from_utf8(bytes.get(name_start..name_end).ok_or_else(|| {
-            "备份文件目录损坏".to_string()
-        })?)
+        let name = std::str::from_utf8(
+            bytes
+                .get(name_start..name_end)
+                .ok_or_else(|| "备份文件目录损坏".to_string())?,
+        )
         .map_err(|_| "备份文件目录名称无效".to_string())?
         .replace('\\', "/");
 
@@ -1774,6 +1991,10 @@ fn markdown_image_sources(content: &str) -> Vec<String> {
 }
 
 fn markdown_image_reference(src: &str, markdown_dir: &Path) -> Option<(String, PathBuf)> {
+    if let Some(file_name) = markdown_image_file_name_from_url(src) {
+        return Some((file_name.clone(), markdown_dir.join(file_name)));
+    }
+
     let decoded = decode_asset_source_path(src);
     if let Some(relative) = decoded.strip_prefix("markdown-images/") {
         let file_name = backup_markdown_image_file_name(&format!("markdown-images/{relative}"))?;
@@ -1847,19 +2068,77 @@ fn unique_markdown_image_path(markdown_dir: &Path, file_name: &str) -> PathBuf {
 }
 
 fn markdown_images_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("markdown-images"))
+    Ok(current_storage_dir(app)?.join("markdown-images"))
 }
 
-fn asset_url_for_path(path: &Path) -> String {
-    let encoded = percent_encode(&path.to_string_lossy());
+pub fn markdown_image_protocol_response(
+    app: &AppHandle,
+    request: Request<Vec<u8>>,
+) -> Response<Vec<u8>> {
+    if request.method() != Method::GET && request.method() != Method::HEAD {
+        return empty_markdown_image_response(StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    let Some(file_name) = markdown_image_file_name_from_request_path(request.uri().path()) else {
+        return empty_markdown_image_response(StatusCode::BAD_REQUEST);
+    };
+    let Some(content_type) = markdown_image_content_type(&file_name) else {
+        return empty_markdown_image_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    };
+
+    let markdown_dir = match markdown_images_dir(app) {
+        Ok(dir) => dir,
+        Err(_) => return empty_markdown_image_response(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    let path = markdown_dir.join(&file_name);
+    let canonical_path = match path.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return empty_markdown_image_response(StatusCode::NOT_FOUND),
+    };
+    let canonical_markdown_dir = match markdown_dir.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return empty_markdown_image_response(StatusCode::NOT_FOUND),
+    };
+    if !canonical_path.starts_with(&canonical_markdown_dir) {
+        return empty_markdown_image_response(StatusCode::FORBIDDEN);
+    }
+
+    if request.method() == Method::HEAD {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, content_type)
+            .body(Vec::new())
+            .unwrap();
+    }
+
+    match std::fs::read(canonical_path) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, content_type)
+            .header(CONTENT_LENGTH, bytes.len())
+            .body(bytes)
+            .unwrap(),
+        Err(_) => empty_markdown_image_response(StatusCode::NOT_FOUND),
+    }
+}
+
+fn empty_markdown_image_response(status: StatusCode) -> Response<Vec<u8>> {
+    Response::builder().status(status).body(Vec::new()).unwrap()
+}
+
+fn markdown_image_url_for_path(path: &Path) -> Option<String> {
+    let file_name = path.file_name()?.to_str()?;
+    let valid_file_name = backup_markdown_image_file_name(&format!("markdown-images/{file_name}"))?;
+    markdown_image_content_type(&valid_file_name)?;
+    Some(markdown_image_url_for_file_name(&valid_file_name))
+}
+
+fn markdown_image_url_for_file_name(file_name: &str) -> String {
+    let encoded = percent_encode(file_name);
     if cfg!(target_os = "windows") {
-        format!("http://asset.localhost/{encoded}")
+        format!("http://{MARKDOWN_IMAGE_PROTOCOL}.localhost/{encoded}")
     } else {
-        format!("asset://localhost/{encoded}")
+        format!("{MARKDOWN_IMAGE_PROTOCOL}://localhost/{encoded}")
     }
 }
 
@@ -1893,6 +2172,42 @@ fn percent_decode(value: &str) -> String {
         index += 1;
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn markdown_image_file_name_from_request_path(path: &str) -> Option<String> {
+    let path = path.trim_start_matches('/');
+    let decoded = percent_decode(path);
+    backup_markdown_image_file_name(&format!("markdown-images/{decoded}"))
+}
+
+fn markdown_image_file_name_from_url(src: &str) -> Option<String> {
+    let windows_prefix = format!("http://{MARKDOWN_IMAGE_PROTOCOL}.localhost/");
+    let windows_https_prefix = format!("https://{MARKDOWN_IMAGE_PROTOCOL}.localhost/");
+    let unix_prefix = format!("{MARKDOWN_IMAGE_PROTOCOL}://localhost/");
+    let path = src
+        .strip_prefix(&windows_prefix)
+        .or_else(|| src.strip_prefix(&windows_https_prefix))
+        .or_else(|| src.strip_prefix(&unix_prefix))?;
+    let path = path
+        .split_once(['?', '#'])
+        .map(|(value, _)| value)
+        .unwrap_or(path);
+    let decoded = percent_decode(path);
+    backup_markdown_image_file_name(&format!("markdown-images/{decoded}"))
+}
+
+fn markdown_image_content_type(file_name: &str) -> Option<&'static str> {
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())?
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        _ => None,
+    }
 }
 
 fn is_safe_zip_name(name: &str) -> bool {
@@ -2023,13 +2338,43 @@ pub fn get_pomodoro_state(state: tauri::State<AppState>) -> PomodoroState {
 }
 
 #[tauri::command]
+pub fn set_pomodoro_todo(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    todo_id: Option<i64>,
+) -> Result<PomodoroState, String> {
+    let snapshot = crate::pomodoro::set_pomodoro_todo(&state, todo_id)?;
+    crate::pomodoro::push_pomodoro_update(&app, &state);
+    Ok(snapshot)
+}
+
+#[tauri::command]
 pub fn start_pomodoro(
     app: AppHandle,
     state: tauri::State<AppState>,
+    todo_id: Option<i64>,
 ) -> Result<PomodoroState, String> {
-    let snapshot = crate::pomodoro::start_pomodoro(&state)?;
+    let snapshot = crate::pomodoro::start_pomodoro(&state, todo_id)?;
     crate::pomodoro::push_pomodoro_update(&app, &state);
     Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn get_todo_focus_summary(
+    state: tauri::State<AppState>,
+    todo_id: i64,
+) -> crate::db::TodoFocusSummary {
+    let conn = state.db.lock();
+    crate::db::get_todo_focus_summary(&conn, todo_id)
+}
+
+#[tauri::command]
+pub fn get_todo_focus_summaries(
+    state: tauri::State<AppState>,
+    todo_ids: Vec<i64>,
+) -> Vec<crate::db::TodoFocusSummary> {
+    let conn = state.db.lock();
+    crate::db::get_todo_focus_summaries(&conn, &todo_ids)
 }
 
 #[tauri::command]
@@ -2074,7 +2419,11 @@ fn normalize_todo_title(title: String, allow_image_only: bool) -> Result<String,
 }
 
 fn normalize_todo_content(content: String) -> String {
-    content.replace("\r\n", "\n").replace('\r', "\n").trim().to_string()
+    content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string()
 }
 
 fn normalize_due_at(due_at: Option<String>) -> Result<Option<String>, String> {
@@ -2132,10 +2481,7 @@ fn normalize_todo_note_images(
     let images = images.unwrap_or_default();
 
     if images.len() > MAX_TODO_NOTE_IMAGES {
-        return Err(format!(
-            "每条备注最多添加 {} 张图片",
-            MAX_TODO_NOTE_IMAGES
-        ));
+        return Err(format!("每条备注最多添加 {} 张图片", MAX_TODO_NOTE_IMAGES));
     }
 
     validate_todo_image_inputs(&images)?;
@@ -2245,7 +2591,9 @@ fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
         pinned_at: row.get(5)?,
         created_at: row.get(6)?,
         completed_at: row.get(7)?,
-        recurrence: row.get::<_, Option<String>>(8)?.unwrap_or_else(|| "none".into()),
+        recurrence: row
+            .get::<_, Option<String>>(8)?
+            .unwrap_or_else(|| "none".into()),
         remind_1d: row.get::<_, i64>(9)? != 0,
         remind_1h: row.get::<_, i64>(10)? != 0,
         remind_custom_hours: row.get(11)?,
@@ -2461,8 +2809,8 @@ fn restore_subtask_completion_snapshot(
     todo_id: i64,
     snapshot: &str,
 ) -> Result<(), String> {
-    let entries = serde_json::from_str::<Vec<serde_json::Value>>(snapshot)
-        .map_err(|e| e.to_string())?;
+    let entries =
+        serde_json::from_str::<Vec<serde_json::Value>>(snapshot).map_err(|e| e.to_string())?;
 
     for entry in entries {
         let Some(subtask_id) = entry.get("id").and_then(|value| value.as_i64()) else {
@@ -2637,7 +2985,10 @@ fn normalize_recurrence(recurrence: String) -> Result<String, String> {
     }
 }
 
-fn normalize_remind_custom_hours(value: Option<i64>, has_due_at: bool) -> Result<Option<i64>, String> {
+fn normalize_remind_custom_hours(
+    value: Option<i64>,
+    has_due_at: bool,
+) -> Result<Option<i64>, String> {
     if !has_due_at {
         return Ok(None);
     }
@@ -2675,18 +3026,15 @@ fn normalize_subtask_title(title: String) -> Result<String, String> {
 
 fn mark_due_reminder_sent(conn: &Connection, id: i64, flag: &str) -> Result<(), String> {
     match flag {
-        "due_reminded_1d" => conn.execute(
-            "UPDATE todos SET due_reminded_1d = 1 WHERE id = ?1",
-            [id],
-        ),
-        "due_reminded_1h" => conn.execute(
-            "UPDATE todos SET due_reminded_1h = 1 WHERE id = ?1",
-            [id],
-        ),
-        "due_reminded_at" => conn.execute(
-            "UPDATE todos SET due_reminded_at = 1 WHERE id = ?1",
-            [id],
-        ),
+        "due_reminded_1d" => {
+            conn.execute("UPDATE todos SET due_reminded_1d = 1 WHERE id = ?1", [id])
+        }
+        "due_reminded_1h" => {
+            conn.execute("UPDATE todos SET due_reminded_1h = 1 WHERE id = ?1", [id])
+        }
+        "due_reminded_at" => {
+            conn.execute("UPDATE todos SET due_reminded_at = 1 WHERE id = ?1", [id])
+        }
         "due_reminded_custom" => conn.execute(
             "UPDATE todos SET due_reminded_custom = 1 WHERE id = ?1",
             [id],

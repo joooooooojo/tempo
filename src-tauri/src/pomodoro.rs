@@ -1,12 +1,14 @@
 use crate::db::{
-    get_pomodoro_sessions_today, increment_pomodoro_sessions, load_settings, AppState,
-    PomodoroPhase, PomodoroRuntime, PomodoroState, PomodoroStatus, Settings,
+    active_todo_title, finalize_pomodoro_work_session, get_pomodoro_sessions_today, load_settings,
+    start_pomodoro_work_session, AppState, PomodoroPhase, PomodoroRuntime, PomodoroState,
+    PomodoroStatus, Settings,
 };
+use chrono::Local;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub fn pomodoro_state_snapshot(state: &AppState) -> PomodoroState {
-    let (status, phase, remaining_seconds, phase_total_seconds, cycle_count) = {
+    let (status, phase, remaining_seconds, phase_total_seconds, cycle_count, active_todo_id) = {
         let runtime = state.pomodoro.lock();
         (
             runtime.status,
@@ -14,6 +16,7 @@ pub fn pomodoro_state_snapshot(state: &AppState) -> PomodoroState {
             runtime.remaining_seconds,
             runtime.phase_total_seconds,
             runtime.cycle_count,
+            runtime.active_todo_id,
         )
     };
 
@@ -22,6 +25,11 @@ pub fn pomodoro_state_snapshot(state: &AppState) -> PomodoroState {
         get_pomodoro_sessions_today(&conn)
     };
 
+    let active_todo_title = active_todo_id.and_then(|todo_id| {
+        let conn = state.db.lock();
+        active_todo_title(&conn, todo_id)
+    });
+
     PomodoroState {
         status: status_label(status).into(),
         phase: phase_label(phase).into(),
@@ -29,7 +37,28 @@ pub fn pomodoro_state_snapshot(state: &AppState) -> PomodoroState {
         phase_total_seconds,
         sessions_today,
         cycle_count,
+        active_todo_id,
+        active_todo_title,
     }
+}
+
+pub fn set_pomodoro_todo(state: &AppState, todo_id: Option<i64>) -> Result<PomodoroState, String> {
+    {
+        let runtime = state.pomodoro.lock();
+        if runtime.status != PomodoroStatus::Idle {
+            return Err("番茄钟进行中，暂不能更换绑定待办".into());
+        }
+    }
+
+    if let Some(todo_id) = todo_id {
+        let conn = state.db.lock();
+        if active_todo_title(&conn, todo_id).is_none() {
+            return Err("待办不存在或已完成".into());
+        }
+    }
+
+    state.pomodoro.lock().active_todo_id = todo_id;
+    Ok(pomodoro_state_snapshot(state))
 }
 
 pub fn tick_pomodoro(app: &AppHandle, state: &AppState, elapsed_seconds: i64) {
@@ -50,7 +79,7 @@ pub fn tick_pomodoro(app: &AppHandle, state: &AppState, elapsed_seconds: i64) {
     }
 }
 
-pub fn start_pomodoro(state: &AppState) -> Result<PomodoroState, String> {
+pub fn start_pomodoro(state: &AppState, todo_id: Option<i64>) -> Result<PomodoroState, String> {
     let settings = {
         let conn = state.db.lock();
         load_settings(&conn)
@@ -60,7 +89,14 @@ pub fn start_pomodoro(state: &AppState) -> Result<PomodoroState, String> {
         let mut runtime = state.pomodoro.lock();
         match runtime.status {
             PomodoroStatus::Idle => {
-                begin_phase(&mut runtime, PomodoroPhase::Work, &settings);
+                if let Some(todo_id) = todo_id {
+                    let conn = state.db.lock();
+                    if active_todo_title(&conn, todo_id).is_none() {
+                        return Err("待办不存在或已完成".into());
+                    }
+                    runtime.active_todo_id = Some(todo_id);
+                }
+                begin_phase(&mut runtime, PomodoroPhase::Work, &settings, state);
                 runtime.status = PomodoroStatus::Running;
             }
             PomodoroStatus::Paused => {
@@ -85,6 +121,8 @@ pub fn pause_pomodoro(state: &AppState) -> PomodoroState {
 }
 
 pub fn stop_pomodoro(state: &AppState) -> PomodoroState {
+    finalize_current_work_session(state, false, false);
+
     {
         let mut runtime = state.pomodoro.lock();
         *runtime = PomodoroRuntime::default();
@@ -117,19 +155,17 @@ fn complete_pomodoro_phase(app: &AppHandle, state: &AppState, skipped: bool) {
         runtime.phase
     };
 
+    if finished_phase == PomodoroPhase::Work {
+        finalize_current_work_session(state, !skipped, skipped);
+    }
+
     let next_phase = match finished_phase {
         PomodoroPhase::Work => {
-            let sessions_today = {
-                let conn = state.db.lock();
-                increment_pomodoro_sessions(&conn)
-            };
-
             let mut runtime = state.pomodoro.lock();
             runtime.cycle_count += 1;
             let cycle_count = runtime.cycle_count;
             drop(runtime);
 
-            let _ = sessions_today;
             if cycle_count >= settings.pomodoro_sessions_per_cycle {
                 PomodoroPhase::LongBreak
             } else {
@@ -147,17 +183,59 @@ fn complete_pomodoro_phase(app: &AppHandle, state: &AppState, skipped: bool) {
 
     {
         let mut runtime = state.pomodoro.lock();
-        begin_phase(&mut runtime, next_phase, &settings);
+        begin_phase(&mut runtime, next_phase, &settings, state);
         runtime.status = PomodoroStatus::Running;
     }
 
     push_pomodoro_update(app, state);
 }
 
-fn begin_phase(runtime: &mut PomodoroRuntime, phase: PomodoroPhase, settings: &Settings) {
+fn begin_phase(
+    runtime: &mut PomodoroRuntime,
+    phase: PomodoroPhase,
+    settings: &Settings,
+    state: &AppState,
+) {
     runtime.phase = phase;
     runtime.phase_total_seconds = phase_seconds(phase, settings);
     runtime.remaining_seconds = runtime.phase_total_seconds;
+
+    if phase == PomodoroPhase::Work {
+        let started_at = Local::now().to_rfc3339();
+        let session_id = {
+            let conn = state.db.lock();
+            start_pomodoro_work_session(&conn, runtime.active_todo_id, &started_at).ok()
+        };
+        runtime.work_session_id = session_id;
+    } else {
+        runtime.work_session_id = None;
+    }
+}
+
+fn finalize_current_work_session(state: &AppState, completed: bool, skipped: bool) {
+    let (session_id, duration_seconds) = {
+        let runtime = state.pomodoro.lock();
+        let Some(session_id) = runtime.work_session_id else {
+            return;
+        };
+        let duration_seconds = runtime.phase_total_seconds - runtime.remaining_seconds;
+        (session_id, duration_seconds)
+    };
+
+    let ended_at = Local::now().to_rfc3339();
+    {
+        let conn = state.db.lock();
+        finalize_pomodoro_work_session(
+            &conn,
+            session_id,
+            &ended_at,
+            duration_seconds,
+            completed,
+            skipped,
+        );
+    }
+
+    state.pomodoro.lock().work_session_id = None;
 }
 
 fn phase_seconds(phase: PomodoroPhase, settings: &Settings) -> i64 {
@@ -206,10 +284,6 @@ fn focus_main_window(app: &AppHandle) {
 
 pub fn push_pomodoro_update(app: &AppHandle, state: &AppState) {
     let snapshot = pomodoro_state_snapshot(state);
-    if snapshot.status == "idle" {
-        return;
-    }
-
     let app_handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let _ = app_handle.emit("pomodoro-update", snapshot);
@@ -259,9 +333,23 @@ mod tests {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE pomodoro_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_id INTEGER,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                skipped INTEGER NOT NULL DEFAULT 0
+            );
             ",
         )
-        .expect("create settings table");
+        .expect("create test tables");
 
         AppState {
             db: Arc::new(Mutex::new(conn)),
@@ -276,7 +364,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
 
         std::thread::spawn(move || {
-            let started = start_pomodoro(&state).expect("start pomodoro");
+            let started = start_pomodoro(&state, None).expect("start pomodoro");
             let paused = pause_pomodoro(&state);
             let stopped = stop_pomodoro(&state);
             tx.send((started, paused, stopped)).ok();

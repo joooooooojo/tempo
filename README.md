@@ -1,4 +1,4 @@
-# 屏幕使用时间 V1.0
+# Tempo
 
 基于 **Tauri 2 + Vite + React + shadcn/ui** 的轻量化桌面屏幕使用时间监控工具。
 
@@ -24,7 +24,7 @@
 ## 快速开始
 
 ```bash
-cd screen-time-app
+cd tempo
 npm install
 npm run tauri dev
 ```
@@ -37,10 +37,26 @@ npm run tauri build
 
 安装包输出在 `src-tauri/target/release/bundle/`。
 
+## 版本管理
+
+`package.json` 是唯一需要手动更新的版本源。执行下面命令会自动同步 `src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json`：
+
+```bash
+npm version patch
+```
+
+也可以使用 `npm version minor` 或 `npm version major`。只想同步当前版本时运行：
+
+```bash
+npm run sync:version
+```
+
+`package-lock.json` 由 npm 维护，`src-tauri/Cargo.lock` 由 Cargo 维护，不在同步脚本中直接写入。
+
 ## 项目结构
 
 ```
-screen-time-app/
+tempo/
 ├── src/                    # React 前端
 │   ├── components/ui/      # shadcn/ui 组件
 │   ├── pages/              # 首页、报表、设置、关于
@@ -76,4 +92,3 @@ screen-time-app/
 2. 关闭窗口默认最小化到托盘，托盘右键可退出
 3. 部分全屏游戏/加密软件可能无法识别，会归类为未知应用
 4. 需安装 Rust 才能运行 `npm run tauri dev`
-

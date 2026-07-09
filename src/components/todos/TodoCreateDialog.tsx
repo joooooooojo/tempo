@@ -5,10 +5,8 @@ import {
   type ChangeEventHandler,
   type ClipboardEvent,
   type FormEvent,
-  type MouseEvent,
   type ReactNode,
 } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CalendarClock, Repeat, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -188,13 +186,6 @@ export function TodoCreateFormPanel({
   onSubmit,
 }: TodoCreateFormPanelProps) {
   const isWindowLayout = layout === "window";
-  const startWindowDrag = (event: MouseEvent<HTMLElement>) => {
-    if (!isWindowLayout || event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("[data-no-drag]")) return;
-
-    event.preventDefault();
-    getCurrentWindow().startDragging().catch(console.error);
-  };
   const handleContentPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!clipboardHasImages(event)) return;
 
@@ -221,7 +212,6 @@ export function TodoCreateFormPanel({
           "relative shrink-0 border-b border-border/60 px-5 py-4 pr-12",
           isWindowLayout && "select-none"
         )}
-        onMouseDown={startWindowDrag}
       >
         {titleElement ?? (
           <h1

@@ -1,13 +1,14 @@
 {
-  "name": "screen-time-app",
+  "name": "tempo",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
+    "dev": "tauri dev",
+    "sync:version": "node ./scripts/sync-version.mjs",
+    "version": "node ./scripts/sync-version.mjs",
+    "build": "node ./scripts/sync-version.mjs && tsc && tauri build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.18",

@@ -111,6 +111,7 @@ export interface Settings {
   pomodoro_short_break_minutes: number;
   pomodoro_long_break_minutes: number;
   pomodoro_sessions_per_cycle: number;
+  storage_dir: string;
 }
 
 export interface PomodoroState {
@@ -120,6 +121,17 @@ export interface PomodoroState {
   phase_total_seconds: number;
   sessions_today: number;
   cycle_count: number;
+  active_todo_id: number | null;
+  active_todo_title: string | null;
+}
+
+export interface TodoFocusSummary {
+  todo_id: number;
+  sessions_today: number;
+  total_seconds_today: number;
+  total_seconds_all: number;
+  sessions_all: number;
+  last_focused_at: string | null;
 }
 
 export type ReminderEvent =

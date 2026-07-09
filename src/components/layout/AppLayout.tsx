@@ -2,7 +2,6 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { BarChart3, ListTodo, Minus, Settings, Square, Timer, X } from "lucide-react";
 import { useState } from "react";
-import type { MouseEvent } from "react";
 import { api } from "@/lib/api";
 import { cn, isMacTarget } from "@/lib/utils";
 
@@ -31,8 +30,7 @@ export function AppLayout() {
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={cn(
-            "flex w-[200px] shrink-0 flex-col border-r border-border/60 px-4 pb-4",
-            macOS ? "pt-0" : "pt-5"
+            "flex w-50 shrink-0 flex-col border-r border-border/60 px-4 pb-4", "pt-0"
           )}
         >
           <nav className="flex flex-1 flex-col gap-1">
@@ -68,13 +66,16 @@ export function AppLayout() {
               </NavLink>
             ))}
           </nav>
+          <div className="mt-4 border-t border-border/50 pt-3 text-[11px] font-medium text-muted-foreground/75">
+            v{__APP_VERSION__}
+          </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <main
             className={cn(
-              "no-scrollbar flex-1 overflow-y-auto px-6 pb-5",
-              macOS ? "pt-0" : "pt-5"
+              "no-scrollbar flex-1 overflow-y-auto px-4 pb-4",
+               "pt-0"
             )}
           >
             <div key={location.pathname} className="page-transition">
@@ -90,14 +91,6 @@ export function AppLayout() {
 function WindowTitleBar() {
   const appWindow = getCurrentWindow();
   const [hoveredControl, setHoveredControl] = useState<"minimize" | "close" | null>(null);
-
-  const startDrag = (event: MouseEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("[data-no-drag]")) return;
-
-    event.preventDefault();
-    appWindow.startDragging().catch(console.error);
-  };
 
   const resetControlState = (button?: HTMLButtonElement | null) => {
     setHoveredControl(null);
@@ -118,14 +111,13 @@ function WindowTitleBar() {
   return (
     <div
       data-tauri-drag-region
-      onMouseDown={startDrag}
-      className="relative z-20 flex h-10 shrink-0 select-none items-center bg-transparent pl-4"
+      className="window-titlebar relative z-20 flex h-10 shrink-0 select-none items-center pl-4"
     >
       <div data-tauri-drag-region className="text-[13px] font-medium text-foreground/82">
-        时窗
+        Tempo
       </div>
       <div data-tauri-drag-region className="h-full flex-1" />
-      <div data-no-drag className="flex h-full">
+      <div data-no-drag className="flex h-full [-webkit-app-region:no-drag] [app-region:no-drag]">
         <button
           type="button"
           className={cn(

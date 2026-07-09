@@ -1,4 +1,5 @@
 import path from "path";
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -12,6 +13,9 @@ const host = process.env.TAURI_DEV_HOST;
 const targetPlatform = normalizeTargetPlatform(
   process.env.TAURI_ENV_PLATFORM ?? process.env.CARGO_CFG_TARGET_OS ?? process.platform
 );
+const appVersion = JSON.parse(
+  readFileSync(path.resolve(__dirname, "package.json"), "utf8")
+).version;
 
 function normalizeTargetPlatform(platform?: string) {
   const normalized = platform?.toLowerCase();
@@ -33,6 +37,7 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   define: {
     __TAURI_TARGET_PLATFORM__: JSON.stringify(targetPlatform),
+    __APP_VERSION__: JSON.stringify(appVersion),
   },
   resolve: {
     alias: {

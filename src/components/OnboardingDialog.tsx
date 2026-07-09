@@ -17,7 +17,7 @@ export function OnboardingDialog({ open, onComplete }: OnboardingDialogProps) {
           <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-300 to-teal-500 shadow-lg shadow-emerald-500/25">
             <Clock3 className="h-6 w-6 text-white" strokeWidth={1.9} />
           </div>
-          <DialogTitle className="text-center text-lg">欢迎使用时窗</DialogTitle>
+          <DialogTitle className="text-center text-lg">欢迎使用 Tempo</DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-3 pt-1">
               <p className="text-center text-[13px]">

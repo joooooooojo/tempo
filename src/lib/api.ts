@@ -5,6 +5,7 @@ import type {
   DailyReport,
   PomodoroState,
   Settings,
+  TodoFocusSummary,
   TodoImage,
   TodoItem,
   TodoNote,
@@ -24,6 +25,8 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Partial<Settings>) =>
     invoke<void>("update_settings", { settings }),
+  setStorageDir: (storageDir: string) =>
+    invoke<Settings>("set_storage_dir", { storageDir }),
   resetToday: () => invoke<void>("reset_today"),
   resetAll: () => invoke<void>("reset_all"),
   getBlockedApps: () => invoke<string[]>("get_blocked_apps"),
@@ -109,8 +112,15 @@ export const api = {
   completeOnboarding: () => invoke<void>("complete_onboarding"),
   hideToTray: () => invoke<void>("hide_to_tray_command"),
   getPomodoroState: () => invoke<PomodoroState>("get_pomodoro_state"),
-  startPomodoro: () => invoke<PomodoroState>("start_pomodoro"),
+  setPomodoroTodo: (todoId: number | null) =>
+    invoke<PomodoroState>("set_pomodoro_todo", { todoId }),
+  startPomodoro: (todoId?: number | null) =>
+    invoke<PomodoroState>("start_pomodoro", { todoId: todoId ?? null }),
   pausePomodoro: () => invoke<PomodoroState>("pause_pomodoro"),
   stopPomodoro: () => invoke<PomodoroState>("stop_pomodoro"),
   skipPomodoroPhase: () => invoke<PomodoroState>("skip_pomodoro_phase"),
+  getTodoFocusSummary: (todoId: number) =>
+    invoke<TodoFocusSummary>("get_todo_focus_summary", { todoId }),
+  getTodoFocusSummaries: (todoIds: number[]) =>
+    invoke<TodoFocusSummary[]>("get_todo_focus_summaries", { todoIds }),
 };

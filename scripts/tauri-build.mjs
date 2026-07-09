@@ -15,5 +15,6 @@ function run(args) {
   }
 }
 
+run([resolve(root, "scripts/sync-version.mjs")]);
 run([resolve(root, "node_modules/typescript/bin/tsc")]);
 run([resolve(root, "node_modules/vite/bin/vite.js"), "build"]);

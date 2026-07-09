@@ -1,15 +1,15 @@
 [package]
-name = "screen-time-app"
-version = "0.1.0"
-description = "时窗 - 屏幕使用时间监控"
-authors = ["Edesign"]
+name = "tempo"
+version = "1.0.0"
+description = "Tempo - screen time and focus timer"
+authors = ["zekun"]
 edition = "2021"
 
 [lints.rust]
 unexpected_cfgs = "allow"
 
 [lib]
-name = "screen_time_app_lib"
+name = "tempo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

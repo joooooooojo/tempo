@@ -229,15 +229,17 @@ fn is_ignored_foreground_app(name: &str, process: &str, bundle_id: Option<&str>)
 
     let name_lower = name.trim().to_lowercase();
     let process_lower = process.trim().to_ascii_lowercase();
-    if name_lower == "screen-time-app"
-        || name_lower == "时窗"
-        || process_lower == "screen-time-app"
-        || process_lower.ends_with("screen-time-app")
+    let name_stem = name_lower.strip_suffix(".exe").unwrap_or(&name_lower);
+    let process_stem = process_lower.strip_suffix(".exe").unwrap_or(&process_lower);
+    if name_stem == "tempo"
+        || process_stem == "tempo"
+        || process_stem.ends_with("\\tempo")
+        || process_stem.ends_with("/tempo")
     {
         return true;
     }
 
-    if bundle_id == Some("com.edesign.screen-time") {
+    if bundle_id == Some("com.zekun.tempo") {
         return true;
     }
 
@@ -246,7 +248,7 @@ fn is_ignored_foreground_app(name: &str, process: &str, bundle_id: Option<&str>)
 
 #[cfg(target_os = "macos")]
 fn get_foreground_app_macos() -> Option<ForegroundApp> {
-    use appkit_nsworkspace_bindings::{INSRunningApplication, INSURL, INSWorkspace, NSWorkspace};
+    use appkit_nsworkspace_bindings::{INSRunningApplication, INSWorkspace, NSWorkspace, INSURL};
     use std::path::PathBuf;
 
     unsafe {
@@ -301,9 +303,8 @@ fn get_foreground_app_macos() -> Option<ForegroundApp> {
         }
 
         let icon_data_url = if bundle_path.extension().is_some_and(|ext| ext == "app") {
-            get_cached_icon_data_url(&bundle_path).or_else(|| {
-                resolve_app_icon_data_url(&display_name, &process_name)
-            })
+            get_cached_icon_data_url(&bundle_path)
+                .or_else(|| resolve_app_icon_data_url(&display_name, &process_name))
         } else {
             resolve_app_icon_data_url(&display_name, &process_name)
         };

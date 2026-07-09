@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "时窗",
+  "productName": "Tempo",
   "version": "1.0.0",
-  "identifier": "com.edesign.screen-time",
+  "identifier": "com.zekun.tempo",
   "build": {
     "beforeDevCommand": "node ./scripts/tauri-dev.mjs",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "时窗",
+        "title": "Tempo",
         "width": 900,
         "height": 640,
         "minWidth": 900,
@@ -29,7 +29,10 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/markdown-images/**"]
+        "scope": [
+          "$APPDATA/Tempo/**",
+          "$APPDATA/com.zekun.tempo/**"
+        ]
       }
     }
   },
@@ -41,7 +44,10 @@
         "language": "zh-CN"
       },
       "nsis": {
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
       }
     },
     "icon": [
@@ -52,7 +58,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "bundleName": "时窗"
+      "bundleName": "Tempo"
     }
   }
 }

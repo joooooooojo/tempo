@@ -47,14 +47,16 @@ pub fn apply_branding(app: &AppHandle) {
 
 fn hide_application_windows() {
     unsafe {
-        let ns_app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+        let ns_app: *mut objc::runtime::Object =
+            msg_send![class!(NSApplication), sharedApplication];
         let _: () = msg_send![ns_app, hide: std::ptr::null_mut::<objc::runtime::Object>()];
     }
 }
 
 fn refresh_dock_tile() {
     unsafe {
-        let ns_app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+        let ns_app: *mut objc::runtime::Object =
+            msg_send![class!(NSApplication), sharedApplication];
         if ns_app.is_null() {
             return;
         }
@@ -106,7 +108,8 @@ fn set_application_icon(path: &Path) {
             return;
         }
 
-        let ns_app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+        let ns_app: *mut objc::runtime::Object =
+            msg_send![class!(NSApplication), sharedApplication];
         if ns_app.is_null() {
             return;
         }

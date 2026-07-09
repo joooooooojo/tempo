@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { emit } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import { FolderOpen } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -20,6 +22,7 @@ export function SettingsPage() {
   const [knownApps, setKnownApps] = useState<AppUsage[]>([]);
   const [limitApp, setLimitApp] = useState("");
   const [limitHours, setLimitHours] = useState("2");
+  const [migratingStorage, setMigratingStorage] = useState(false);
 
   const load = async () => {
     const [s, b, l, a] = await Promise.all([
@@ -49,6 +52,29 @@ export function SettingsPage() {
     else root.classList.toggle("dark", window.matchMedia("(prefers-color-scheme: dark)").matches);
   };
 
+  const changeStorageDir = async () => {
+    if (migratingStorage) return;
+
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择文件存储位置",
+      });
+      if (!selected || Array.isArray(selected)) return;
+
+      setMigratingStorage(true);
+      const nextSettings = await api.setStorageDir(selected);
+      setSettings(nextSettings);
+      await load();
+      toast.success("文件已迁移");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMigratingStorage(false);
+    }
+  };
+
   if (!settings) return <p className="text-sm text-muted-foreground">加载中...</p>;
 
   return (
@@ -76,6 +102,32 @@ export function SettingsPage() {
         </Card>
       </Section>
 
+      <Section title="存储">
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] font-medium">文件存储位置</p>
+              <p
+                className="mt-1 truncate text-[12px] text-muted-foreground"
+                title={settings.storage_dir}
+              >
+                {settings.storage_dir || "默认位置（AppData\\Tempo）"}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={migratingStorage}
+              onClick={changeStorageDir}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              {migratingStorage ? "迁移中" : "更换"}
+            </Button>
+          </CardContent>
+        </Card>
+      </Section>
+
       <Section title="护眼提醒">
         <Card className="overflow-hidden">
           <Row label="启用">
@@ -96,37 +148,6 @@ export function SettingsPage() {
               </Button>
             </div>
           )}
-        </Card>
-      </Section>
-
-      <Section title="番茄时钟">
-        <Card className="overflow-hidden">
-          <div className="space-y-4 px-4 py-4">
-            <div>
-              <Label className="text-[13px]">专注时长 · {settings.pomodoro_work_minutes} 分钟</Label>
-              <Slider className="mt-3" min={5} max={60} step={5}
-                value={[settings.pomodoro_work_minutes]}
-                onValueChange={([v]) => update({ pomodoro_work_minutes: v })} />
-            </div>
-            <div>
-              <Label className="text-[13px]">短休时长 · {settings.pomodoro_short_break_minutes} 分钟</Label>
-              <Slider className="mt-3" min={1} max={15} step={1}
-                value={[settings.pomodoro_short_break_minutes]}
-                onValueChange={([v]) => update({ pomodoro_short_break_minutes: v })} />
-            </div>
-            <div>
-              <Label className="text-[13px]">长休时长 · {settings.pomodoro_long_break_minutes} 分钟</Label>
-              <Slider className="mt-3" min={5} max={30} step={5}
-                value={[settings.pomodoro_long_break_minutes]}
-                onValueChange={([v]) => update({ pomodoro_long_break_minutes: v })} />
-            </div>
-            <div>
-              <Label className="text-[13px]">长休间隔 · 每 {settings.pomodoro_sessions_per_cycle} 轮专注</Label>
-              <Slider className="mt-3" min={2} max={8} step={1}
-                value={[settings.pomodoro_sessions_per_cycle]}
-                onValueChange={([v]) => update({ pomodoro_sessions_per_cycle: v })} />
-            </div>
-          </div>
         </Card>
       </Section>
 
@@ -160,7 +181,9 @@ export function SettingsPage() {
             <div className="flex gap-2">
               <Select value={limitApp} onValueChange={setLimitApp}>
                 <SelectTrigger className="flex-1 glass-subtle border-0"><SelectValue placeholder="选择应用" /></SelectTrigger>
-                <SelectContent>{knownApps.map((a) => <SelectItem key={a.app_name} value={a.app_name}>{a.app_name}</SelectItem>)}</SelectContent>
+                <SelectContent searchable searchPlaceholder="搜索应用">
+                  {knownApps.map((a) => <SelectItem key={a.app_name} value={a.app_name}>{a.app_name}</SelectItem>)}
+                </SelectContent>
               </Select>
               <Input type="number" min={0.5} step={0.5} value={limitHours} onChange={(e) => setLimitHours(e.target.value)}
                 className="w-16 border-0 glass-subtle" placeholder="h" />
