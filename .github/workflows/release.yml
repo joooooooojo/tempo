@@ -38,6 +38,10 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ./src-tauri -> target
+          # Distinguish the two macOS targets that share the same runner OS.
+          # Tag runs restore from master via GitHub's default-branch cache fallback.
+          key: ${{ matrix.args }}
+          cache-on-failure: true
 
       - run: npm ci
 

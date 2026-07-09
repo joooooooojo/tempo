@@ -1,0 +1,74 @@
+# Warm Rust/Cargo caches on master so tag-triggered Release jobs can restore them.
+# GitHub Actions caches are scoped by ref: tag runs cannot reuse caches saved by
+# other tags, but they CAN fall back to caches from the default branch.
+
+name: Cache Warm
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/cache-warm.yml"
+  workflow_dispatch:
+
+jobs:
+  # Job name must stay "publish" to match release.yml — rust-cache includes the
+  # job name in the cache key, so a mismatch defeats restore fallback.
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            rust-target: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            rust-target: x86_64-apple-darwin
+          - platform: windows-latest
+            args: ""
+            rust-target: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          # Distinguish the two macOS targets that share the same runner OS.
+          key: ${{ matrix.args }}
+          cache-on-failure: true
+
+      - run: npm ci
+
+      # Stub frontend so tauri-build can resolve frontendDist without a full Vite build.
+      - name: Stub frontend dist
+        shell: bash
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><title>cache-warm</title>' > dist/index.html
+
+      - name: Compile Rust release dependencies
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.rust-target }}" ]; then
+            cargo build --release --target "${{ matrix.rust-target }}"
+          else
+            cargo build --release
+          fi
