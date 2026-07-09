@@ -2329,6 +2329,11 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
             crate::macos_dock::apply_branding(&app);
         }
     }
+
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        let _ = splash.close();
+    }
+
     Ok(())
 }
 
