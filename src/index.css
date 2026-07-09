@@ -419,10 +419,32 @@ html.quick-todo-window #root {
   box-sizing: content-box;
   max-width: 100%;
   max-height: 360px;
-  margin: 8px 0 16px;
+  margin: 0;
   border-radius: 6px;
   background: hsl(var(--card));
   object-fit: contain;
+}
+
+.github-markdown-image-button {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px 0 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  border-radius: 6px;
+  transition: opacity 0.15s ease;
+}
+
+.github-markdown-image-button:hover {
+  opacity: 0.92;
+}
+
+.github-markdown-image-button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 .github-markdown .github-markdown-table-wrap {

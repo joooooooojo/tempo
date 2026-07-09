@@ -724,15 +724,17 @@ export function TodoPage() {
           {detailTodo && (
             <>
               <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
-                <div className="flex items-start justify-between gap-3">
-                  <DialogTitle className="truncate text-[18px] font-bold">
-                    <HighlightText value={detailTodo.title} query={searchQuery} />
-                  </DialogTitle>
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 max-w-[calc(100%-7.5rem)] flex-1">
+                    <DialogTitle className="truncate text-[18px] font-bold" title={detailTodo.title}>
+                      <HighlightText value={detailTodo.title} query={searchQuery} />
+                    </DialogTitle>
+                  </div>
                   {!detailTodo.completed && (
                     <Button
                       size="sm"
                       variant="outline"
-                      className="shrink-0 gap-1.5 border-emerald-500/20 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+                      className="ml-auto shrink-0 gap-1.5 border-emerald-500/20 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
                       onClick={() => {
                         setDetailId(null);
                         void startFocusForTodo(detailTodo);
@@ -772,7 +774,10 @@ export function TodoPage() {
                   <TodoFocusStats summary={detailFocusSummary} />
                 )}
 
-                <MarkdownPreview value={detailTodo.content} />
+                <MarkdownPreview
+                  value={detailTodo.content}
+                  onImagePreview={(src, alt) => setPreviewImage({ data_url: src, label: alt })}
+                />
 
                 <TodoSubtaskList subtasks={detailTodo.subtasks} readOnly />
 

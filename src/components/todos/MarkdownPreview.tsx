@@ -20,12 +20,13 @@ type MarkdownPreviewProps = {
   value: string;
   className?: string;
   emptyText?: string;
+  onImagePreview?: (src: string, alt: string) => void;
 };
 
 const inlinePattern =
   /(!?\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|`([^`]+)`|~~([^~]+)~~|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_)/g;
 
-export function MarkdownPreview({ value, className, emptyText = "暂无待办内容" }: MarkdownPreviewProps) {
+export function MarkdownPreview({ value, className, emptyText = "暂无待办内容", onImagePreview }: MarkdownPreviewProps) {
   const blocks = parseMarkdown(value);
 
   if (blocks.length === 0) {
@@ -38,7 +39,7 @@ export function MarkdownPreview({ value, className, emptyText = "暂无待办内
 
   return (
     <div className={cn("github-markdown", className)}>
-      {blocks.map((block, index) => renderBlock(block, index))}
+      {blocks.map((block, index) => renderBlock(block, index, onImagePreview))}
     </div>
   );
 }
@@ -200,9 +201,9 @@ function parseListItem(text: string): MarkdownListItem {
   };
 }
 
-function renderBlock(block: MarkdownBlock, index: number) {
+function renderBlock(block: MarkdownBlock, index: number, onImagePreview?: (src: string, alt: string) => void) {
   if (block.type === "heading") {
-    const content = renderInline(block.text);
+    const content = renderInline(block.text, onImagePreview);
 
     if (block.level === 1) return <h1 key={index}>{content}</h1>;
     if (block.level === 2) return <h2 key={index}>{content}</h2>;
@@ -215,7 +216,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
   if (block.type === "paragraph") {
     return (
       <p key={index}>
-        {renderInline(block.text)}
+        {renderInline(block.text, onImagePreview)}
       </p>
     );
   }
@@ -232,7 +233,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
   if (block.type === "quote") {
     return (
       <blockquote key={index}>
-        {renderInline(block.text)}
+        {renderInline(block.text, onImagePreview)}
       </blockquote>
     );
   }
@@ -243,7 +244,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
         {block.items.map((item, itemIndex) => (
           <li key={itemIndex} className={item.checked !== undefined ? "task-list-item" : undefined}>
             {item.checked !== undefined && <input type="checkbox" checked={item.checked} readOnly />}
-            {renderInline(item.text)}
+            {renderInline(item.text, onImagePreview)}
           </li>
         ))}
       </ul>
@@ -254,7 +255,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
     return (
       <ol key={index}>
         {block.items.map((item, itemIndex) => (
-          <li key={itemIndex}>{renderInline(item.text)}</li>
+          <li key={itemIndex}>{renderInline(item.text, onImagePreview)}</li>
         ))}
       </ol>
     );
@@ -268,7 +269,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
             <tr>
               {block.headers.map((header, headerIndex) => (
                 <th key={headerIndex} style={{ textAlign: block.aligns[headerIndex] }}>
-                  {renderInline(header)}
+                  {renderInline(header, onImagePreview)}
                 </th>
               ))}
             </tr>
@@ -278,7 +279,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
               <tr key={rowIndex}>
                 {block.headers.map((_, columnIndex) => (
                   <td key={columnIndex} style={{ textAlign: block.aligns[columnIndex] }}>
-                    {renderInline(row[columnIndex] ?? "")}
+                    {renderInline(row[columnIndex] ?? "", onImagePreview)}
                   </td>
                 ))}
               </tr>
@@ -292,7 +293,7 @@ function renderBlock(block: MarkdownBlock, index: number) {
   return <hr key={index} />;
 }
 
-function renderInline(text: string) {
+function renderInline(text: string, onImagePreview?: (src: string, alt: string) => void) {
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
 
@@ -308,7 +309,7 @@ function renderInline(text: string) {
     if (match[1] && isImage) {
       const alt = match[2] || "Markdown image";
       const src = match[3];
-      nodes.push(renderImage(src, alt, nodes.length));
+      nodes.push(renderImage(src, alt, nodes.length, onImagePreview));
     } else if (match[1]) {
       const label = match[2] || match[3];
       const href = match[3];
@@ -355,7 +356,7 @@ function renderTextWithBreaks(text: string, keyPrefix: number) {
   ));
 }
 
-function renderImage(src: string, alt: string, key: number) {
+function renderImage(src: string, alt: string, key: number, onImagePreview?: (src: string, alt: string) => void) {
   if (!isSafeImageSrc(src)) {
     return (
       <span key={key} className="text-muted-foreground">
@@ -364,13 +365,26 @@ function renderImage(src: string, alt: string, key: number) {
     );
   }
 
-  return (
+  const image = (
     <img
-      key={key}
       src={src}
       alt={alt}
       draggable={false}
     />
+  );
+
+  if (!onImagePreview) return <Fragment key={key}>{image}</Fragment>;
+
+  return (
+    <button
+      key={key}
+      type="button"
+      className="github-markdown-image-button"
+      onClick={() => onImagePreview(src, alt)}
+      aria-label={`预览图片：${alt}`}
+    >
+      {image}
+    </button>
   );
 }
 
