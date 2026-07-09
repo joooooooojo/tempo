@@ -30,7 +30,7 @@ export function AppLayout() {
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={cn(
-            "flex w-50 shrink-0 flex-col border-r border-border/60 px-4 pb-4", "pt-0"
+            "flex w-50 shrink-0 flex-col border-r border-border/60 px-4 pb-4 pt-1"
           )}
         >
           <nav className="flex flex-1 flex-col gap-1">
@@ -74,8 +74,7 @@ export function AppLayout() {
         <div className="flex min-w-0 flex-1 flex-col">
           <main
             className={cn(
-              "no-scrollbar flex-1 overflow-y-auto px-4 pb-4",
-               "pt-0"
+              "no-scrollbar flex-1 overflow-y-auto px-4 pb-4 pt-1"
             )}
           >
             <div key={location.pathname} className="page-transition">

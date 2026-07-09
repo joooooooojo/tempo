@@ -183,6 +183,21 @@ body {
     0 0 36px var(--glow);
 }
 
+/* Top-row stats: cast shadow downward so it isn't clipped by the scroll container */
+.todo-stats-row > .glass {
+  box-shadow:
+    0 0 0 1px var(--glass-highlight) inset,
+    0 8px 20px -8px rgba(0, 0, 0, 0.08),
+    0 2px 6px -2px rgba(0, 0, 0, 0.04);
+}
+
+.dark .todo-stats-row > .glass {
+  box-shadow:
+    0 0 0 1px var(--glass-highlight) inset,
+    0 10px 26px -10px rgba(0, 0, 0, 0.5),
+    0 0 28px -4px var(--glow);
+}
+
 .todo-create-dialog {
   --todo-field-bg: rgba(255, 255, 255, 0.74);
   background: rgba(255, 255, 255, 0.9);

@@ -26,6 +26,7 @@ import { clipboardHasImages, insertTextAtSelection, markdownImagesFromClipboard 
 import { cn } from "@/lib/utils";
 import type { TodoRecurrence } from "@/types";
 import { TodoSubtaskDraftList } from "@/components/todos/TodoSubtasks";
+import { TodoTagDraftList } from "@/components/todos/TodoTags";
 
 export interface DraftTodoImage extends TodoImageInput {
   local_id: string;
@@ -42,6 +43,8 @@ type TodoCreateDialogProps = {
   remind1h?: boolean;
   remindCustomHours?: number | null;
   subtasks?: string[];
+  tags?: string[];
+  tagSuggestions?: string[];
   saving?: boolean;
   titlePlaceholder?: string;
   contentPlaceholder?: string;
@@ -56,6 +59,7 @@ type TodoCreateDialogProps = {
   onRemind1hChange?: (value: boolean) => void;
   onRemindCustomHoursChange?: (value: number | null) => void;
   onSubtasksChange?: (value: string[]) => void;
+  onTagsChange?: (value: string[]) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 };
 
@@ -83,6 +87,8 @@ export function TodoCreateDialog({
   remind1h = false,
   remindCustomHours = null,
   subtasks = [],
+  tags = [],
+  tagSuggestions = [],
   saving = false,
   titlePlaceholder = "标题",
   contentPlaceholder = "内容（支持 Markdown，粘贴图片会嵌入正文）",
@@ -97,6 +103,7 @@ export function TodoCreateDialog({
   onRemind1hChange,
   onRemindCustomHoursChange,
   onSubtasksChange,
+  onTagsChange,
   onSubmit,
 }: TodoCreateDialogProps) {
   const [popoverContainer, setPopoverContainer] = useState<HTMLDivElement | null>(null);
@@ -126,6 +133,8 @@ export function TodoCreateDialog({
           remind1h={remind1h}
           remindCustomHours={remindCustomHours}
           subtasks={subtasks}
+          tags={tags}
+          tagSuggestions={tagSuggestions}
           saving={saving}
           titlePlaceholder={titlePlaceholder}
           contentPlaceholder={contentPlaceholder}
@@ -148,6 +157,7 @@ export function TodoCreateDialog({
           onRemind1hChange={onRemind1hChange}
           onRemindCustomHoursChange={onRemindCustomHoursChange}
           onSubtasksChange={onSubtasksChange}
+          onTagsChange={onTagsChange}
           onSubmit={onSubmit}
         />
       </DialogContent>
@@ -165,6 +175,8 @@ export function TodoCreateFormPanel({
   remind1h = false,
   remindCustomHours = null,
   subtasks = [],
+  tags = [],
+  tagSuggestions = [],
   saving = false,
   titlePlaceholder = "标题",
   contentPlaceholder = "内容（支持 Markdown，粘贴图片会嵌入正文）",
@@ -183,6 +195,7 @@ export function TodoCreateFormPanel({
   onRemind1hChange,
   onRemindCustomHoursChange,
   onSubtasksChange,
+  onTagsChange,
   onSubmit,
 }: TodoCreateFormPanelProps) {
   const isWindowLayout = layout === "window";
@@ -265,6 +278,13 @@ export function TodoCreateFormPanel({
 
           {onSubtasksChange && (
             <TodoSubtaskDraftList items={subtasks} onChange={onSubtasksChange} />
+          )}
+          {onTagsChange && (
+            <TodoTagDraftList
+              items={tags}
+              suggestions={tagSuggestions}
+              onChange={onTagsChange}
+            />
           )}
           {bodyExtra}
         </div>

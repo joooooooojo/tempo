@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type PointerEvent, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -24,8 +24,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { MarkdownPreview } from "@/components/todos/MarkdownPreview";
 import { TodoCreateDialog, type DraftTodoImage } from "@/components/todos/TodoCreateDialog";
 import { TodoSubtaskList } from "@/components/todos/TodoSubtasks";
+import { TodoTagList } from "@/components/todos/TodoTags";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -70,21 +72,17 @@ export function TodoPage() {
   const [remind1h, setRemind1h] = useState(false);
   const [remindCustomHours, setRemindCustomHours] = useState<number | null>(null);
   const [subtasks, setSubtasks] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [noteDrafts, setNoteDrafts] = useState<Record<number, NoteDraft>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
-  const [previewZoom, setPreviewZoom] = useState(1);
   const closingPreviewRef = useRef(false);
-
-  useEffect(() => {
-    setPreviewZoom(1);
-  }, [previewImage?.data_url]);
 
   const closePreviewImage = () => {
     closingPreviewRef.current = true;
     setPreviewImage(null);
-    setPreviewZoom(1);
     window.setTimeout(() => {
       closingPreviewRef.current = false;
     }, 100);
@@ -108,6 +106,7 @@ export function TodoPage() {
   const [editRemind1d, setEditRemind1d] = useState(false);
   const [editRemind1h, setEditRemind1h] = useState(false);
   const [editRemindCustomHours, setEditRemindCustomHours] = useState<number | null>(null);
+  const [editTags, setEditTags] = useState<string[]>([]);
   const [focusSummaries, setFocusSummaries] = useState<Record<number, TodoFocusSummary>>({});
   const [detailFocusSummary, setDetailFocusSummary] = useState<TodoFocusSummary | null>(null);
 
@@ -152,10 +151,29 @@ export function TodoPage() {
     const filtered = filter === "active"
       ? todos.filter((todo) => !todo.completed)
       : todos.filter((todo) => todo.completed);
+    const tagFiltered = tagFilter
+      ? filtered.filter((todo) =>
+          todo.tags.some((tag) => tag.toLocaleLowerCase() === tagFilter.toLocaleLowerCase())
+        )
+      : filtered;
     const query = normalizeSearch(searchQuery);
-    if (!query) return filtered;
-    return filtered.filter((todo) => matchesTodoSearch(todo, query));
-  }, [filter, searchQuery, todos]);
+    if (!query) return tagFiltered;
+    return tagFiltered.filter((todo) => matchesTodoSearch(todo, query));
+  }, [filter, searchQuery, tagFilter, todos]);
+
+  const tagSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const next: string[] = [];
+    for (const todo of todos) {
+      for (const tag of todo.tags) {
+        const key = tag.toLocaleLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(tag);
+      }
+    }
+    return next.sort((a, b) => a.localeCompare(b, "zh-CN"));
+  }, [todos]);
   const editingTodo = useMemo(
     () => (editingId === null ? null : todos.find((todo) => todo.id === editingId) ?? null),
     [editingId, todos]
@@ -239,6 +257,7 @@ export function TodoPage() {
     setRemind1h(false);
     setRemindCustomHours(null);
     setSubtasks([]);
+    setTags([]);
   };
 
   const handleRecurrenceChange = (value: TodoRecurrence) => {
@@ -454,7 +473,8 @@ export function TodoPage() {
         remind1d,
         remind1h,
         remindCustomHours,
-        subtasks
+        subtasks,
+        tags
       );
       setTodos((current) => sortTodos([created, ...current]));
       resetDraft();
@@ -530,6 +550,7 @@ export function TodoPage() {
     setEditRemind1d(todo.remind_1d);
     setEditRemind1h(todo.remind_1h);
     setEditRemindCustomHours(todo.remind_custom_hours ?? null);
+    setEditTags(todo.tags);
   };
 
   const cancelEdit = () => {
@@ -541,6 +562,7 @@ export function TodoPage() {
     setEditRemind1d(false);
     setEditRemind1h(false);
     setEditRemindCustomHours(null);
+    setEditTags([]);
   };
 
   const handleEditOpenChange = (nextOpen: boolean) => {
@@ -568,7 +590,8 @@ export function TodoPage() {
         editRecurrence,
         editRemind1d,
         editRemind1h,
-        editRemindCustomHours
+        editRemindCustomHours,
+        editTags
       );
       setTodos((current) => replaceTodo(current, updated));
       cancelEdit();
@@ -644,18 +667,18 @@ export function TodoPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="todo-stats-row grid grid-cols-4 gap-3">
         <TodoStat label="未完成" value={activeCount} />
         <TodoStat label="即将截止" value={dueSoonCount} tone={dueSoonCount > 0 ? "warning" : "default"} />
         <TodoStat label="已完成" value={completedCount} />
-        <Card className="overflow-hidden">
+        <Card>
           <CardContent className="p-3.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               完成率
             </p>
             <div className="mt-2 flex items-center gap-3">
               <p className="stat-value w-12 text-xl font-bold text-primary">{completionRate}%</p>
-              <div className="progress-track h-1.5 min-w-0 flex-1 rounded-sm bg-foreground/8">
+              <div className="progress-track h-1.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-foreground/8">
                 <div
                   className="progress-fill h-full rounded-sm bg-gradient-to-r from-emerald-300 to-teal-400 transition-all duration-500"
                   style={{ width: `${completionRate}%` }}
@@ -676,6 +699,8 @@ export function TodoPage() {
         remind1h={remind1h}
         remindCustomHours={remindCustomHours}
         subtasks={subtasks}
+        tags={tags}
+        tagSuggestions={tagSuggestions}
         saving={saving}
         onOpenChange={handleCreateOpenChange}
         onTitleChange={setTitle}
@@ -686,6 +711,7 @@ export function TodoPage() {
         onRemind1hChange={setRemind1h}
         onRemindCustomHoursChange={setRemindCustomHours}
         onSubtasksChange={setSubtasks}
+        onTagsChange={setTags}
         onSubmit={handleAdd}
       />
 
@@ -699,6 +725,8 @@ export function TodoPage() {
         remind1d={editRemind1d}
         remind1h={editRemind1h}
         remindCustomHours={editRemindCustomHours}
+        tags={editTags}
+        tagSuggestions={tagSuggestions}
         saving={saving}
         submitLabel="保存"
         bodyExtra={
@@ -729,6 +757,7 @@ export function TodoPage() {
         onRemind1dChange={setEditRemind1d}
         onRemind1hChange={setEditRemind1h}
         onRemindCustomHoursChange={setEditRemindCustomHours}
+        onTagsChange={setEditTags}
         onSubmit={(event) => {
           event.preventDefault();
           if (editingTodo) void commitEdit(editingTodo);
@@ -744,32 +773,49 @@ export function TodoPage() {
           }
         }}
       >
-        <DialogContent className="todo-create-dialog max-w-[680px] gap-0 overflow-hidden rounded-xl border-border/80 p-0">
+        <DialogContent
+          showCloseButton={false}
+          className="todo-create-dialog max-w-[680px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
+        >
           {detailTodo && (
             <>
-              <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
-                <div className="flex items-start gap-3">
-                  <div className="min-w-0 max-w-[calc(100%-7.5rem)] flex-1">
-                    <DialogTitle className="truncate text-[18px] font-bold" title={detailTodo.title}>
-                      <HighlightText value={detailTodo.title} query={searchQuery} />
-                    </DialogTitle>
-                  </div>
-                  {!detailTodo.completed && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="ml-auto shrink-0 gap-1.5 border-emerald-500/20 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
-                      onClick={() => {
-                        setDetailId(null);
-                        void startFocusForTodo(detailTodo);
-                      }}
-                    >
-                      <Timer className="h-3.5 w-3.5" />
-                      开始专注
-                    </Button>
-                  )}
-                </div>
-              </DialogHeader>
+              <div className="flex items-center gap-2 border-b border-border/60 px-5 py-3">
+                <DialogTitle
+                  className="m-0 flex h-8 min-w-0 flex-1 items-center overflow-hidden p-0 text-left text-[18px] font-bold leading-none"
+                  title={detailTodo.title}
+                >
+                  <span className="block w-full truncate leading-none">
+                    <HighlightText value={detailTodo.title} query={searchQuery} />
+                  </span>
+                </DialogTitle>
+                {!detailTodo.completed && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 shrink-0 gap-1 border-emerald-500/30 bg-emerald-500/8 px-2.5 text-[12px] text-emerald-700 shadow-none transition-[background,border-color,box-shadow,color] hover:border-emerald-500/60 hover:bg-emerald-500/28 hover:text-emerald-900 hover:shadow-[0_0_0_3px_rgba(16,185,129,0.18)] dark:border-emerald-400/30 dark:bg-emerald-500/12 dark:text-emerald-300 dark:hover:border-emerald-300/55 dark:hover:bg-emerald-500/35 dark:hover:text-emerald-100 dark:hover:shadow-[0_0_0_3px_rgba(52,211,153,0.2)]"
+                    onClick={() => {
+                      setDetailId(null);
+                      void startFocusForTodo(detailTodo);
+                    }}
+                  >
+                    <Timer className="h-3.5 w-3.5" />
+                    专注
+                  </Button>
+                )}
+                <DialogClose asChild>
+                  <button
+                    type="button"
+                    className="group relative inline-flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground opacity-55 transition-opacity hover:opacity-100 focus:outline-none"
+                    aria-label="关闭"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="absolute left-1/2 top-1/2 h-[26px] w-[26px] -translate-x-1/2 -translate-y-1/2 rounded-md bg-transparent transition-[background,transform] duration-150 group-hover:scale-90 group-hover:bg-foreground/10 dark:group-hover:bg-white/12"
+                    />
+                    <X className="relative h-3.5 w-3.5" />
+                  </button>
+                </DialogClose>
+              </div>
               <div className="max-h-[68vh] overflow-y-auto px-5 py-4">
                 <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                   <span>
@@ -793,6 +839,21 @@ export function TodoPage() {
                     </span>
                   )}
                 </div>
+
+                {detailTodo.tags.length > 0 && (
+                  <div className="mb-4">
+                    <TodoTagList
+                      tags={detailTodo.tags}
+                      interactive
+                      activeTag={tagFilter}
+                      onTagClick={(tag) =>
+                        setTagFilter((current) =>
+                          current?.toLocaleLowerCase() === tag.toLocaleLowerCase() ? null : tag
+                        )
+                      }
+                    />
+                  </div>
+                )}
 
                 {detailFocusSummary && detailFocusSummary.sessions_all > 0 && (
                   <TodoFocusStats summary={detailFocusSummary} />
@@ -831,46 +892,55 @@ export function TodoPage() {
             <DialogTitle className="truncate text-[15px]">图片预览</DialogTitle>
           </DialogHeader>
           {previewImage && (
-            <div
-              className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-lg bg-foreground/[0.04]"
-              onWheel={(event: WheelEvent<HTMLDivElement>) => {
-                event.preventDefault();
-                const direction = event.deltaY < 0 ? 1 : -1;
-                setPreviewZoom((zoom) =>
-                  Math.min(5, Math.max(0.5, Number((zoom + direction * 0.15).toFixed(2))))
-                );
-              }}
-            >
-              <img
-                src={previewImage.data_url}
-                alt={previewImage.label}
-                className="max-h-full max-w-full origin-center object-contain transition-transform duration-75"
-                style={{ transform: `scale(${previewZoom})` }}
-                draggable={false}
-              />
-            </div>
+            <ImagePreviewViewport src={previewImage.data_url} alt={previewImage.label} />
           )}
         </DialogContent>
       </Dialog>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex h-9 items-center gap-1 rounded-lg glass-subtle p-1">
-          {filters.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              className={cn(
-                "inline-flex h-7 min-w-20 items-center justify-center rounded-md px-3 text-[13px] font-medium text-muted-foreground transition-[background,box-shadow,color]",
-                filter === item.value
-                  ? "bg-white/70 text-foreground shadow-sm ring-1 ring-white/70 dark:bg-white/10 dark:ring-white/10"
-                  : "hover:text-foreground"
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <div className="inline-flex h-9 items-center gap-1 rounded-lg glass-subtle p-1">
+            {filters.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                className={cn(
+                  "inline-flex h-7 min-w-20 items-center justify-center rounded-md px-3 text-[13px] font-medium text-muted-foreground transition-[background,box-shadow,color]",
+                  filter === item.value
+                    ? "bg-white/70 text-foreground shadow-sm ring-1 ring-white/70 dark:bg-white/10 dark:ring-white/10"
+                    : "hover:text-foreground"
+                )}
+                onClick={() => setFilter(item.value)}
+              >
+                {item.label}
+                <span className="ml-1.5 text-[11px] opacity-70">{filterCount(item.value, todos)}</span>
+              </button>
+            ))}
+          </div>
+          {tagSuggestions.length > 0 && (
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+              <TodoTagList
+                tags={tagSuggestions}
+                compact
+                interactive
+                activeTag={tagFilter}
+                onTagClick={(tag) =>
+                  setTagFilter((current) =>
+                    current?.toLocaleLowerCase() === tag.toLocaleLowerCase() ? null : tag
+                  )
+                }
+              />
+              {tagFilter && (
+                <button
+                  type="button"
+                  className="rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-foreground/6 hover:text-foreground"
+                  onClick={() => setTagFilter(null)}
+                >
+                  清除筛选
+                </button>
               )}
-              onClick={() => setFilter(item.value)}
-            >
-              {item.label}
-              <span className="ml-1.5 text-[11px] opacity-70">{filterCount(item.value, todos)}</span>
-            </button>
-          ))}
+            </div>
+          )}
         </div>
 
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
@@ -878,7 +948,7 @@ export function TodoPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               value={searchQuery}
-              placeholder="搜索待办、正文、备注"
+              placeholder="搜索待办、标签、正文、备注"
               className="h-9 w-full rounded-lg border border-border/70 bg-white/55 pl-8 pr-8 text-[13px] text-foreground shadow-sm shadow-emerald-950/[0.03] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20 dark:bg-white/[0.045]"
               onChange={(event) => setSearchQuery(event.target.value)}
             />
@@ -1027,6 +1097,19 @@ export function TodoPage() {
                               <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">
                                 子任务 {checklist}
                               </span>
+                            )}
+                            {todo.tags.length > 0 && (
+                              <TodoTagList
+                                tags={todo.tags}
+                                compact
+                                interactive
+                                activeTag={tagFilter}
+                                onTagClick={(tag) =>
+                                  setTagFilter((current) =>
+                                    current?.toLocaleLowerCase() === tag.toLocaleLowerCase() ? null : tag
+                                  )
+                                }
+                              />
                             )}
                             {focusSummaries[todo.id]?.sessions_today ? (
                               <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-600 dark:text-emerald-300">
@@ -1196,6 +1279,125 @@ function TodoEmptyState({ text }: { text: string }) {
         <ClipboardList className="h-5 w-5 text-muted-foreground" />
       </div>
       <p className="mt-3 text-sm font-medium">{text}</p>
+    </div>
+  );
+}
+
+function ImagePreviewViewport({ src, alt }: { src: string; alt: string }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setDragging(false);
+    dragRef.current = null;
+  }, [src]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+
+      const rect = viewport.getBoundingClientRect();
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      const direction = event.deltaY < 0 ? 1 : -1;
+      const currentZoom = zoomRef.current;
+      const currentPan = panRef.current;
+      const nextZoom = Math.min(
+        5,
+        Math.max(0.5, Number((currentZoom + direction * 0.15).toFixed(2))),
+      );
+      if (nextZoom === currentZoom) return;
+
+      const ratio = nextZoom / currentZoom;
+      const nextPan = {
+        x: currentPan.x * ratio + (mouseX - centerX) * (1 - ratio),
+        y: currentPan.y * ratio + (mouseY - centerY) * (1 - ratio),
+      };
+
+      zoomRef.current = nextZoom;
+      panRef.current = nextPan;
+      setZoom(nextZoom);
+      setPan(nextPan);
+    };
+
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", onWheel);
+  }, [src]);
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+    dragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: panRef.current.x,
+      originY: panRef.current.y,
+    };
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+
+    const nextPan = {
+      x: drag.originX + event.clientX - drag.startX,
+      y: drag.originY + event.clientY - drag.startY,
+    };
+    panRef.current = nextPan;
+    setPan(nextPan);
+  };
+
+  const endDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  return (
+    <div
+      ref={viewportRef}
+      className={cn(
+        "flex min-h-0 flex-1 select-none overflow-hidden rounded-lg bg-foreground/[0.04] touch-none",
+        dragging ? "cursor-grabbing" : "cursor-grab",
+      )}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+    >
+      <div className="flex h-full w-full items-center justify-center">
+        <img
+          src={src}
+          alt={alt}
+          draggable={false}
+          className="max-h-full max-w-full origin-center object-contain will-change-transform"
+          style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+        />
+      </div>
     </div>
   );
 }
@@ -1590,6 +1792,7 @@ function normalizeTodo(todo: TodoItem): TodoItem {
     remind_1h: todo.remind_1h ?? false,
     remind_custom_hours: todo.remind_custom_hours ?? null,
     subtasks: todo.subtasks ?? [],
+    tags: todo.tags ?? [],
   };
 }
 
@@ -1599,6 +1802,7 @@ function matchesTodoSearch(todo: TodoItem, query: string) {
     todo.content,
     ...todo.notes.map((note) => note.body),
     ...todo.subtasks.map((subtask) => subtask.title),
+    ...todo.tags,
   ].some((value) => normalizeSearch(value).includes(query));
 }
 
