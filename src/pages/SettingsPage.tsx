@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { emit } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, RefreshCw } from "lucide-react";
+import type { Update } from "@tauri-apps/plugin-updater";
+import { FolderOpen, RefreshCw, RotateCcw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -12,7 +13,12 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
-import { checkForAppUpdate, getAppVersion, type UpdateProgress } from "@/lib/update";
+import {
+  checkAndDownloadUpdate,
+  getAppVersion,
+  installAndRelaunch,
+  type UpdateProgress,
+} from "@/lib/update";
 import { formatDurationShort } from "@/lib/utils";
 import type { AppLimit, AppUsage, Settings } from "@/types";
 
@@ -26,7 +32,10 @@ export function SettingsPage() {
   const [migratingStorage, setMigratingStorage] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  const [pendingVersion, setPendingVersion] = useState("");
 
   const load = async () => {
     const [s, b, l, a] = await Promise.all([
@@ -81,27 +90,51 @@ export function SettingsPage() {
   };
 
   const handleCheckUpdate = async () => {
-    if (checkingUpdate) return;
+    if (checkingUpdate || applyingUpdate || pendingUpdate) return;
 
     setCheckingUpdate(true);
     setUpdateProgress({ phase: "checking", downloaded: 0, total: 0 });
 
     try {
-      const result = await checkForAppUpdate(setUpdateProgress);
-      if (result === "latest") {
+      const result = await checkAndDownloadUpdate(setUpdateProgress);
+      if (result.status === "latest") {
         toast.success("已是最新版本");
+        setUpdateProgress(null);
+        return;
       }
+
+      setPendingUpdate(result.update);
+      setPendingVersion(result.version);
+      setUpdateProgress({
+        phase: "ready",
+        downloaded: 0,
+        total: 0,
+        version: result.version,
+      });
+      toast.success(`v${result.version} 已下载，点击「重启更新」完成安装`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
+      setUpdateProgress(null);
     } finally {
       setCheckingUpdate(false);
-      setUpdateProgress(null);
+    }
+  };
+
+  const handleRestartUpdate = async () => {
+    if (!pendingUpdate || applyingUpdate) return;
+
+    setApplyingUpdate(true);
+    try {
+      await installAndRelaunch(pendingUpdate, setUpdateProgress);
+    } catch (error) {
+      setApplyingUpdate(false);
+      toast.error(error instanceof Error ? error.message : String(error));
     }
   };
 
   const updatePercent = updateProgress?.total
     ? Math.min(100, Math.round((updateProgress.downloaded / updateProgress.total) * 100))
-    : updateProgress?.phase === "installing"
+    : updateProgress?.phase === "installing" || updateProgress?.phase === "ready"
       ? 100
       : 0;
 
@@ -258,27 +291,42 @@ export function SettingsPage() {
                 <p className="text-[14px] font-medium">Tempo</p>
                 <p className="mt-1 text-[12px] text-muted-foreground">
                   当前版本 {appVersion || "..."}
+                  {pendingVersion ? ` · 已下载 v${pendingVersion}` : ""}
                 </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                disabled={checkingUpdate}
-                onClick={handleCheckUpdate}
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdate ? "animate-spin" : ""}`} />
-                {checkingUpdate ? "检查中" : "检查更新"}
-              </Button>
+              {pendingUpdate ? (
+                <Button
+                  size="sm"
+                  className="shrink-0"
+                  disabled={applyingUpdate}
+                  onClick={() => void handleRestartUpdate()}
+                >
+                  <RotateCcw className={`h-3.5 w-3.5 ${applyingUpdate ? "animate-spin" : ""}`} />
+                  {applyingUpdate ? "安装中" : "重启更新"}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={checkingUpdate}
+                  onClick={handleCheckUpdate}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdate ? "animate-spin" : ""}`} />
+                  {checkingUpdate ? "下载中" : "检查更新"}
+                </Button>
+              )}
             </div>
             {updateProgress && updateProgress.phase === "downloading" && (
               <div className="space-y-2">
-                <p className="text-[12px] text-muted-foreground">正在下载更新...</p>
+                <p className="text-[12px] text-muted-foreground">
+                  正在下载 {updateProgress.version ? `v${updateProgress.version}` : "更新"}...
+                </p>
                 <Progress value={updatePercent} className="h-1.5" />
               </div>
             )}
             {updateProgress?.phase === "installing" && (
-              <p className="text-[12px] text-muted-foreground">正在安装，应用即将重启...</p>
+              <p className="text-[12px] text-muted-foreground">正在静默安装并重启...</p>
             )}
           </CardContent>
         </Card>
