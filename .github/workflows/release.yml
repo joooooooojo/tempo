@@ -55,4 +55,70 @@ jobs:
             在应用内打开「设置 → 关于」检查更新，或下载对应平台的安装包手动安装。
           releaseDraft: false
           prerelease: false
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+  # tauri-action@v1 writes GitHub API asset URLs into latest.json.
+  # Those require auth headers and return 403 for normal updater downloads.
+  # Rewrite them to public browser_download_url links after all builds finish.
+  fix-updater-json:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rewrite latest.json download URLs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v ]]; then
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > release.json
+          node <<'NODE'
+          const fs = require('fs');
+          const release = JSON.parse(fs.readFileSync('release.json', 'utf8'));
+          const assetById = Object.fromEntries(
+            release.assets.map((asset) => [String(asset.id), asset.browser_download_url])
+          );
+          const latestAsset = release.assets.find((asset) => asset.name === 'latest.json');
+          if (!latestAsset) {
+            throw new Error('latest.json not found on release');
+          }
+
+          const latest = JSON.parse(
+            require('child_process').execSync(
+              `gh api -H "Accept: application/octet-stream" repos/${process.env.GITHUB_REPOSITORY}/releases/assets/${latestAsset.id}`,
+              { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }
+            )
+          );
+
+          for (const platform of Object.values(latest.platforms || {})) {
+            const match = String(platform.url || '').match(/\/assets\/(\d+)$/);
+            if (!match) continue;
+            const mapped = assetById[match[1]];
+            if (mapped) platform.url = mapped;
+          }
+
+          // Prefer NSIS for the primary Windows updater entry when available.
+          if (latest.platforms['windows-x86_64-nsis']) {
+            latest.platforms['windows-x86_64'] = latest.platforms['windows-x86_64-nsis'];
+          }
+
+          fs.writeFileSync('latest.json', `${JSON.stringify(latest, null, 2)}\n`);
+          console.log(JSON.stringify(latest.platforms, null, 2));
+          NODE
+
+          ASSET_ID=$(node -p "JSON.parse(require('fs').readFileSync('release.json','utf8')).assets.find(a => a.name === 'latest.json').id")
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}"
+          RELEASE_ID=$(node -p "JSON.parse(require('fs').readFileSync('release.json','utf8')).id")
+          gh api \
+            --method POST \
+            -H "Content-Type: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=latest.json" \
+            --input latest.json
