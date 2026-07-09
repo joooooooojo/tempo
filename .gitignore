@@ -13,6 +13,9 @@ src-tauri/gen/schemas
 .env
 .env.*
 !.env.example
+.tauri/
+*.key
+*.key.pub
 
 # Logs
 logs/

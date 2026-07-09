@@ -270,10 +270,7 @@ pub fn legacy_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn default_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let data_dir = app
-        .path()
-        .data_dir()
-        .map_err(|e| e.to_string())?;
+    let data_dir = app.path().data_dir().map_err(|e| e.to_string())?;
     Ok(data_dir.join(APP_STORAGE_FOLDER_NAME))
 }
 
