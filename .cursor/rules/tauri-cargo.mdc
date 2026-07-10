@@ -1,0 +1,21 @@
+---
+description: Tauri Cargo.toml constraints — do not remove macos-private-api
+globs: src-tauri/Cargo.toml
+alwaysApply: false
+---
+
+# Tauri Cargo.toml
+
+Never remove `macos-private-api` from the `tauri` features in `src-tauri/Cargo.toml`.
+
+This project uses transparent overlay windows (quick todo, eye-care reminder) via `auxiliary_windows.rs`. The feature is required on macOS even though it is harmless on other platforms.
+
+```toml
+# ✅ KEEP — required for macOS transparent overlays
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "macos-private-api"] }
+
+# ❌ NEVER do this during refactors or cross-platform fixes
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+```
+
+Do not "simplify" or "normalize" this line when editing unrelated code.
