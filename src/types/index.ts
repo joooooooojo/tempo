@@ -34,14 +34,6 @@ export interface WeeklyReport {
   top_apps: AppUsage[];
 }
 
-export interface AppLimit {
-  app_name: string;
-  limit_seconds: number;
-  used_seconds: number;
-  warn_sent: boolean;
-  limit_sent: boolean;
-}
-
 export interface TodoSubtask {
   id: number;
   todo_id: number;
@@ -72,6 +64,8 @@ export interface TodoItem {
   notes: TodoNote[];
   subtasks: TodoSubtask[];
   tags: string[];
+  image_count?: number;
+  lightweight?: boolean;
 }
 
 export interface TodoImage {
@@ -138,7 +132,5 @@ export interface TodoFocusSummary {
 export type ReminderEvent =
   | { type: "eye_care" }
   | { type: "night" }
-  | { type: "app_limit_warn"; app_name: string; percent: number }
-  | { type: "app_limit_reached"; app_name: string }
   | { type: "pomodoro_phase_end"; phase: "work" | "short_break" | "long_break"; skipped: boolean }
   | { type: "todo_due"; todo_id: number; title: string; lead: "1d" | "1h" | "due" | "custom"; hours?: number };

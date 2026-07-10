@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  AppLimit,
   AppUsage,
   DailyReport,
   PomodoroState,
@@ -29,15 +28,8 @@ export const api = {
     invoke<Settings>("set_storage_dir", { storageDir }),
   resetToday: () => invoke<void>("reset_today"),
   resetAll: () => invoke<void>("reset_all"),
-  getBlockedApps: () => invoke<string[]>("get_blocked_apps"),
-  blockApp: (appName: string) => invoke<void>("block_app", { appName }),
-  unblockApp: (appName: string) => invoke<void>("unblock_app", { appName }),
-  getAppLimits: () => invoke<AppLimit[]>("get_app_limits"),
-  setAppLimit: (appName: string, limitSeconds: number) =>
-    invoke<void>("set_app_limit", { appName, limitSeconds }),
-  removeAppLimit: (appName: string) =>
-    invoke<void>("remove_app_limit", { appName }),
   getTodos: () => invoke<TodoItem[]>("get_todos"),
+  getTodo: (id: number) => invoke<TodoItem>("get_todo", { id }),
   addTodo: (
     title: string,
     content: string,

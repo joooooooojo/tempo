@@ -229,7 +229,7 @@ export function TodoCreateFormPanel({
           </button>
         )}
       </DialogHeader>
-      <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onSubmit={onSubmit}>
+      <form className="flex min-h-0 flex-1 flex-col overflow-hidden" autoComplete="off" onSubmit={onSubmit}>
         <div
           className={cn(
             "no-scrollbar min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-5",
@@ -354,8 +354,19 @@ function FloatingInput({
   onChange: ChangeEventHandler<HTMLInputElement>;
 }) {
   const [focused, setFocused] = useState(false);
+  const [autofillBlocked, setAutofillBlocked] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const floated = focused || value.length > 0;
+
+  const releaseAutofillBlock = () => {
+    if (!autofillBlocked) return;
+    setAutofillBlocked(false);
+  };
+
+  useEffect(() => {
+    if (value) return;
+    setAutofillBlocked(true);
+  }, [value]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -377,8 +388,11 @@ function FloatingInput({
       <input
         ref={inputRef}
         id={id}
+        name={`tempo-${id}`}
+        autoComplete="off"
         autoFocus={autoFocus}
         required={required}
+        readOnly={autofillBlocked}
         value={value}
         maxLength={maxLength}
         placeholder=""
@@ -388,7 +402,12 @@ function FloatingInput({
           className
         )}
         onChange={onChange}
-        onFocus={() => setFocused(true)}
+        onMouseDown={releaseAutofillBlock}
+        onKeyDown={releaseAutofillBlock}
+        onFocus={() => {
+          releaseAutofillBlock();
+          setFocused(true);
+        }}
         onBlur={() => setFocused(false)}
       />
       <FloatingFieldLabel
@@ -421,8 +440,14 @@ function FloatingTextarea({
   onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
 }) {
   const [focused, setFocused] = useState(false);
+  const [autofillBlocked, setAutofillBlocked] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const floated = focused || value.length > 0;
+
+  const releaseAutofillBlock = () => {
+    if (!autofillBlocked) return;
+    setAutofillBlocked(false);
+  };
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -444,7 +469,10 @@ function FloatingTextarea({
       <textarea
         ref={textareaRef}
         id={id}
+        name={`tempo-${id}`}
+        autoComplete="off"
         autoFocus={autoFocus}
+        readOnly={autofillBlocked}
         value={value}
         maxLength={maxLength}
         placeholder=""
@@ -455,7 +483,12 @@ function FloatingTextarea({
         )}
         onChange={onChange}
         onPaste={onPaste}
-        onFocus={() => setFocused(true)}
+        onMouseDown={releaseAutofillBlock}
+        onKeyDown={releaseAutofillBlock}
+        onFocus={() => {
+          releaseAutofillBlock();
+          setFocused(true);
+        }}
         onBlur={() => setFocused(false)}
       />
       <FloatingFieldLabel

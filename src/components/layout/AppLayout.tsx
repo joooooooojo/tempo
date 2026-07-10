@@ -16,6 +16,7 @@ const navItems = [
 
 export function AppLayout() {
   const location = useLocation();
+  const isTodoPage = location.pathname === "/";
 
   return (
     <div className="app-shell relative flex h-screen flex-col overflow-hidden">
@@ -74,10 +75,14 @@ export function AppLayout() {
         <div className="flex min-w-0 flex-1 flex-col">
           <main
             className={cn(
-              "no-scrollbar flex-1 overflow-y-auto px-4 pb-4 pt-1"
+              "no-scrollbar flex-1 px-4 pb-4 pt-1",
+              isTodoPage ? "flex min-h-0 flex-col overflow-hidden" : "overflow-y-auto"
             )}
           >
-            <div key={location.pathname} className="page-transition">
+            <div
+              key={location.pathname}
+              className={cn("page-transition", isTodoPage && "flex min-h-0 flex-1 flex-col")}
+            >
               <Outlet />
             </div>
           </main>

@@ -51,15 +51,6 @@ pub struct WeeklyReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppLimit {
-    pub app_name: String,
-    pub limit_seconds: i64,
-    pub used_seconds: i64,
-    pub warn_sent: bool,
-    pub limit_sent: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoSubtask {
     pub id: i64,
     pub todo_id: i64,
@@ -99,6 +90,10 @@ pub struct TodoItem {
     pub subtasks: Vec<TodoSubtask>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub image_count: u32,
+    #[serde(default)]
+    pub lightweight: bool,
 }
 
 fn default_recurrence() -> String {
@@ -416,15 +411,6 @@ pub fn init_db(path: &PathBuf) -> Connection {
             seconds INTEGER NOT NULL DEFAULT 0,
             icon_data_url TEXT,
             PRIMARY KEY (date, app_name)
-        );
-        CREATE TABLE IF NOT EXISTS blocked_apps (
-            app_name TEXT PRIMARY KEY
-        );
-        CREATE TABLE IF NOT EXISTS app_limits (
-            app_name TEXT PRIMARY KEY,
-            limit_seconds INTEGER NOT NULL,
-            warn_sent INTEGER NOT NULL DEFAULT 0,
-            limit_sent INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -903,15 +889,6 @@ pub fn add_app_time(
         params![date, name, process, category, seconds, icon_data_url],
     )
     .ok();
-}
-
-pub fn is_blocked(conn: &Connection, name: &str) -> bool {
-    conn.query_row(
-        "SELECT 1 FROM blocked_apps WHERE app_name = ?1",
-        [name],
-        |_| Ok(()),
-    )
-    .is_ok()
 }
 
 pub fn top_apps(conn: &Connection, date: &str, limit: i64) -> Vec<AppUsage> {

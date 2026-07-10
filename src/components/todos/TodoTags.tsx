@@ -211,6 +211,8 @@ export function TodoTagDraftList({
         ref={inputRef}
         value={draft}
         maxLength={32}
+        name="tempo-tag-draft"
+        autoComplete="off"
         placeholder="搜索或输入新标签，回车添加"
         className="h-9 w-full rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20"
         onChange={(event) => {

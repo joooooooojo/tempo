@@ -50,6 +50,8 @@ export function TodoSubtaskDraftList({
         <input
           value={draft}
           maxLength={120}
+          name="tempo-subtask-draft"
+          autoComplete="off"
           placeholder="添加子任务"
           className="h-9 min-w-0 flex-1 rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20"
           onChange={(event) => setDraft(event.target.value)}
@@ -160,6 +162,8 @@ export function TodoSubtaskList({
           <input
             value={draft}
             maxLength={120}
+            name="tempo-subtask-edit-draft"
+            autoComplete="off"
             placeholder="添加子任务"
             className="h-8 min-w-0 flex-1 rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[12px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20"
             onChange={(event) => setDraft(event.target.value)}
