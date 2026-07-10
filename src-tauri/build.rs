@@ -5,6 +5,7 @@ fn main() {
         "app-icon.png",
         "icons/icon.png",
         "icons/icon.icns",
+        "icons/icon.ico",
         "icons/32x32.png",
         "icons/128x128.png",
         "icons/128x128@2x.png",
