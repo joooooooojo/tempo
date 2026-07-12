@@ -664,6 +664,68 @@ fn macos_icon_candidates(resources: &Path, icon_name: &str) -> Vec<PathBuf> {
     candidates
 }
 
+pub fn simulate_paste() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"System Events\" to keystroke \"v\" using command down")
+            .status()
+            .map_err(|error| error.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("粘贴失败，请在系统设置中授予辅助功能权限".into())
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+            KEYEVENTF_KEYUP, VIRTUAL_KEY,
+        };
+
+        const VK_CONTROL: u16 = 0x11;
+        const VK_V: u16 = 0x56;
+
+        fn key_input(vk: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(vk),
+                        wScan: 0,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            }
+        }
+
+        unsafe {
+            let inputs = [
+                key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+                key_input(VK_V, KEYBD_EVENT_FLAGS(0)),
+                key_input(VK_V, KEYEVENTF_KEYUP),
+                key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+            ];
+            let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+            if sent == inputs.len() as u32 {
+                Ok(())
+            } else {
+                Err("粘贴失败".into())
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        Err("当前平台不支持自动粘贴".into())
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn read_macos_plist_value(plist: &Path, key: &str) -> Option<String> {
     let output = std::process::Command::new("/usr/libexec/PlistBuddy")

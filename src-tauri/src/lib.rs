@@ -12,6 +12,8 @@ mod clipboard_watcher;
 mod todo_images;
 #[cfg(target_os = "macos")]
 mod macos_dock;
+#[cfg(target_os = "macos")]
+mod macos_overlay_panel;
 mod tray_menu;
 
 #[cfg(target_os = "macos")]
@@ -28,10 +30,11 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 const QUICK_TODO_SHORTCUT: &str = "F2";
 const CLIPBOARD_PICKER_SHORTCUT: &str = "F4";
 const SNIPPET_PICKER_SHORTCUT: &str = "F5";
+const SHELF_ESCAPE_SHORTCUT: &str = "Escape";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol(commands::MARKDOWN_IMAGE_PROTOCOL, |ctx, request| {
@@ -49,7 +52,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_shell::init());
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+
+    builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -57,22 +67,35 @@ pub fn run() {
                         return;
                     }
                     let id = shortcut.to_string();
-                    let result = match id.as_str() {
-                        QUICK_TODO_SHORTCUT => auxiliary_windows::show_quick_todo(app),
-                        CLIPBOARD_PICKER_SHORTCUT => {
-                            auxiliary_windows::show_clipboard_picker_window(app)
+                    let app = app.clone();
+                    let app_for_main = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        let result = match id.as_str() {
+                            QUICK_TODO_SHORTCUT => auxiliary_windows::show_quick_todo(&app_for_main),
+                            CLIPBOARD_PICKER_SHORTCUT => {
+                                auxiliary_windows::show_clipboard_picker_window(&app_for_main)
+                            }
+                            SNIPPET_PICKER_SHORTCUT => {
+                                auxiliary_windows::show_snippet_picker_window(&app_for_main)
+                            }
+                            SHELF_ESCAPE_SHORTCUT => {
+                                if auxiliary_windows::is_shelf_picker_visible(&app_for_main) {
+                                    auxiliary_windows::hide_shelf_picker_window(&app_for_main)
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                            _ => Ok(()),
+                        };
+                        if let Err(error) = result {
+                            let _ = app_for_main.emit(
+                                "toast",
+                                serde_json::json!({
+                                    "message": format!("快捷键窗口打开失败: {error}")
+                                }),
+                            );
                         }
-                        SNIPPET_PICKER_SHORTCUT => auxiliary_windows::show_snippet_picker_window(app),
-                        _ => Ok(()),
-                    };
-                    if let Err(error) = result {
-                        let _ = app.emit(
-                            "toast",
-                            serde_json::json!({
-                                "message": format!("快捷键窗口打开失败: {error}")
-                            }),
-                        );
-                    }
+                    });
                 })
                 .build(),
         )
@@ -89,6 +112,13 @@ pub fn run() {
             clipboard_images::migrate_legacy_clipboard_images(app.handle(), &conn);
             todo_images::migrate_legacy_todo_images(app.handle(), &conn);
             app_icons::migrate_legacy_app_icons(app.handle(), &conn);
+            {
+                let settings = db::load_settings(&conn);
+                clipboard_db::purge_clipboard_history_by_retention(
+                    &conn,
+                    &settings.clipboard_history_retention,
+                );
+            }
             let state = AppState {
                 db: Arc::new(Mutex::new(conn)),
                 tracker: Arc::new(Mutex::new(TrackerState::default())),
@@ -128,6 +158,18 @@ pub fn run() {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         commands::hide_to_tray(&app_handle);
+                        return;
+                    }
+
+                    #[cfg(target_os = "macos")]
+                    {
+                        if crate::macos_dock::is_main_window_in_tray() {
+                            if let Some(main) = app_handle.get_webview_window("main") {
+                                if main.is_visible().unwrap_or(false) {
+                                    let _ = main.hide();
+                                }
+                            }
+                        }
                     }
                 });
             }
@@ -197,6 +239,7 @@ pub fn run() {
             commands::snippets::copy_snippet_to_clipboard,
             auxiliary_windows::show_clipboard_picker,
             auxiliary_windows::show_snippet_picker,
+            auxiliary_windows::hide_shelf_picker,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -207,6 +250,7 @@ fn register_global_shortcuts(app: &tauri::AppHandle) {
         QUICK_TODO_SHORTCUT,
         CLIPBOARD_PICKER_SHORTCUT,
         SNIPPET_PICKER_SHORTCUT,
+        SHELF_ESCAPE_SHORTCUT,
     ] {
         if let Err(error) = app.global_shortcut().register(shortcut) {
             eprintln!("Failed to register {shortcut} global shortcut: {error}");

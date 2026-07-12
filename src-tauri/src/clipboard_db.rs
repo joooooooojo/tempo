@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Duration, Local};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -276,6 +276,22 @@ pub fn delete_clipboard_entry(conn: &Connection, id: i64) -> Result<Option<Strin
 pub fn clear_clipboard_history(conn: &Connection) -> u32 {
     conn.execute("DELETE FROM clipboard_history WHERE pinned = 0", [])
         .unwrap_or(0) as u32
+}
+
+pub fn purge_clipboard_history_by_retention(conn: &Connection, retention: &str) -> u32 {
+    let cutoff = match retention {
+        "days" => Local::now() - Duration::days(1),
+        "weeks" => Local::now() - Duration::days(7),
+        "months" => Local::now() - Duration::days(30),
+        "years" => Local::now() - Duration::days(365),
+        _ => return 0,
+    };
+    conn.execute(
+        "DELETE FROM clipboard_history
+         WHERE pinned = 0 AND created_at < ?1",
+        [cutoff.to_rfc3339()],
+    )
+    .unwrap_or(0) as u32
 }
 
 pub fn set_clipboard_entry_pinned(conn: &Connection, id: i64, pinned: bool) -> Option<ClipboardEntry> {

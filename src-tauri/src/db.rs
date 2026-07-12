@@ -148,6 +148,9 @@ pub struct Settings {
     pub pomodoro_float_y: Option<i32>,
     pub clipboard_monitor_enabled: bool,
     pub clipboard_max_entries: u32,
+    pub clipboard_paste_mode: String,
+    pub clipboard_plain_text_only: bool,
+    pub clipboard_history_retention: String,
     pub storage_dir: String,
 }
 
@@ -173,6 +176,9 @@ impl Default for Settings {
             pomodoro_float_y: None,
             clipboard_monitor_enabled: true,
             clipboard_max_entries: 200,
+            clipboard_paste_mode: "clipboard".into(),
+            clipboard_plain_text_only: true,
+            clipboard_history_retention: "days".into(),
             storage_dir: String::new(),
         }
     }
@@ -686,6 +692,17 @@ pub fn load_settings(conn: &Connection) -> Settings {
             .parse()
             .unwrap_or(200)
             .clamp(1, 1000),
+        clipboard_paste_mode: normalize_clipboard_paste_mode(&get_setting(
+            conn,
+            "clipboard_paste_mode",
+            "clipboard",
+        )),
+        clipboard_plain_text_only: get_setting(conn, "clipboard_plain_text_only", "true") == "true",
+        clipboard_history_retention: normalize_clipboard_history_retention(&get_setting(
+            conn,
+            "clipboard_history_retention",
+            "days",
+        )),
         storage_dir: String::new(),
     }
 }
@@ -762,6 +779,38 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         "clipboard_max_entries",
         &settings.clipboard_max_entries.to_string(),
     );
+    set_setting(
+        conn,
+        "clipboard_paste_mode",
+        &settings.clipboard_paste_mode,
+    );
+    set_setting(
+        conn,
+        "clipboard_plain_text_only",
+        &settings.clipboard_plain_text_only.to_string(),
+    );
+    set_setting(
+        conn,
+        "clipboard_history_retention",
+        &settings.clipboard_history_retention,
+    );
+}
+
+pub fn normalize_clipboard_paste_mode(value: &str) -> String {
+    match value {
+        "active_app" => "active_app".into(),
+        _ => "clipboard".into(),
+    }
+}
+
+pub fn normalize_clipboard_history_retention(value: &str) -> String {
+    match value {
+        "weeks" => "weeks".into(),
+        "months" => "months".into(),
+        "years" => "years".into(),
+        "permanent" => "permanent".into(),
+        _ => "days".into(),
+    }
 }
 
 pub fn get_pomodoro_sessions_today(conn: &Connection) -> u32 {

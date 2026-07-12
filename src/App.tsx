@@ -9,6 +9,7 @@ import { ReminderDialog } from "@/components/ReminderDialog";
 import { EyeCareReminderPage } from "@/pages/EyeCareReminderPage";
 import { ClipboardPage } from "@/pages/ClipboardPage";
 import { ShelfPickerPage } from "@/pages/ShelfPickerPage";
+import { ShelfBackdropPage } from "@/pages/ShelfBackdropPage";
 import { PomodoroFloatPage } from "@/pages/PomodoroFloatPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -46,6 +47,10 @@ function App() {
 
   if (view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
     return <ShelfPickerPage />;
+  }
+
+  if (view === "shelf-backdrop") {
+    return <ShelfBackdropPage />;
   }
 
   return <MainApp />;

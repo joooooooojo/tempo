@@ -1,5 +1,5 @@
 use crate::clipboard_db::{add_snippet, delete_snippet, get_snippet, list_snippets, update_snippet, Snippet};
-use crate::clipboard_watcher::write_clipboard_text;
+use crate::clipboard_watcher::use_clipboard_text;
 use crate::db::AppState;
 use tauri::Emitter;
 
@@ -56,10 +56,13 @@ pub fn delete_snippet_command(
 
 #[tauri::command]
 pub fn copy_snippet_to_clipboard(
+    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     id: i64,
 ) -> Result<(), String> {
     let conn = state.db.lock();
     let snippet = get_snippet(&conn, id).ok_or_else(|| "短语不存在".to_string())?;
-    write_clipboard_text(&state, &snippet.content)
+    let content = snippet.content;
+    drop(conn);
+    use_clipboard_text(&state, &app, &content)
 }

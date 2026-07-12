@@ -1,4 +1,6 @@
 use crate::db::{current_storage_dir, default_storage_dir, load_settings, save_storage_dir, today_str, AppState, Settings};
+use crate::clipboard_db::purge_clipboard_history_by_retention;
+use crate::db::{normalize_clipboard_history_retention, normalize_clipboard_paste_mode};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
@@ -118,9 +120,31 @@ pub fn update_settings(
     {
         current.clipboard_max_entries = (v as u32).clamp(1, 1000);
     }
+    if let Some(v) = settings.get("clipboard_paste_mode").and_then(|v| v.as_str()) {
+        current.clipboard_paste_mode = normalize_clipboard_paste_mode(v);
+    }
+    if let Some(v) = settings
+        .get("clipboard_plain_text_only")
+        .and_then(|v| v.as_bool())
+    {
+        current.clipboard_plain_text_only = v;
+    }
+    let retention_changed = settings
+        .get("clipboard_history_retention")
+        .and_then(|v| v.as_str())
+        .map(|value| {
+            let next = normalize_clipboard_history_retention(value);
+            let changed = current.clipboard_history_retention != next;
+            current.clipboard_history_retention = next;
+            changed
+        })
+        .unwrap_or(false);
 
     let conn = state.db.lock();
     crate::db::save_settings(&conn, &current);
+    if retention_changed {
+        purge_clipboard_history_by_retention(&conn, &current.clipboard_history_retention);
+    }
     Ok(())
 }
 #[tauri::command]

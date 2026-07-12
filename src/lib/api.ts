@@ -149,4 +149,5 @@ export const api = {
   copySnippetToClipboard: (id: number) => invoke<void>("copy_snippet_to_clipboard", { id }),
   showClipboardPicker: () => invoke<void>("show_clipboard_picker"),
   showSnippetPicker: () => invoke<void>("show_snippet_picker"),
+  hideShelfPicker: () => invoke<void>("hide_shelf_picker"),
 };

@@ -22,6 +22,43 @@ import {
 } from "@/lib/update";
 import type { Settings } from "@/types";
 
+const CLIPBOARD_RETENTION_OPTIONS = [
+  { value: "days", label: "天" },
+  { value: "weeks", label: "周" },
+  { value: "months", label: "个月" },
+  { value: "years", label: "年" },
+  { value: "permanent", label: "永久" },
+] as const satisfies ReadonlyArray<{
+  value: Settings["clipboard_history_retention"];
+  label: string;
+}>;
+
+function clipboardRetentionIndex(value: Settings["clipboard_history_retention"]) {
+  const index = CLIPBOARD_RETENTION_OPTIONS.findIndex((option) => option.value === value);
+  return index >= 0 ? index : 0;
+}
+
+function clipboardRetentionValue(index: number): Settings["clipboard_history_retention"] {
+  return CLIPBOARD_RETENTION_OPTIONS[index]?.value ?? "days";
+}
+
+function clipboardRetentionLabel(value: Settings["clipboard_history_retention"]) {
+  switch (value) {
+    case "days":
+      return "保留最近 1 天内的历史";
+    case "weeks":
+      return "保留最近 1 周内的历史";
+    case "months":
+      return "保留最近 1 个月内的历史";
+    case "years":
+      return "保留最近 1 年内的历史";
+    case "permanent":
+      return "永久保留历史记录";
+    default:
+      return "保留最近 1 天内的历史";
+  }
+}
+
 export function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [migratingStorage, setMigratingStorage] = useState(false);
@@ -232,6 +269,72 @@ export function SettingsPage() {
               onCheckedChange={(v) => update({ clipboard_monitor_enabled: v })}
             />
           </Row>
+
+          <div className="space-y-4 border-t border-border/50 px-4 py-4">
+            <div>
+              <p className="text-[14px] font-medium">粘贴项目</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">从剪贴板历史选择项目时的行为</p>
+              <div className="mt-3 space-y-2">
+                <PasteModeOption
+                  selected={settings.clipboard_paste_mode === "active_app"}
+                  title="到当前活动应用"
+                  description="将选定的项目直接粘贴到您当前正在使用的应用程序中。"
+                  onSelect={() => update({ clipboard_paste_mode: "active_app" })}
+                />
+                <PasteModeOption
+                  selected={settings.clipboard_paste_mode === "clipboard"}
+                  title="到剪贴板"
+                  description="将选定的项目复制到系统剪贴板，以便稍后手动粘贴。"
+                  onSelect={() => update({ clipboard_paste_mode: "clipboard" })}
+                />
+              </div>
+            </div>
+
+            <Row label="始终以纯文本粘贴" desc="忽略富文本格式，仅粘贴纯文本内容">
+              <Switch
+                checked={settings.clipboard_plain_text_only}
+                onCheckedChange={(v) => update({ clipboard_plain_text_only: v })}
+              />
+            </Row>
+          </div>
+
+          <div className="space-y-4 border-t border-border/50 px-4 py-4">
+            <div>
+              <p className="text-[14px] font-medium">保留历史</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {clipboardRetentionLabel(settings.clipboard_history_retention)}
+              </p>
+              <div className="mt-4">
+                <Slider
+                  min={0}
+                  max={4}
+                  step={1}
+                  value={[clipboardRetentionIndex(settings.clipboard_history_retention)]}
+                  onValueChange={([value]) =>
+                    update({ clipboard_history_retention: clipboardRetentionValue(value) })
+                  }
+                />
+                <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+                  {CLIPBOARD_RETENTION_OPTIONS.map((option) => (
+                    <span key={option.value}>{option.label}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  if (!confirm("确定删除全部未固定的剪贴板历史？")) return;
+                  const count = await api.clearClipboardHistory();
+                  toast.success(count > 0 ? `已删除 ${count} 条记录` : "没有可删除的记录");
+                }}
+              >
+                删除历史...
+              </Button>
+            </div>
+          </div>
         </Card>
       </Section>
 
@@ -320,5 +423,43 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
       </div>
       {children}
     </div>
+  );
+}
+
+function PasteModeOption({
+  selected,
+  title,
+  description,
+  onSelect,
+}: {
+  selected: boolean;
+  title: string;
+  description: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+        selected
+          ? "border-primary/40 bg-primary/5"
+          : "border-border/60 bg-transparent hover:bg-foreground/[0.03]"
+      }`}
+    >
+      <span
+        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+          selected ? "border-primary" : "border-muted-foreground/40"
+        }`}
+      >
+        {selected && <span className="h-2 w-2 rounded-full bg-primary" />}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-medium">{title}</span>
+        <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
+          {description}
+        </span>
+      </span>
+    </button>
   );
 }

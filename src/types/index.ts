@@ -110,6 +110,9 @@ export interface Settings {
   pomodoro_float_auto_show: boolean;
   clipboard_monitor_enabled: boolean;
   clipboard_max_entries: number;
+  clipboard_paste_mode: "clipboard" | "active_app";
+  clipboard_plain_text_only: boolean;
+  clipboard_history_retention: "days" | "weeks" | "months" | "years" | "permanent";
   storage_dir: string;
 }
 

@@ -8,7 +8,7 @@ use tauri::{
 };
 use tauri::menu::{Menu, MenuItem};
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const EYE_CARE_PRIMARY_LABEL: &str = "eye-care-reminder";
@@ -21,14 +21,19 @@ pub const POMODORO_FLOAT_PANEL_WIDTH: f64 = 300.0;
 pub const POMODORO_FLOAT_PANEL_HEIGHT: f64 = 56.0;
 
 pub const SHELF_PICKER_LABEL: &str = "shelf-picker";
+pub const SHELF_BACKDROP_LABEL: &str = "shelf-backdrop";
 pub const SHELF_HEIGHT: f64 = 292.0;
 pub const SHELF_SIDE_MARGIN: f64 = 8.0;
 pub const SHELF_BOTTOM_MARGIN: f64 = 8.0;
 pub const CLIPBOARD_SHELF_WIDTH_RATIO: f64 = 1.0;
 
 const SHELF_SHORTCUT_DEBOUNCE_MS: u64 = 280;
+const SHELF_TAB_NONE: u8 = 0;
+const SHELF_TAB_CLIPBOARD: u8 = 1;
+const SHELF_TAB_SNIPPETS: u8 = 2;
 
 static LAST_SHELF_SHORTCUT_MS: AtomicU64 = AtomicU64::new(0);
+static SHELF_VISIBLE_TAB: AtomicU8 = AtomicU8::new(SHELF_TAB_NONE);
 
 pub fn quick_todo_window_size() -> (f64, f64) {
     (QUICK_TODO_PANEL_WIDTH, QUICK_TODO_PANEL_HEIGHT)
@@ -98,6 +103,15 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         let _ = window.hide();
     }
 
+    if app.get_webview_window(SHELF_BACKDROP_LABEL).is_none() {
+        let window = build_shelf_backdrop_window(app)?;
+        #[cfg(target_os = "macos")]
+        {
+            let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+        }
+        let _ = window.hide();
+    }
+
     Ok(())
 }
 
@@ -115,8 +129,20 @@ pub fn show_quick_todo(app: &AppHandle) -> tauri::Result<()> {
     let _ = window.center();
     let _ = window.set_always_on_top(true);
     polish_quick_todo_window(&window);
-    window.show()?;
-    window.set_focus()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let config = crate::macos_overlay_panel::quick_todo_config();
+        crate::macos_overlay_panel::ensure_input_panel(app, &window, "quick-todo", &config)?;
+        crate::macos_overlay_panel::show_input_overlay(app, "quick-todo")?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.show()?;
+        window.set_focus()?;
+    }
+
     let _ = app.emit_to("quick-todo", "quick-todo:focus-title", ());
     Ok(())
 }
@@ -131,11 +157,111 @@ pub fn show_snippet_picker(app: AppHandle) -> Result<(), String> {
     show_snippet_picker_window(&app).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+pub fn hide_shelf_picker(app: AppHandle) -> Result<(), String> {
+    hide_shelf_picker_window(&app).map_err(|error| error.to_string())
+}
+
+pub fn is_shelf_picker_visible(app: &AppHandle) -> bool {
+    app.get_webview_window(SHELF_PICKER_LABEL)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
+pub fn hide_shelf_picker_window(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_overlay_panel::hide_overlay(app, SHELF_PICKER_LABEL);
+        crate::macos_overlay_panel::hide_overlay(app, SHELF_BACKDROP_LABEL);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(window) = app.get_webview_window(SHELF_PICKER_LABEL) {
+            let _ = window.hide();
+        }
+        if let Some(window) = app.get_webview_window(SHELF_BACKDROP_LABEL) {
+            let _ = window.hide();
+        }
+    }
+
+    SHELF_VISIBLE_TAB.store(SHELF_TAB_NONE, Ordering::Relaxed);
+    Ok(())
+}
+
+fn shelf_tab_id(tab: ShelfPickerTab) -> u8 {
+    match tab {
+        ShelfPickerTab::Clipboard => SHELF_TAB_CLIPBOARD,
+        ShelfPickerTab::Snippets => SHELF_TAB_SNIPPETS,
+    }
+}
+
+fn on_shelf_picker_shown(_app: &AppHandle, _window: &WebviewWindow, tab: ShelfPickerTab) {
+    SHELF_VISIBLE_TAB.store(shelf_tab_id(tab), Ordering::Relaxed);
+}
+
+fn show_shelf_window_without_stealing_focus(
+    app: &AppHandle,
+    label: &str,
+    window: &WebviewWindow,
+) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        match label {
+            SHELF_PICKER_LABEL => {
+                let config = crate::macos_overlay_panel::shelf_picker_config();
+                crate::macos_overlay_panel::ensure_input_panel(app, window, label, &config)?;
+                crate::macos_overlay_panel::show_input_overlay(app, label)?;
+            }
+            SHELF_BACKDROP_LABEL => {
+                let config = crate::macos_overlay_panel::shelf_backdrop_config();
+                crate::macos_overlay_panel::ensure_passive_panel(app, window, label, &config)?;
+                crate::macos_overlay_panel::show_passive_overlay(app, label)?;
+            }
+            _ => show_window_without_activation(window)?,
+        }
+        return Ok(());
+    }
+
+    show_window_without_activation(window)
+}
+
+fn show_window_without_activation(window: &WebviewWindow) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.with_webview(|webview| unsafe {
+            use objc::runtime::Object;
+            use objc::{msg_send, sel, sel_impl};
+
+            let ns_window = webview.ns_window().cast::<Object>();
+            if !ns_window.is_null() {
+                let _: () = msg_send![ns_window, orderFrontRegardless];
+            }
+        });
+        return Ok(());
+    }
+
+    #[cfg(windows)]
+    {
+        window.show()?;
+        let _ = window.with_webview(|webview| unsafe {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+            ShowWindow(HWND(webview.hwnd() as _), SW_SHOWNOACTIVATE);
+        });
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    window.show()
+}
+
 #[derive(serde::Serialize)]
 struct ShelfPickerTabPayload {
     tab: &'static str,
 }
 
+#[derive(Copy, Clone)]
 enum ShelfPickerTab {
     Clipboard,
     Snippets,
@@ -173,6 +299,14 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         if !consume_shelf_shortcut_action() {
             return Ok(());
         }
+
+        let tab_id = shelf_tab_id(tab);
+        let current = SHELF_VISIBLE_TAB.load(Ordering::Relaxed);
+        if current == tab_id {
+            return hide_shelf_picker_window(app);
+        }
+
+        SHELF_VISIBLE_TAB.store(tab_id, Ordering::Relaxed);
         let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:activate", &payload);
         return Ok(());
     }
@@ -181,14 +315,19 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         return Ok(());
     }
 
+    let backdrop = get_or_create_shelf_backdrop_window(app)?;
+    place_shelf_backdrop_window(app, &backdrop)?;
     place_bottom_shelf_window(app, &window, CLIPBOARD_SHELF_WIDTH_RATIO)?;
     #[cfg(not(target_os = "macos"))]
     {
         let _ = window.set_always_on_top(true);
+        let _ = backdrop.set_always_on_top(true);
     }
-    window.show()?;
-    window.set_focus()?;
+    polish_shelf_backdrop_window(&backdrop);
     polish_shelf_picker_window(&window, true);
+    show_shelf_window_without_stealing_focus(app, SHELF_BACKDROP_LABEL, &backdrop)?;
+    show_shelf_window_without_stealing_focus(app, SHELF_PICKER_LABEL, &window)?;
+    on_shelf_picker_shown(app, &window, tab);
     let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:open", &payload);
     Ok(())
 }
@@ -269,6 +408,95 @@ fn place_bottom_shelf_window(
     Ok(())
 }
 
+fn get_or_create_shelf_backdrop_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(SHELF_BACKDROP_LABEL) {
+        Ok(window)
+    } else {
+        build_shelf_backdrop_window(app)
+    }
+}
+
+fn build_shelf_backdrop_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    let builder = WebviewWindowBuilder::new(
+        app,
+        SHELF_BACKDROP_LABEL,
+        WebviewUrl::App("/?view=shelf-backdrop".into()),
+    )
+    .title("")
+    .decorations(false)
+    .transparent(true)
+    .background_color(Color(0, 0, 0, 0))
+    .resizable(false)
+    .skip_taskbar(true)
+    .visible_on_all_workspaces(true)
+    .visible(false)
+    .focused(false)
+    .focusable(false);
+
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.always_on_top(true);
+
+    builder.build()
+}
+
+fn place_shelf_backdrop_window(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
+    let monitor = shelf_monitor(app, window)?;
+    let scale = monitor.scale_factor();
+
+    #[cfg(target_os = "macos")]
+    let (area_pos, area_w, area_h) = {
+        let position = monitor.position();
+        let size = monitor.size();
+        (
+            position,
+            size.width as f64,
+            size.height as f64,
+        )
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let (area_pos, area_w, area_h) = {
+        let work = monitor.work_area();
+        (
+            work.position,
+            work.size.width as f64,
+            work.size.height as f64,
+        )
+    };
+
+    let _ = window.set_size(LogicalSize::new(area_w / scale, area_h / scale));
+    let _ = window.set_position(PhysicalPosition::new(area_pos.x, area_pos.y));
+    Ok(())
+}
+
+fn polish_shelf_backdrop_window(window: &WebviewWindow) {
+    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+
+    #[cfg(target_os = "macos")]
+    {
+        const MACOS_SHELF_BACKDROP_WINDOW_LEVEL: i64 = 24;
+        let _ = window.with_webview(move |webview| unsafe {
+            use objc::runtime::Object;
+            use objc::{msg_send, sel, sel_impl};
+
+            let ns_window = webview.ns_window().cast::<Object>();
+            if ns_window.is_null() {
+                return;
+            }
+
+            let _: () = msg_send![ns_window, setLevel: MACOS_SHELF_BACKDROP_WINDOW_LEVEL];
+            let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
+            const NS_WINDOW_COLLECTION_CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+            const NS_WINDOW_COLLECTION_STATIONARY: usize = 1 << 4;
+            const NS_WINDOW_COLLECTION_FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+            let behavior = NS_WINDOW_COLLECTION_CAN_JOIN_ALL_SPACES
+                | NS_WINDOW_COLLECTION_STATIONARY
+                | NS_WINDOW_COLLECTION_FULL_SCREEN_AUXILIARY;
+            let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+        });
+    }
+}
+
 fn build_shelf_picker_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let builder = WebviewWindowBuilder::new(
         app,
@@ -288,21 +516,11 @@ fn build_shelf_picker_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     .focused(false);
 
     #[cfg(not(target_os = "macos"))]
-    let builder = builder.always_on_top(true);
+    let builder = builder.focusable(false).always_on_top(true);
 
     let window = builder.build()?;
 
-    attach_shelf_dismiss_on_blur(&window);
     Ok(window)
-}
-
-fn attach_shelf_dismiss_on_blur(window: &WebviewWindow) {
-    let window = window.clone();
-    window.clone().on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::Focused(false)) {
-            let _ = window.hide();
-        }
-    });
 }
 
 pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
@@ -440,15 +658,30 @@ pub fn show_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
     place_pomodoro_float_window(app, &window, width, height)?;
     let _ = window.set_always_on_top(true);
     polish_pomodoro_float_window(&window);
+
+    #[cfg(target_os = "macos")]
+    {
+        let config = crate::macos_overlay_panel::pomodoro_float_config();
+        crate::macos_overlay_panel::ensure_passive_panel(app, &window, POMODORO_FLOAT_LABEL, &config)?;
+        crate::macos_overlay_panel::show_passive_overlay(app, POMODORO_FLOAT_LABEL)?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
     window.show()?;
+
     emit_pomodoro_float_visible(app, true);
     Ok(())
 }
 
 pub fn hide_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    crate::macos_overlay_panel::hide_overlay(app, POMODORO_FLOAT_LABEL);
+
+    #[cfg(not(target_os = "macos"))]
     if let Some(window) = app.get_webview_window(POMODORO_FLOAT_LABEL) {
         window.hide()?;
     }
+
     emit_pomodoro_float_visible(app, false);
     Ok(())
 }
@@ -601,7 +834,6 @@ pub fn show_eye_care_overlay_window(app: &AppHandle) -> tauri::Result<()> {
         let _ = window.set_simple_fullscreen(true);
         polish_macos_eye_care_overlay(&window);
         present_eye_care_window(&window)?;
-        window.set_focus()?;
         let _ = app.emit("eye-care:reveal", ());
         return Ok(());
     }

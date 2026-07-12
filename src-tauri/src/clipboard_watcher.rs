@@ -7,7 +7,7 @@ use crate::db::{load_settings, AppState};
 use crate::platform::{get_foreground_app, ForegroundApp};
 use arboard::{Clipboard, ImageData};
 use std::borrow::Cow;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
     std::thread::spawn(move || {
@@ -20,6 +20,7 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
         };
         let mut last_text_hash = String::new();
         let mut last_image_hash = String::new();
+        let mut last_retention_purge = std::time::Instant::now();
 
         loop {
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -30,6 +31,13 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
             };
             if !settings.clipboard_monitor_enabled {
                 continue;
+            }
+
+            if last_retention_purge.elapsed() >= std::time::Duration::from_secs(3600) {
+                last_retention_purge = std::time::Instant::now();
+                let retention = settings.clipboard_history_retention.clone();
+                let conn = state.db.lock();
+                crate::clipboard_db::purge_clipboard_history_by_retention(&conn, &retention);
             }
 
             if let Some(app_info) = get_foreground_app().filter(|app| !is_tempo_app(app)) {
@@ -170,12 +178,69 @@ pub fn write_clipboard_entry(
     }
 }
 
+pub fn use_clipboard_text(state: &AppState, app: &AppHandle, text: &str) -> Result<(), String> {
+    let settings = {
+        let conn = state.db.lock();
+        load_settings(&conn)
+    };
+    write_clipboard_text(state, text)?;
+    maybe_simulate_paste(app, &settings);
+    Ok(())
+}
+
+pub fn use_clipboard_entry(
+    state: &AppState,
+    app: &AppHandle,
+    entry: &crate::clipboard_db::ClipboardEntry,
+) -> Result<(), String> {
+    let settings = {
+        let conn = state.db.lock();
+        load_settings(&conn)
+    };
+
+    if entry.kind == "image" {
+        if settings.clipboard_plain_text_only {
+            return Err("已开启纯文本粘贴，无法粘贴图片".into());
+        }
+        write_clipboard_image(state, app, &entry.content)?;
+    } else {
+        write_clipboard_text(state, &entry.content)?;
+    }
+
+    maybe_simulate_paste(app, &settings);
+    Ok(())
+}
+
+fn maybe_simulate_paste(app: &AppHandle, settings: &crate::db::Settings) {
+    if settings.clipboard_paste_mode != "active_app" {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Some(window) = app.get_webview_window("shelf-picker") {
+            let _ = window.hide();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if crate::macos_dock::is_main_window_in_tray() {
+                crate::macos_dock::ensure_main_window_hidden(&app);
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        if let Err(error) = crate::platform::simulate_paste() {
+            eprintln!("simulate paste failed: {error}");
+        }
+    });
+}
+
 pub fn copy_clipboard_entry_by_id(state: &AppState, app: &AppHandle, id: i64) -> Result<(), String> {
     let entry = {
         let conn = state.db.lock();
         get_clipboard_entry(&conn, id).ok_or_else(|| "记录不存在".to_string())?
     };
-    write_clipboard_entry(state, app, &entry)?;
+    use_clipboard_entry(state, app, &entry)?;
     {
         let conn = state.db.lock();
         touch_clipboard_entry(&conn, id);

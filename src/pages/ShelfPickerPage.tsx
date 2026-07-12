@@ -12,7 +12,7 @@ import {
   shelfImageSize,
   shelfTimeLabel,
 } from "@/components/clipboard/ShelfCard";
-import { useAuxiliaryWindowShell, useShelfBlurClose } from "@/hooks/useAuxiliaryWindow";
+import { useAuxiliaryWindowShell } from "@/hooks/useAuxiliaryWindow";
 import { api } from "@/lib/api";
 import type { ClipboardEntry, Snippet } from "@/types";
 
@@ -67,7 +67,10 @@ export function ShelfPickerPage() {
   const snippets = useMemo(() => filterSnippets(snippetsCache, query), [snippetsCache, query]);
 
   useAuxiliaryWindowShell("shelf-picker-window");
-  useShelfBlurClose("shelf-picker:open", copying);
+
+  const hideShelf = useCallback(() => {
+    void api.hideShelfPicker();
+  }, []);
 
   useEffect(() => {
     tabRef.current = tab;
@@ -88,7 +91,7 @@ export function ShelfPickerPage() {
 
   useEffect(() => {
     if (!searchOpen) return;
-    const timer = window.setTimeout(() => searchInputRef.current?.focus(), 220);
+    const timer = window.setTimeout(() => searchInputRef.current?.focus(), 60);
     return () => window.clearTimeout(timer);
   }, [searchOpen]);
 
@@ -144,7 +147,7 @@ export function ShelfPickerPage() {
     (nextTab: ShelfTab) => {
       setTab(nextTab);
       setQuery("");
-      setSearchOpen(false);
+      setSearchOpen(true);
       void loadClipboard(true);
       void loadSnippets(true);
     },
@@ -168,7 +171,7 @@ export function ShelfPickerPage() {
     const unlistenActivate = listen<{ tab?: string }>("shelf-picker:activate", (event) => {
       const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
       if (nextTab === tabRef.current) {
-        void getCurrentWindow().hide();
+        hideShelf();
         return;
       }
       setTab(nextTab);
@@ -191,7 +194,7 @@ export function ShelfPickerPage() {
         return [nextEntry, ...current.filter((item) => item.id !== entry.id)];
       });
       setClipboardIndex(0);
-      await getCurrentWindow().hide();
+      await api.hideShelfPicker();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
     } finally {
@@ -204,7 +207,7 @@ export function ShelfPickerPage() {
     try {
       await api.copySnippetToClipboard(snippet.id);
       toast.success("已复制");
-      await getCurrentWindow().hide();
+      await api.hideShelfPicker();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
     } finally {
@@ -214,22 +217,46 @@ export function ShelfPickerPage() {
 
   const itemCount = tab === "clipboard" ? entries.length : snippets.length;
 
+  const scrollSelectedCardIntoView = useCallback(
+    (container: HTMLDivElement | null, index: number) => {
+      const node = container?.children[index] as HTMLElement | undefined;
+      node?.scrollIntoView({ behavior: "auto", inline: "nearest", block: "nearest" });
+    },
+    []
+  );
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (itemCount === 0) return;
       if (event.key === "ArrowRight") {
         event.preventDefault();
         if (tab === "clipboard") {
-          setClipboardIndex((index) => Math.min(index + 1, entries.length - 1));
+          const next = Math.min(clipboardIndex + 1, entries.length - 1);
+          setClipboardIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(clipboardScrollerRef.current, next)
+          );
         } else {
-          setSnippetsIndex((index) => Math.min(index + 1, snippets.length - 1));
+          const next = Math.min(snippetsIndex + 1, snippets.length - 1);
+          setSnippetsIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(snippetsScrollerRef.current, next)
+          );
         }
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         if (tab === "clipboard") {
-          setClipboardIndex((index) => Math.max(index - 1, 0));
+          const next = Math.max(clipboardIndex - 1, 0);
+          setClipboardIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(clipboardScrollerRef.current, next)
+          );
         } else {
-          setSnippetsIndex((index) => Math.max(index - 1, 0));
+          const next = Math.max(snippetsIndex - 1, 0);
+          setSnippetsIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(snippetsScrollerRef.current, next)
+          );
         }
       } else if (event.key === "Enter") {
         event.preventDefault();
@@ -246,7 +273,7 @@ export function ShelfPickerPage() {
           closeSearch();
           return;
         }
-        void getCurrentWindow().hide();
+        hideShelf();
       } else if (event.key === "Tab" && !event.shiftKey && !searchOpen) {
         event.preventDefault();
         setTab((current) => (current === "clipboard" ? "snippets" : "clipboard"));
@@ -260,24 +287,14 @@ export function ShelfPickerPage() {
     copyEntry,
     copySnippet,
     entries,
+    hideShelf,
     itemCount,
     searchOpen,
     snippets,
     snippetsIndex,
+    scrollSelectedCardIntoView,
     tab,
   ]);
-
-  useEffect(() => {
-    if (tab !== "clipboard") return;
-    const node = clipboardScrollerRef.current?.children[clipboardIndex] as HTMLElement | undefined;
-    node?.scrollIntoView({ behavior: "auto", inline: "center", block: "nearest" });
-  }, [clipboardIndex, tab]);
-
-  useEffect(() => {
-    if (tab !== "snippets") return;
-    const node = snippetsScrollerRef.current?.children[snippetsIndex] as HTMLElement | undefined;
-    node?.scrollIntoView({ behavior: "auto", inline: "center", block: "nearest" });
-  }, [snippetsIndex, tab]);
 
   return (
     <div className="shelf-picker-page shelf-picker-page--full">
