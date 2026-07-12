@@ -129,20 +129,8 @@ pub fn show_quick_todo(app: &AppHandle) -> tauri::Result<()> {
     let _ = window.center();
     let _ = window.set_always_on_top(true);
     polish_quick_todo_window(&window);
-
-    #[cfg(target_os = "macos")]
-    {
-        let config = crate::macos_overlay_panel::quick_todo_config();
-        crate::macos_overlay_panel::ensure_input_panel(app, &window, "quick-todo", &config)?;
-        crate::macos_overlay_panel::show_input_overlay(app, "quick-todo")?;
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        window.show()?;
-        window.set_focus()?;
-    }
-
+    window.show()?;
+    window.set_focus()?;
     let _ = app.emit_to("quick-todo", "quick-todo:focus-title", ());
     Ok(())
 }
@@ -661,30 +649,15 @@ pub fn show_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
     place_pomodoro_float_window(app, &window, width, height)?;
     let _ = window.set_always_on_top(true);
     polish_pomodoro_float_window(&window);
-
-    #[cfg(target_os = "macos")]
-    {
-        let config = crate::macos_overlay_panel::pomodoro_float_config();
-        crate::macos_overlay_panel::ensure_passive_panel(app, &window, POMODORO_FLOAT_LABEL, &config)?;
-        crate::macos_overlay_panel::show_passive_overlay(app, POMODORO_FLOAT_LABEL)?;
-    }
-
-    #[cfg(not(target_os = "macos"))]
     window.show()?;
-
     emit_pomodoro_float_visible(app, true);
     Ok(())
 }
 
 pub fn hide_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
-    crate::macos_overlay_panel::hide_overlay(app, POMODORO_FLOAT_LABEL);
-
-    #[cfg(not(target_os = "macos"))]
     if let Some(window) = app.get_webview_window(POMODORO_FLOAT_LABEL) {
         window.hide()?;
     }
-
     emit_pomodoro_float_visible(app, false);
     Ok(())
 }

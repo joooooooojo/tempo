@@ -85,28 +85,6 @@ pub fn shelf_backdrop_config() -> OverlayPanelConfig {
     }
 }
 
-pub fn quick_todo_config() -> OverlayPanelConfig {
-    OverlayPanelConfig {
-        level: PanelLevel::Floating,
-        collection_behavior: CollectionBehavior::new()
-            .can_join_all_spaces()
-            .move_to_active_space(),
-        has_shadow: true,
-        becomes_key_only_if_needed: true,
-    }
-}
-
-pub fn pomodoro_float_config() -> OverlayPanelConfig {
-    OverlayPanelConfig {
-        level: PanelLevel::Floating,
-        collection_behavior: CollectionBehavior::new()
-            .can_join_all_spaces()
-            .move_to_active_space(),
-        has_shadow: true,
-        becomes_key_only_if_needed: false,
-    }
-}
-
 pub fn ensure_input_panel(
     app: &AppHandle,
     window: &WebviewWindow,
