@@ -1,8 +1,7 @@
 use crate::db::{TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoSubtask, AppState};
 use crate::todo_images::{
-    backup_todo_image_file_name, hydrate_todo_images as hydrate_todo_image_urls,
-    hydrate_todo_note_images as hydrate_todo_note_image_urls, maybe_delete_todo_image_file,
-    normalize_todo_image_reference, save_todo_image_input, todo_images_dir, TODO_IMAGE_SUBDIR,
+    hydrate_todo_images as hydrate_todo_image_urls,
+    hydrate_todo_note_images as hydrate_todo_note_image_urls, save_todo_image_input,
 };
 use base64::Engine as _;
 use chrono::{DateTime, Duration as ChronoDuration, Local};

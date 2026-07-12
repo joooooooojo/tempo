@@ -186,15 +186,6 @@ pub fn get_clipboard_entry(conn: &Connection, id: i64) -> Option<ClipboardEntry>
     .ok()
 }
 
-pub fn get_clipboard_entry_content_hash(conn: &Connection, id: i64) -> Option<String> {
-    conn.query_row(
-        "SELECT content_hash FROM clipboard_history WHERE id = ?1",
-        [id],
-        |row| row.get(0),
-    )
-    .ok()
-}
-
 pub fn touch_clipboard_entry(conn: &Connection, id: i64) -> bool {
     conn.execute(
         "UPDATE clipboard_history SET created_at = ?1 WHERE id = ?2",

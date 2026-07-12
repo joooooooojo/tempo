@@ -29,15 +29,6 @@ fn hydrate_app_icons(app: &AppHandle, state: &AppState, date: &str, apps: &mut [
     }
 }
 
-fn icon_needs_refresh(icon_data_url: &str) -> bool {
-    if icon_data_url.trim().is_empty() {
-        return true;
-    }
-    if crate::app_icons::is_app_icon_storage_key(icon_data_url) {
-        return false;
-    }
-    crate::app_icons::is_legacy_app_icon_data_url(icon_data_url)
-}
 #[tauri::command]
 pub fn get_daily_report(
     app: AppHandle,

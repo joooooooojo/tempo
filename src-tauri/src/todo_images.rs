@@ -25,10 +25,6 @@ pub fn is_todo_image_storage_key(value: &str) -> bool {
     is_valid_todo_image_file_name(file_name)
 }
 
-pub fn is_legacy_todo_image_data_url(value: &str) -> bool {
-    value.starts_with("data:image/")
-}
-
 pub fn save_todo_image_input(app: &AppHandle, image: &TodoImageInput) -> Result<String, String> {
     let (bytes, mime) = decode_todo_image_input(image)?;
     let hash = hash_bytes(&bytes);
@@ -59,17 +55,6 @@ pub fn hydrate_todo_image_data_url(value: &str) -> String {
     value.to_string()
 }
 
-pub fn normalize_todo_image_reference(value: &str) -> String {
-    if let Some(storage_key) = storage_key_from_protocol_url(TODO_IMAGE_PROTOCOL, TODO_IMAGE_SUBDIR, value)
-    {
-        return storage_key;
-    }
-    if is_todo_image_storage_key(value) {
-        return value.to_string();
-    }
-    value.to_string()
-}
-
 pub fn hydrate_todo_images(images: &mut [TodoImage]) {
     for image in images {
         image.data_url = hydrate_todo_image_data_url(&image.data_url);
@@ -79,32 +64,6 @@ pub fn hydrate_todo_images(images: &mut [TodoImage]) {
 pub fn hydrate_todo_note_images(images: &mut [TodoNoteImage]) {
     for image in images {
         image.data_url = hydrate_todo_image_data_url(&image.data_url);
-    }
-}
-
-pub fn maybe_delete_todo_image_file(conn: &Connection, app: &AppHandle, storage_key: &str) {
-    if !is_todo_image_storage_key(storage_key) {
-        return;
-    }
-
-    let still_referenced = conn
-        .query_row(
-            "SELECT
-                (SELECT COUNT(*) FROM todo_images WHERE data_url = ?1) +
-                (SELECT COUNT(*) FROM todo_note_images WHERE data_url = ?1)",
-            [storage_key],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0)
-        > 0;
-    if still_referenced {
-        return;
-    }
-
-    if let Ok(dir) = todo_images_dir(app) {
-        if let Some(file_name) = storage_key.strip_prefix(&format!("{TODO_IMAGE_SUBDIR}/")) {
-            let _ = std::fs::remove_file(dir.join(file_name));
-        }
     }
 }
 
@@ -134,11 +93,6 @@ pub fn todo_image_protocol_response(
         is_valid_todo_image_file_name,
         request,
     )
-}
-
-pub fn backup_todo_image_file_name(name: &str) -> Option<String> {
-    let rest = name.strip_prefix(&format!("{TODO_IMAGE_SUBDIR}/"))?;
-    is_valid_todo_image_file_name(rest).then(|| rest.to_string())
 }
 
 fn migrate_table_legacy_images(

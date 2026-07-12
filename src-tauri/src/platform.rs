@@ -23,11 +23,6 @@ pub fn extract_icon_png_bytes(app_name: &str, process_name: &str) -> Option<Vec<
     None
 }
 
-pub fn resolve_app_icon_data_url(app_name: &str, process_name: &str) -> Option<String> {
-    let _ = (app_name, process_name);
-    None
-}
-
 #[cfg(windows)]
 pub fn is_session_locked() -> bool {
     use windows::Win32::System::StationsAndDesktops::{
@@ -175,7 +170,6 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
     match active_win_pos_rs::get_active_window() {
         Ok(win) => {
             let name = win.app_name.trim().to_string();
-            let process_path = win.process_path.clone();
             let process = win
                 .process_path
                 .file_name()

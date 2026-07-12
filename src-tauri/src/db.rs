@@ -266,8 +266,6 @@ pub struct ClipboardRuntime {
     pub skip_next_capture: bool,
     pub last_source_app: Option<String>,
     pub last_source_process: Option<String>,
-    pub last_seen_text_hash: String,
-    pub last_seen_image_hash: String,
 }
 
 #[derive(Clone)]

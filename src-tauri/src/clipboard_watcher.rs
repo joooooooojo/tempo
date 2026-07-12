@@ -166,18 +166,6 @@ pub fn write_clipboard_image(
     })
 }
 
-pub fn write_clipboard_entry(
-    state: &AppState,
-    app: &AppHandle,
-    entry: &crate::clipboard_db::ClipboardEntry,
-) -> Result<(), String> {
-    if entry.kind == "image" {
-        write_clipboard_image(state, app, &entry.content)
-    } else {
-        write_clipboard_text(state, &entry.content)
-    }
-}
-
 pub fn use_clipboard_text(state: &AppState, app: &AppHandle, text: &str) -> Result<(), String> {
     let settings = {
         let conn = state.db.lock();

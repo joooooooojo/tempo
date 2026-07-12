@@ -223,7 +223,10 @@ fn show_shelf_window_without_stealing_focus(
         return Ok(());
     }
 
-    show_window_without_activation(window)
+    #[cfg(not(target_os = "macos"))]
+    {
+        show_window_without_activation(window)
+    }
 }
 
 fn show_window_without_activation(window: &WebviewWindow) -> tauri::Result<()> {
