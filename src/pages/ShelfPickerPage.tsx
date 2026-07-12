@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ClipboardList, MoreHorizontal, Plus, Search, TextQuote } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -53,7 +52,6 @@ export function ShelfPickerPage() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [clipboardIndex, setClipboardIndex] = useState(0);
   const [snippetsIndex, setSnippetsIndex] = useState(0);
-  const [copying, setCopying] = useState(false);
   const clipboardScrollerRef = useRef<HTMLDivElement>(null);
   const snippetsScrollerRef = useRef<HTMLDivElement>(null);
   const searchInlineRef = useRef<HTMLDivElement>(null);
@@ -186,7 +184,6 @@ export function ShelfPickerPage() {
   }, [loadClipboard, loadSnippets, resetAndOpen]);
 
   const copyEntry = useCallback(async (entry: ClipboardEntry) => {
-    setCopying(true);
     try {
       await api.copyClipboardEntry(entry.id);
       setClipboardCache((current) => {
@@ -197,21 +194,16 @@ export function ShelfPickerPage() {
       await api.hideShelfPicker();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
-    } finally {
-      setCopying(false);
     }
   }, []);
 
   const copySnippet = useCallback(async (snippet: Snippet) => {
-    setCopying(true);
     try {
       await api.copySnippetToClipboard(snippet.id);
       toast.success("已复制");
       await api.hideShelfPicker();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
-    } finally {
-      setCopying(false);
     }
   }, []);
 
