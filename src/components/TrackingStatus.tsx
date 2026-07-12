@@ -7,7 +7,7 @@ export function TrackingStatus({ className }: { className?: string }) {
         <span className="absolute inline-flex h-full w-full animate-ping rounded-[3px] bg-emerald-400 opacity-60" />
         <span className="relative inline-flex h-2 w-2 rounded-[3px] bg-emerald-400" />
       </span>
-      <span className="text-[11px] text-muted-foreground">后台统计中</span>
+      <span className="text-[11px] text-muted-foreground">统计中</span>
     </div>
   );
 }

@@ -4,8 +4,13 @@ mod platform;
 mod pomodoro;
 
 mod auxiliary_windows;
+mod clipboard_db;
+mod clipboard_watcher;
 #[cfg(target_os = "macos")]
 mod macos_dock;
+#[cfg(target_os = "macos")]
+mod macos_shelf_dismiss;
+mod tray_menu;
 
 #[cfg(target_os = "macos")]
 #[macro_use]
@@ -14,17 +19,13 @@ extern crate objc;
 use db::{db_path, init_db, AppState, PomodoroRuntime, TrackerState};
 use parking_lot::Mutex;
 use std::sync::Arc;
-#[cfg(not(target_os = "macos"))]
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
-    Emitter, Manager, WindowEvent,
-};
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const QUICK_TODO_SHORTCUT: &str = "F2";
+const CLIPBOARD_PICKER_SHORTCUT: &str = "F4";
+const SNIPPET_PICKER_SHORTCUT: &str = "F5";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,16 +41,26 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        if let Err(error) = auxiliary_windows::show_quick_todo(app) {
-                            let _ = app.emit(
-                                "toast",
-                                serde_json::json!({
-                                    "message": format!("快速待办窗口打开失败: {error}")
-                                }),
-                            );
+                .with_handler(|app, shortcut, event| {
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    let id = shortcut.to_string();
+                    let result = match id.as_str() {
+                        QUICK_TODO_SHORTCUT => auxiliary_windows::show_quick_todo(app),
+                        CLIPBOARD_PICKER_SHORTCUT => {
+                            auxiliary_windows::show_clipboard_picker_window(app)
                         }
+                        SNIPPET_PICKER_SHORTCUT => auxiliary_windows::show_snippet_picker_window(app),
+                        _ => Ok(()),
+                    };
+                    if let Err(error) = result {
+                        let _ = app.emit(
+                            "toast",
+                            serde_json::json!({
+                                "message": format!("快捷键窗口打开失败: {error}")
+                            }),
+                        );
                     }
                 })
                 .build(),
@@ -68,14 +79,28 @@ pub fn run() {
                 db: Arc::new(Mutex::new(conn)),
                 tracker: Arc::new(Mutex::new(TrackerState::default())),
                 pomodoro: Arc::new(Mutex::new(PomodoroRuntime::default())),
+                clipboard: Arc::new(Mutex::new(db::ClipboardRuntime::default())),
             };
             commands::start_tracker(app.handle().clone(), state.clone());
+            clipboard_watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
             app.manage(state.clone());
             commands::check_pending_recurrences(app.handle(), &state);
 
-            setup_tray(app)?;
-            register_quick_todo_shortcut(app.handle());
+            tray_menu::setup_tray(app)?;
+            register_global_shortcuts(app.handle());
             auxiliary_windows::precache_auxiliary_windows(app.handle())?;
+            #[cfg(target_os = "macos")]
+            macos_shelf_dismiss::install_shelf_dismiss_monitors(app.handle());
+
+            if let Some(state) = app.try_state::<AppState>() {
+                let should_restore_float = {
+                    let runtime = state.pomodoro.lock();
+                    runtime.status != db::PomodoroStatus::Idle
+                };
+                if should_restore_float {
+                    let _ = auxiliary_windows::show_pomodoro_float_window(app.handle());
+                }
+            }
 
             #[cfg(target_os = "macos")]
             {
@@ -140,75 +165,45 @@ pub fn run() {
             auxiliary_windows::show_eye_care_overlay,
             auxiliary_windows::hide_eye_care_overlay,
             auxiliary_windows::sync_eye_care_window_background,
+            auxiliary_windows::show_pomodoro_float,
+            auxiliary_windows::hide_pomodoro_float,
+            auxiliary_windows::toggle_pomodoro_float,
+            auxiliary_windows::is_pomodoro_float_visible_command,
+            auxiliary_windows::set_pomodoro_float_expanded,
+            auxiliary_windows::save_pomodoro_float_position,
+            auxiliary_windows::popup_pomodoro_float_menu,
+            commands::clipboard::get_clipboard_history,
+            commands::clipboard::delete_clipboard_history_entry,
+            commands::clipboard::clear_clipboard_history_command,
+            commands::clipboard::pin_clipboard_history_entry,
+            commands::clipboard::copy_text_to_clipboard,
+            commands::clipboard::copy_clipboard_entry,
+            commands::snippets::get_snippets,
+            commands::snippets::create_snippet,
+            commands::snippets::update_snippet_command,
+            commands::snippets::delete_snippet_command,
+            commands::snippets::copy_snippet_to_clipboard,
+            auxiliary_windows::show_clipboard_picker,
+            auxiliary_windows::show_snippet_picker,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-fn register_quick_todo_shortcut(app: &tauri::AppHandle) {
-    if let Err(error) = app.global_shortcut().register(QUICK_TODO_SHORTCUT) {
-        eprintln!("Failed to register {QUICK_TODO_SHORTCUT} global shortcut: {error}");
-        let _ = app.emit(
-            "toast",
-            serde_json::json!({
-                "message": format!("{QUICK_TODO_SHORTCUT} shortcut unavailable: {error}")
-            }),
-        );
+fn register_global_shortcuts(app: &tauri::AppHandle) {
+    for shortcut in [
+        QUICK_TODO_SHORTCUT,
+        CLIPBOARD_PICKER_SHORTCUT,
+        SNIPPET_PICKER_SHORTCUT,
+    ] {
+        if let Err(error) = app.global_shortcut().register(shortcut) {
+            eprintln!("Failed to register {shortcut} global shortcut: {error}");
+            let _ = app.emit(
+                "toast",
+                serde_json::json!({
+                    "message": format!("{shortcut} shortcut unavailable: {error}")
+                }),
+            );
+        }
     }
-}
-
-fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItem::with_id(app, "show", "打开首页", true, None::<&str>)?;
-    let reset = MenuItem::with_id(app, "reset", "清空当日数据", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出软件", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &reset, &quit])?;
-
-    let tray_builder = TrayIconBuilder::with_id("main")
-        .icon(
-            app.default_window_icon()
-                .ok_or("missing default window icon")?
-                .clone(),
-        )
-        .menu(&menu)
-        .show_menu_on_left_click(cfg!(target_os = "macos"))
-        .tooltip("Tempo: 加载中...")
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                let _ = commands::show_window(app.clone());
-            }
-            "reset" => {
-                if let Some(state) = app.try_state::<AppState>() {
-                    commands::do_reset_today(&state);
-                    let _ = app.emit("toast", serde_json::json!({ "message": "今日数据已清空" }));
-                }
-            }
-            "quit" => {
-                commands::quit_app(app.clone());
-            }
-            _ => {}
-        });
-
-    #[cfg(not(target_os = "macos"))]
-    let tray = tray_builder
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                let _ = commands::show_window(app.clone());
-            }
-        })
-        .build(app)?;
-
-    #[cfg(target_os = "macos")]
-    let tray = tray_builder.build(app)?;
-
-    tray.with_inner_tray_icon(|inner| {
-        inner.set_show_menu_on_right_click(!cfg!(target_os = "macos"));
-    })?;
-
-    Ok(())
 }

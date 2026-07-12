@@ -159,7 +159,7 @@
         var view = new URLSearchParams(location.search).get("view");
         var root = document.documentElement;
 
-        if (view === "quick-todo") {
+        if (view === "quick-todo" || view === "pomodoro-float" || view === "clipboard-picker" || view === "snippet-picker") {
           root.style.background = "transparent";
           document.addEventListener("DOMContentLoaded", function () {
             var splash = document.getElementById("boot-splash");

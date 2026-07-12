@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import { Pause, Play, RotateCcw, Settings2, SkipForward, SlidersHorizontal } from "lucide-react";
+import { Pause, PictureInPicture2, Play, RotateCcw, Settings2, SkipForward, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,7 @@ export function PomodoroPage() {
   const [state, setState] = useState<PomodoroState | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [floatVisible, setFloatVisible] = useState(false);
 
   const activeTodos = useMemo(
     () => todos.filter((todo) => !todo.completed),
@@ -84,6 +85,18 @@ export function PomodoroPage() {
       cancelled = true;
       unlisten.then((fn) => fn());
       window.clearInterval(fallback);
+    };
+  }, []);
+
+  useEffect(() => {
+    void api.isPomodoroFloatVisible().then(setFloatVisible).catch(console.error);
+
+    const unlisten = listen<boolean>("pomodoro-float-visible", (event) => {
+      setFloatVisible(event.payload);
+    });
+
+    return () => {
+      void unlisten.then((fn) => fn());
     };
   }, []);
 
@@ -182,6 +195,16 @@ export function PomodoroPage() {
     setState(await api.skipPomodoroPhase());
   };
 
+  const handleToggleFloat = async () => {
+    try {
+      const visible = await api.togglePomodoroFloat();
+      setFloatVisible(visible);
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "无法切换悬浮窗");
+    }
+  };
+
   return (
     <div className="mx-auto flex h-[calc(100vh-5rem)] max-h-[calc(100vh-5rem)] max-w-3xl flex-col gap-3 overflow-hidden">
       <div className="flex shrink-0 items-center justify-between gap-3">
@@ -206,6 +229,16 @@ export function PomodoroPage() {
               {state.sessions_today}
             </span>
           </div>
+          <Button
+            variant={floatVisible ? "default" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5 px-3"
+            onClick={() => void handleToggleFloat()}
+            title="番茄钟悬浮窗"
+          >
+            <PictureInPicture2 className="h-3.5 w-3.5" />
+            悬浮窗
+          </Button>
           <PomodoroSettingsDialog
             settings={settings}
             onChange={(patch) => void handleUpdateSettings(patch)}

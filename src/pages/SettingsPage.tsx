@@ -224,6 +224,17 @@ export function SettingsPage() {
         </Card>
       </Section>
 
+      <Section title="剪贴板">
+        <Card className="overflow-hidden">
+          <Row label="记录剪贴板" desc="自动保存复制过的文字">
+            <Switch
+              checked={settings.clipboard_monitor_enabled}
+              onCheckedChange={(v) => update({ clipboard_monitor_enabled: v })}
+            />
+          </Row>
+        </Card>
+      </Section>
+
       <Section title="关于">
         <Card>
           <CardContent className="space-y-3 p-4">

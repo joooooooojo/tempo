@@ -1,4 +1,6 @@
+pub mod clipboard;
 pub mod markdown;
+pub mod snippets;
 pub mod pomodoro_cmds;
 pub mod reports;
 pub mod settings;

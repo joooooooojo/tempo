@@ -3,7 +3,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "@/lib/api";
 import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
-import { cn } from "@/lib/utils";
+import { isMacTarget } from "@/lib/utils";
 import type { TodoItem } from "@/types";
 
 export function QuickTodoPage() {
@@ -25,6 +25,7 @@ export function QuickTodoPage() {
     const previousBodyOverflow = document.body.style.overflow;
     const root = document.documentElement;
     root.classList.add("quick-todo-window");
+    root.classList.add(isMacTarget ? "quick-todo-window--mac" : "quick-todo-window--css-shadow");
     document.body.classList.add("quick-todo-window");
     document.body.style.overflow = "hidden";
     void applyThemeFromSettings();
@@ -34,7 +35,7 @@ export function QuickTodoPage() {
     });
 
     return () => {
-      root.classList.remove("quick-todo-window");
+      root.classList.remove("quick-todo-window", "quick-todo-window--mac", "quick-todo-window--css-shadow");
       document.body.classList.remove("quick-todo-window");
       document.body.style.overflow = previousBodyOverflow;
       unsubscribeTheme();
@@ -104,33 +105,21 @@ export function QuickTodoPage() {
   };
 
   return (
-    <div
-      className="quick-todo-page"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !saving) {
-          void hideWindow();
-        }
-      }}
-    >
-      <div className="quick-todo-panel text-foreground">
-        <form className="flex h-full items-center px-4" onSubmit={submit}>
-          <input
-            ref={inputRef}
-            value={title}
-            maxLength={120}
-            placeholder="输入待办事项标题"
-            disabled={saving}
-            className={cn(
-              "h-12 w-full rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[15px] font-medium text-foreground shadow-sm shadow-emerald-950/[0.03] outline-none transition-colors placeholder:text-muted-foreground",
-              "focus:border-primary/45 focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
-            )}
-            onChange={(event) => setTitle(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") close();
-            }}
-          />
-        </form>
-      </div>
+    <div className="quick-todo-page">
+      <form className="quick-todo-panel text-foreground" onSubmit={submit}>
+        <input
+          ref={inputRef}
+          value={title}
+          maxLength={120}
+          placeholder="输入待办事项标题"
+          disabled={saving}
+          className="quick-todo-input"
+          onChange={(event) => setTitle(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") close();
+          }}
+        />
+      </form>
     </div>
   );
 }

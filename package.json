@@ -8,7 +8,7 @@
     "icons": "node ./scripts/generate-icons.mjs",
     "sync:version": "node ./scripts/sync-version.mjs",
     "version": "node ./scripts/sync-version.mjs",
-    "build": "node ./scripts/sync-version.mjs && tsc && tauri build",
+    "build": "node ./scripts/sync-version.mjs && tsc && node ./scripts/run-tauri-build.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

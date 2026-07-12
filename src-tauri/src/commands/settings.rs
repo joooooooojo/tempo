@@ -91,6 +91,33 @@ pub fn update_settings(
     {
         current.pomodoro_sessions_per_cycle = v as u32;
     }
+    if let Some(v) = settings
+        .get("pomodoro_float_enabled")
+        .and_then(|v| v.as_bool())
+    {
+        current.pomodoro_float_enabled = v;
+        if !v {
+            let _ = crate::auxiliary_windows::hide_pomodoro_float_window(&app);
+        }
+    }
+    if let Some(v) = settings
+        .get("pomodoro_float_auto_show")
+        .and_then(|v| v.as_bool())
+    {
+        current.pomodoro_float_auto_show = v;
+    }
+    if let Some(v) = settings
+        .get("clipboard_monitor_enabled")
+        .and_then(|v| v.as_bool())
+    {
+        current.clipboard_monitor_enabled = v;
+    }
+    if let Some(v) = settings
+        .get("clipboard_max_entries")
+        .and_then(|v| v.as_u64())
+    {
+        current.clipboard_max_entries = (v as u32).clamp(1, 1000);
+    }
 
     let conn = state.db.lock();
     crate::db::save_settings(&conn, &current);

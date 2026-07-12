@@ -106,7 +106,33 @@ export interface Settings {
   pomodoro_short_break_minutes: number;
   pomodoro_long_break_minutes: number;
   pomodoro_sessions_per_cycle: number;
+  pomodoro_float_enabled: boolean;
+  pomodoro_float_auto_show: boolean;
+  clipboard_monitor_enabled: boolean;
+  clipboard_max_entries: number;
   storage_dir: string;
+}
+
+export interface ClipboardEntry {
+  id: number;
+  content: string;
+  kind: "text" | "image" | string;
+  source_app?: string | null;
+  source_process?: string | null;
+  image_width?: number | null;
+  image_height?: number | null;
+  pinned: boolean;
+  created_at: string;
+}
+
+export interface Snippet {
+  id: number;
+  title: string;
+  content: string;
+  tags: string[];
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PomodoroState {

@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppUsage,
+  ClipboardEntry,
   DailyReport,
   PomodoroState,
   Settings,
+  Snippet,
   TodoFocusSummary,
   TodoImage,
   TodoItem,
@@ -119,4 +121,31 @@ export const api = {
     invoke<TodoFocusSummary>("get_todo_focus_summary", { todoId }),
   getTodoFocusSummaries: (todoIds: number[]) =>
     invoke<TodoFocusSummary[]>("get_todo_focus_summaries", { todoIds }),
+  showPomodoroFloat: () => invoke<void>("show_pomodoro_float"),
+  hidePomodoroFloat: () => invoke<void>("hide_pomodoro_float"),
+  togglePomodoroFloat: () => invoke<boolean>("toggle_pomodoro_float"),
+  isPomodoroFloatVisible: () => invoke<boolean>("is_pomodoro_float_visible_command"),
+  setPomodoroFloatExpanded: (expanded: boolean) =>
+    invoke<void>("set_pomodoro_float_expanded", { expanded }),
+  savePomodoroFloatPosition: (x: number, y: number) =>
+    invoke<void>("save_pomodoro_float_position", { x, y }),
+  popupPomodoroFloatMenu: () => invoke<void>("popup_pomodoro_float_menu"),
+  getClipboardHistory: (query?: string, limit?: number) =>
+    invoke<ClipboardEntry[]>("get_clipboard_history", { query, limit }),
+  deleteClipboardEntry: (id: number) =>
+    invoke<void>("delete_clipboard_history_entry", { id }),
+  clearClipboardHistory: () => invoke<number>("clear_clipboard_history_command"),
+  pinClipboardEntry: (id: number, pinned: boolean) =>
+    invoke<ClipboardEntry>("pin_clipboard_history_entry", { id, pinned }),
+  copyTextToClipboard: (text: string) => invoke<void>("copy_text_to_clipboard", { text }),
+  copyClipboardEntry: (id: number) => invoke<void>("copy_clipboard_entry", { id }),
+  getSnippets: (query?: string) => invoke<Snippet[]>("get_snippets", { query }),
+  createSnippet: (title: string, content: string, tags: string[] = []) =>
+    invoke<Snippet>("create_snippet", { title, content, tags }),
+  updateSnippet: (id: number, title: string, content: string, tags: string[] = []) =>
+    invoke<Snippet>("update_snippet_command", { id, title, content, tags }),
+  deleteSnippet: (id: number) => invoke<void>("delete_snippet_command", { id }),
+  copySnippetToClipboard: (id: number) => invoke<void>("copy_snippet_to_clipboard", { id }),
+  showClipboardPicker: () => invoke<void>("show_clipboard_picker"),
+  showSnippetPicker: () => invoke<void>("show_snippet_picker"),
 };

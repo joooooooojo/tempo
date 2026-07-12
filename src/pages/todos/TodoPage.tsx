@@ -955,7 +955,7 @@ export function TodoPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               value={searchQuery}
-              placeholder="搜索待办、标签、正文、备注"
+              placeholder="搜索"
               className="h-9 w-full rounded-lg border border-border/70 bg-white/55 pl-8 pr-8 text-[13px] text-foreground shadow-sm shadow-emerald-950/[0.03] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20 dark:bg-white/[0.045]"
               onChange={(event) => setSearchQuery(event.target.value)}
             />

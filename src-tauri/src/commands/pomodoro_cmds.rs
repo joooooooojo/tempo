@@ -25,6 +25,9 @@ pub fn start_pomodoro(
 ) -> Result<PomodoroState, String> {
     let snapshot = crate::pomodoro::start_pomodoro(&state, todo_id)?;
     crate::pomodoro::push_pomodoro_update(&app, &state);
+
+    let _ = crate::auxiliary_windows::show_pomodoro_float_window(&app);
+
     Ok(snapshot)
 }
 

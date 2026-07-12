@@ -7,9 +7,14 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { ReminderDialog } from "@/components/ReminderDialog";
 import { EyeCareReminderPage } from "@/pages/EyeCareReminderPage";
+import { ClipboardPage } from "@/pages/ClipboardPage";
+import { ClipboardPickerPage } from "@/pages/ClipboardPickerPage";
+import { PomodoroFloatPage } from "@/pages/PomodoroFloatPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { PomodoroPage } from "@/pages/PomodoroPage";
+import { SnippetPickerPage } from "@/pages/SnippetPickerPage";
+import { SnippetsPage } from "@/pages/SnippetsPage";
 import { TodoPage } from "@/pages/TodoPage";
 import { QuickTodoPage } from "@/pages/QuickTodoPage";
 import { api } from "@/lib/api";
@@ -34,6 +39,18 @@ function App() {
 
   if (view === "quick-todo") {
     return <QuickTodoPage />;
+  }
+
+  if (view === "pomodoro-float") {
+    return <PomodoroFloatPage />;
+  }
+
+  if (view === "clipboard-picker") {
+    return <ClipboardPickerPage />;
+  }
+
+  if (view === "snippet-picker") {
+    return <SnippetPickerPage />;
   }
 
   return <MainApp />;
@@ -123,6 +140,8 @@ function MainApp() {
             <Route index element={<TodoPage />} />
             <Route path="pomodoro" element={<PomodoroPage />} />
             <Route path="reports" element={<ReportsPage />} />
+            <Route path="clipboard" element={<ClipboardPage />} />
+            <Route path="snippets" element={<SnippetsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

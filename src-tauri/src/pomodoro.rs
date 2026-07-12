@@ -272,6 +272,10 @@ fn notify_phase_end(app: &AppHandle, phase: PomodoroPhase, skipped: bool) {
 }
 
 fn focus_main_window(app: &AppHandle) {
+    if crate::auxiliary_windows::is_pomodoro_float_visible(app) {
+        return;
+    }
+
     let app_handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(window) = app_handle.get_webview_window("main") {

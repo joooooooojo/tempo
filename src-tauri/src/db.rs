@@ -142,6 +142,12 @@ pub struct Settings {
     pub pomodoro_short_break_minutes: u32,
     pub pomodoro_long_break_minutes: u32,
     pub pomodoro_sessions_per_cycle: u32,
+    pub pomodoro_float_enabled: bool,
+    pub pomodoro_float_auto_show: bool,
+    pub pomodoro_float_x: Option<i32>,
+    pub pomodoro_float_y: Option<i32>,
+    pub clipboard_monitor_enabled: bool,
+    pub clipboard_max_entries: u32,
     pub storage_dir: String,
 }
 
@@ -161,6 +167,12 @@ impl Default for Settings {
             pomodoro_short_break_minutes: 5,
             pomodoro_long_break_minutes: 15,
             pomodoro_sessions_per_cycle: 4,
+            pomodoro_float_enabled: false,
+            pomodoro_float_auto_show: true,
+            pomodoro_float_x: None,
+            pomodoro_float_y: None,
+            clipboard_monitor_enabled: true,
+            clipboard_max_entries: 200,
             storage_dir: String::new(),
         }
     }
@@ -243,11 +255,19 @@ impl Default for TrackerState {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ClipboardRuntime {
+    pub skip_next_capture: bool,
+    pub last_source_app: Option<String>,
+    pub last_source_process: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub tracker: Arc<Mutex<TrackerState>>,
     pub pomodoro: Arc<Mutex<PomodoroRuntime>>,
+    pub clipboard: Arc<Mutex<ClipboardRuntime>>,
 }
 
 pub fn today_str() -> String {
@@ -476,9 +496,38 @@ pub fn init_db(path: &PathBuf) -> Connection {
             skipped INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE SET NULL
         );
+        CREATE TABLE IF NOT EXISTS clipboard_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'text',
+            source_app TEXT,
+            source_process TEXT,
+            image_width INTEGER,
+            image_height INTEGER,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS snippets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tags TEXT NOT NULL DEFAULT '[]',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_clipboard_history_created
+            ON clipboard_history(created_at DESC);
         ",
     )
     .expect("init schema");
+    conn.execute("ALTER TABLE clipboard_history ADD COLUMN image_width INTEGER", [])
+        .ok();
+    conn.execute("ALTER TABLE clipboard_history ADD COLUMN image_height INTEGER", [])
+        .ok();
+    conn.execute("ALTER TABLE clipboard_history ADD COLUMN source_process TEXT", [])
+        .ok();
     conn.execute("ALTER TABLE app_usage ADD COLUMN icon_data_url TEXT", [])
         .ok();
     conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", [])
@@ -612,6 +661,29 @@ pub fn load_settings(conn: &Connection) -> Settings {
         pomodoro_sessions_per_cycle: get_setting(conn, "pomodoro_sessions_per_cycle", "4")
             .parse()
             .unwrap_or(4),
+        pomodoro_float_enabled: get_setting(conn, "pomodoro_float_enabled", "false") == "true",
+        pomodoro_float_auto_show: get_setting(conn, "pomodoro_float_auto_show", "true") == "true",
+        pomodoro_float_x: {
+            let raw = get_setting(conn, "pomodoro_float_x", "");
+            if raw.is_empty() {
+                None
+            } else {
+                raw.parse().ok()
+            }
+        },
+        pomodoro_float_y: {
+            let raw = get_setting(conn, "pomodoro_float_y", "");
+            if raw.is_empty() {
+                None
+            } else {
+                raw.parse().ok()
+            }
+        },
+        clipboard_monitor_enabled: get_setting(conn, "clipboard_monitor_enabled", "true") == "true",
+        clipboard_max_entries: get_setting(conn, "clipboard_max_entries", "200")
+            .parse()
+            .unwrap_or(200)
+            .clamp(1, 1000),
         storage_dir: String::new(),
     }
 }
@@ -661,6 +733,32 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         conn,
         "pomodoro_sessions_per_cycle",
         &settings.pomodoro_sessions_per_cycle.to_string(),
+    );
+    set_setting(
+        conn,
+        "pomodoro_float_enabled",
+        &settings.pomodoro_float_enabled.to_string(),
+    );
+    set_setting(
+        conn,
+        "pomodoro_float_auto_show",
+        &settings.pomodoro_float_auto_show.to_string(),
+    );
+    if let Some(x) = settings.pomodoro_float_x {
+        set_setting(conn, "pomodoro_float_x", &x.to_string());
+    }
+    if let Some(y) = settings.pomodoro_float_y {
+        set_setting(conn, "pomodoro_float_y", &y.to_string());
+    }
+    set_setting(
+        conn,
+        "clipboard_monitor_enabled",
+        &settings.clipboard_monitor_enabled.to_string(),
+    );
+    set_setting(
+        conn,
+        "clipboard_max_entries",
+        &settings.clipboard_max_entries.to_string(),
     );
 }
 
