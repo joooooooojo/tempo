@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ClipboardList, Pin, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Loader2, Pin, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   clipboardKindLabel,
@@ -15,32 +15,88 @@ import { api } from "@/lib/api";
 import { cn, formatRelativeTime, previewLines } from "@/lib/utils";
 import type { ClipboardEntry, Settings } from "@/types";
 
+const PAGE_SIZE = 20;
+
 export function ClipboardPage() {
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [query, setQuery] = useState("");
   const [settings, setSettings] = useState<Settings | null>(null);
-
-  const load = useCallback(async () => {
-    const [nextEntries, nextSettings] = await Promise.all([
-      api.getClipboardHistory(query || undefined),
-      api.getSettings(),
-    ]);
-    setEntries(nextEntries);
-    setSettings(nextSettings);
-  }, [query]);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const queryRef = useRef(query);
 
   useEffect(() => {
-    void load();
-    const unlisten = listen("clipboard-update", () => void load());
+    queryRef.current = query;
+  }, [query]);
+
+  const loadPage = useCallback(async (offset: number, search?: string, append = false) => {
+    const isInitial = offset === 0 && !append;
+    if (isInitial) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
+
+    try {
+      const [page, nextSettings] = await Promise.all([
+        api.getClipboardHistory(search, PAGE_SIZE, offset),
+        isInitial ? api.getSettings() : Promise.resolve(null),
+      ]);
+
+      setEntries((current) => (append ? [...current, ...page.entries] : page.entries));
+      setTotal(page.total);
+      setHasMore(page.has_more);
+      if (nextSettings) {
+        setSettings(nextSettings);
+      }
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, []);
+
+  const reload = useCallback(async () => {
+    await loadPage(0, queryRef.current || undefined);
+  }, [loadPage]);
+
+  const loadMore = useCallback(async () => {
+    if (loading || loadingMore || !hasMore) return;
+    await loadPage(entries.length, queryRef.current || undefined, true);
+  }, [entries.length, hasMore, loadPage, loading, loadingMore]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadPage(0, query || undefined);
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [loadPage, query]);
+
+  useEffect(() => {
+    const unlisten = listen("clipboard-update", () => void reload());
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [load]);
+  }, [reload]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 200);
-    return () => window.clearTimeout(timer);
-  }, [load, query]);
+    const node = loadMoreRef.current;
+    if (!node || !hasMore) return;
+
+    const observer = new IntersectionObserver(
+      (records) => {
+        if (records[0]?.isIntersecting) {
+          void loadMore();
+        }
+      },
+      { rootMargin: "240px" }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore]);
 
   const copyEntry = async (entry: ClipboardEntry) => {
     try {
@@ -107,15 +163,28 @@ export function ClipboardPage() {
           onClick={async () => {
             await api.clearClipboardHistory();
             toast.success("已清空未固定记录");
-            void load();
+            void reload();
           }}
         >
           清空历史
         </Button>
       </div>
 
+      {total > 0 && (
+        <p className="text-[12px] text-muted-foreground">
+          已加载 {entries.length} / {total} 条
+        </p>
+      )}
+
       <div className="space-y-2">
-        {entries.length === 0 ? (
+        {loading ? (
+          <Card className="border-dashed">
+            <CardContent className="flex items-center justify-center gap-2 py-10 text-[13px] text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              加载中...
+            </CardContent>
+          </Card>
+        ) : entries.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="py-10 text-center text-[13px] text-muted-foreground">
               还没有剪贴记录，复制文字或截图试试吧
@@ -165,6 +234,7 @@ export function ClipboardPage() {
                       <img
                         src={entry.content}
                         alt=""
+                        loading="lazy"
                         className="max-h-40 rounded-lg border border-border/40 object-contain"
                       />
                       <p className="mt-2 text-[11px] text-muted-foreground">
@@ -184,7 +254,7 @@ export function ClipboardPage() {
                       title={entry.pinned ? "取消固定" : "固定"}
                       onClick={(event) => {
                         event.stopPropagation();
-                        void api.pinClipboardEntry(entry.id, !entry.pinned).then(() => load());
+                        void api.pinClipboardEntry(entry.id, !entry.pinned).then(() => reload());
                       }}
                     >
                       <Pin className={cn("h-3.5 w-3.5", entry.pinned && "text-primary")} />
@@ -196,7 +266,7 @@ export function ClipboardPage() {
                       title="删除"
                       onClick={(event) => {
                         event.stopPropagation();
-                        void api.deleteClipboardEntry(entry.id).then(() => load());
+                        void api.deleteClipboardEntry(entry.id).then(() => reload());
                       }}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -206,6 +276,22 @@ export function ClipboardPage() {
               </CardContent>
             </Card>
           ))
+        )}
+
+        {hasMore && (
+          <div
+            ref={loadMoreRef}
+            className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground"
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                加载更多...
+              </>
+            ) : (
+              "继续下滑加载更多"
+            )}
+          </div>
         )}
       </div>
     </div>

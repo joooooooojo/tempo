@@ -1,30 +1,79 @@
-use crate::clipboard_db::{
-    clear_clipboard_history, delete_clipboard_entry, list_clipboard_entries,
-    set_clipboard_entry_pinned, ClipboardEntry,
+use crate::clipboard_images::{
+    hydrate_clipboard_image_urls, maybe_delete_clipboard_image_file,
 };
+use crate::clipboard_db::{
+    clear_clipboard_history, count_clipboard_entries, delete_clipboard_entry,
+    list_clipboard_entries, set_clipboard_entry_pinned, ClipboardEntry,
+};
+use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+pub struct ClipboardHistoryPage {
+    pub entries: Vec<ClipboardEntry>,
+    pub total: u32,
+    pub has_more: bool,
+}
 use crate::clipboard_watcher::{copy_clipboard_entry_by_id, write_clipboard_text};
 use crate::db::AppState;
 
+fn hydrate_clipboard_icons(app: &tauri::AppHandle, entries: &mut [ClipboardEntry]) {
+    for entry in entries.iter_mut() {
+        let app_name = entry.source_app.as_deref().unwrap_or("").trim();
+        if app_name.is_empty() {
+            continue;
+        }
+        let process_name = entry
+            .source_process
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(app_name);
+        entry.source_icon_data_url =
+            crate::app_icons::resolve_app_icon_protocol_url(app, app_name, process_name);
+    }
+}
+
 #[tauri::command]
 pub fn get_clipboard_history(
+    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     query: Option<String>,
     limit: Option<u32>,
-) -> Vec<ClipboardEntry> {
+    offset: Option<u32>,
+) -> ClipboardHistoryPage {
     let conn = state.db.lock();
-    list_clipboard_entries(&conn, query.as_deref(), limit.unwrap_or(200).min(500))
+    let limit = limit.unwrap_or(200).min(500);
+    let offset = offset.unwrap_or(0);
+    let total = count_clipboard_entries(&conn, query.as_deref());
+    let mut entries =
+        list_clipboard_entries(&conn, query.as_deref(), limit, offset);
+    hydrate_clipboard_icons(&app, &mut entries);
+    hydrate_clipboard_image_urls(&app, &conn, &mut entries);
+    drop(conn);
+    let loaded = offset.saturating_add(entries.len() as u32);
+    ClipboardHistoryPage {
+        has_more: loaded < total,
+        total,
+        entries,
+    }
 }
 
 #[tauri::command]
 pub fn delete_clipboard_history_entry(
+    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     id: i64,
 ) -> Result<(), String> {
     let conn = state.db.lock();
-    if delete_clipboard_entry(&conn, id) {
-        Ok(())
-    } else {
-        Err("记录不存在".into())
+    match delete_clipboard_entry(&conn, id) {
+        Ok(image_content) => {
+            drop(conn);
+            if let Some(content) = image_content {
+                let conn = state.db.lock();
+                maybe_delete_clipboard_image_file(&conn, &app, &content);
+            }
+            Ok(())
+        }
+        Err(()) => Err("记录不存在".into()),
     }
 }
 
@@ -36,12 +85,18 @@ pub fn clear_clipboard_history_command(state: tauri::State<AppState>) -> Result<
 
 #[tauri::command]
 pub fn pin_clipboard_history_entry(
+    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     id: i64,
     pinned: bool,
 ) -> Result<ClipboardEntry, String> {
     let conn = state.db.lock();
-    set_clipboard_entry_pinned(&conn, id, pinned).ok_or_else(|| "记录不存在".into())
+    let mut entry =
+        set_clipboard_entry_pinned(&conn, id, pinned).ok_or("记录不存在".to_string())?;
+    hydrate_clipboard_icons(&app, std::slice::from_mut(&mut entry));
+    hydrate_clipboard_image_urls(&app, &conn, std::slice::from_mut(&mut entry));
+    drop(conn);
+    Ok(entry)
 }
 
 #[tauri::command]
@@ -50,6 +105,10 @@ pub fn copy_text_to_clipboard(state: tauri::State<AppState>, text: String) -> Re
 }
 
 #[tauri::command]
-pub fn copy_clipboard_entry(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
-    copy_clipboard_entry_by_id(&state, id)
+pub fn copy_clipboard_entry(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    id: i64,
+) -> Result<(), String> {
+    copy_clipboard_entry_by_id(&state, &app, id)
 }

@@ -8,12 +8,11 @@ import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { ReminderDialog } from "@/components/ReminderDialog";
 import { EyeCareReminderPage } from "@/pages/EyeCareReminderPage";
 import { ClipboardPage } from "@/pages/ClipboardPage";
-import { ClipboardPickerPage } from "@/pages/ClipboardPickerPage";
+import { ShelfPickerPage } from "@/pages/ShelfPickerPage";
 import { PomodoroFloatPage } from "@/pages/PomodoroFloatPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { PomodoroPage } from "@/pages/PomodoroPage";
-import { SnippetPickerPage } from "@/pages/SnippetPickerPage";
 import { SnippetsPage } from "@/pages/SnippetsPage";
 import { TodoPage } from "@/pages/TodoPage";
 import { QuickTodoPage } from "@/pages/QuickTodoPage";
@@ -45,12 +44,8 @@ function App() {
     return <PomodoroFloatPage />;
   }
 
-  if (view === "clipboard-picker") {
-    return <ClipboardPickerPage />;
-  }
-
-  if (view === "snippet-picker") {
-    return <SnippetPickerPage />;
+  if (view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
+    return <ShelfPickerPage />;
   }
 
   return <MainApp />;

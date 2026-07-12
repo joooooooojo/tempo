@@ -3,9 +3,13 @@ mod db;
 mod platform;
 mod pomodoro;
 
+mod app_icons;
+mod asset_protocol;
 mod auxiliary_windows;
 mod clipboard_db;
+mod clipboard_images;
 mod clipboard_watcher;
+mod todo_images;
 #[cfg(target_os = "macos")]
 mod macos_dock;
 mod tray_menu;
@@ -32,6 +36,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol(commands::MARKDOWN_IMAGE_PROTOCOL, |ctx, request| {
             commands::markdown_image_protocol_response(ctx.app_handle(), request)
+        })
+        .register_uri_scheme_protocol(clipboard_images::CLIPBOARD_IMAGE_PROTOCOL, |ctx, request| {
+            clipboard_images::clipboard_image_protocol_response(ctx.app_handle(), request)
+        })
+        .register_uri_scheme_protocol(todo_images::TODO_IMAGE_PROTOCOL, |ctx, request| {
+            todo_images::todo_image_protocol_response(ctx.app_handle(), request)
+        })
+        .register_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |ctx, request| {
+            app_icons::app_icon_protocol_response(ctx.app_handle(), request)
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -73,6 +86,9 @@ pub fn run() {
             })?;
             let path = db_path(app.handle());
             let conn = init_db(&path);
+            clipboard_images::migrate_legacy_clipboard_images(app.handle(), &conn);
+            todo_images::migrate_legacy_todo_images(app.handle(), &conn);
+            app_icons::migrate_legacy_app_icons(app.handle(), &conn);
             let state = AppState {
                 db: Arc::new(Mutex::new(conn)),
                 tracker: Arc::new(Mutex::new(TrackerState::default())),

@@ -1,4 +1,3 @@
-use base64::Engine as _;
 use chrono::Local;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -15,6 +14,8 @@ pub struct ClipboardEntry {
     pub kind: String,
     pub source_app: Option<String>,
     pub source_process: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_icon_data_url: Option<String>,
     pub image_width: Option<u32>,
     pub image_height: Option<u32>,
     pub pinned: bool,
@@ -44,15 +45,6 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-pub fn rgba_to_png_data_url(width: u32, height: u32, rgba: &[u8]) -> Option<String> {
-    let png_bytes = encode_rgba_png(width, height, rgba)?;
-    if png_bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
-        return None;
-    }
-    let encoded = base64::engine::general_purpose::STANDARD.encode(png_bytes);
-    Some(format!("data:image/png;base64,{encoded}"))
-}
-
 pub fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     {
@@ -63,21 +55,6 @@ pub fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> 
         writer.write_image_data(rgba).ok()?;
     }
     Some(bytes)
-}
-
-pub fn decode_png_data_url(data_url: &str) -> Option<(u32, u32, Vec<u8>)> {
-    let payload = data_url.strip_prefix("data:image/png;base64,")?;
-    let png_bytes = base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .ok()?;
-    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
-    let mut reader = decoder.read_info().ok()?;
-    let width = reader.info().width;
-    let height = reader.info().height;
-    let mut rgba = vec![0_u8; reader.output_buffer_size()];
-    reader.next_frame(&mut rgba).ok()?;
-    rgba.truncate((width as usize) * (height as usize) * 4);
-    Some((width, height, rgba))
 }
 
 pub fn insert_clipboard_text(
@@ -109,21 +86,22 @@ pub fn insert_clipboard_text(
 
 pub fn insert_clipboard_image(
     conn: &Connection,
-    data_url: &str,
+    storage_key: &str,
+    content_hash: &str,
     width: u32,
     height: u32,
     source_app: Option<&str>,
     source_process: Option<&str>,
     max_entries: u32,
 ) -> Option<ClipboardEntry> {
-    if data_url.is_empty() || width == 0 || height == 0 {
+    if storage_key.is_empty() || width == 0 || height == 0 {
         return None;
     }
 
     upsert_clipboard_entry(
         conn,
-        data_url,
-        &hash_bytes(data_url.as_bytes()),
+        storage_key,
+        content_hash,
         "image",
         source_app,
         source_process,
@@ -208,7 +186,47 @@ pub fn get_clipboard_entry(conn: &Connection, id: i64) -> Option<ClipboardEntry>
     .ok()
 }
 
-pub fn list_clipboard_entries(conn: &Connection, query: Option<&str>, limit: u32) -> Vec<ClipboardEntry> {
+pub fn get_clipboard_entry_content_hash(conn: &Connection, id: i64) -> Option<String> {
+    conn.query_row(
+        "SELECT content_hash FROM clipboard_history WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+pub fn touch_clipboard_entry(conn: &Connection, id: i64) -> bool {
+    conn.execute(
+        "UPDATE clipboard_history SET created_at = ?1 WHERE id = ?2",
+        params![now_iso(), id],
+    )
+    .map(|count| count > 0)
+    .unwrap_or(false)
+}
+
+pub fn count_clipboard_entries(conn: &Connection, query: Option<&str>) -> u32 {
+    let like = query.map(|value| format!("%{value}%"));
+    if let Some(pattern) = like {
+        conn.query_row(
+            "SELECT COUNT(*) FROM clipboard_history WHERE kind = 'text' AND content LIKE ?1",
+            [pattern],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count as u32)
+        .unwrap_or(0)
+    } else {
+        conn.query_row("SELECT COUNT(*) FROM clipboard_history", [], |row| row.get::<_, i64>(0))
+            .map(|count| count as u32)
+            .unwrap_or(0)
+    }
+}
+
+pub fn list_clipboard_entries(
+    conn: &Connection,
+    query: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> Vec<ClipboardEntry> {
     let like = query.map(|value| format!("%{value}%"));
     let mut sql = String::from(
         "SELECT id, content, kind, source_app, source_process, image_width, image_height, pinned, created_at
@@ -219,6 +237,8 @@ pub fn list_clipboard_entries(conn: &Connection, query: Option<&str>, limit: u32
     }
     sql.push_str(" ORDER BY pinned DESC, created_at DESC, id DESC LIMIT ");
     sql.push_str(&limit.to_string());
+    sql.push_str(" OFFSET ");
+    sql.push_str(&offset.to_string());
 
     if let Some(pattern) = like {
         conn.prepare(&sql)
@@ -234,10 +254,23 @@ pub fn list_clipboard_entries(conn: &Connection, query: Option<&str>, limit: u32
     }
 }
 
-pub fn delete_clipboard_entry(conn: &Connection, id: i64) -> bool {
-    conn.execute("DELETE FROM clipboard_history WHERE id = ?1", [id])
+pub fn delete_clipboard_entry(conn: &Connection, id: i64) -> Result<Option<String>, ()> {
+    let image_content = conn
+        .query_row(
+            "SELECT content FROM clipboard_history WHERE id = ?1 AND kind = 'image'",
+            [id],
+            |row| row.get::<_, String>(0),
+        )
+        .ok();
+    if conn
+        .execute("DELETE FROM clipboard_history WHERE id = ?1", [id])
         .map(|count| count > 0)
         .unwrap_or(false)
+    {
+        Ok(image_content)
+    } else {
+        Err(())
+    }
 }
 
 pub fn clear_clipboard_history(conn: &Connection) -> u32 {
@@ -341,6 +374,7 @@ fn map_clipboard_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry
         kind: row.get(2)?,
         source_app: row.get(3)?,
         source_process: row.get(4)?,
+        source_icon_data_url: None,
         image_width: row.get::<_, Option<i64>>(5)?.map(|value| value as u32),
         image_height: row.get::<_, Option<i64>>(6)?.map(|value| value as u32),
         pinned: row.get::<_, i32>(7)? != 0,

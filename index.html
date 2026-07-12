@@ -159,11 +159,11 @@
         var view = new URLSearchParams(location.search).get("view");
         var root = document.documentElement;
 
-        if (view === "quick-todo" || view === "pomodoro-float" || view === "clipboard-picker" || view === "snippet-picker") {
+        if (view === "quick-todo" || view === "pomodoro-float" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
           root.style.background = "transparent";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           root.classList.toggle("dark", prefersDark);
-          if (view === "clipboard-picker" || view === "snippet-picker") {
+          if (view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
             var isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || "");
             root.classList.add("shelf-picker-window");
             root.classList.add(isMac ? "shelf-picker-window--mac" : "shelf-picker-window--css-shadow");

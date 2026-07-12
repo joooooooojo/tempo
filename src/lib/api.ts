@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppUsage,
   ClipboardEntry,
+  ClipboardHistoryPage,
   DailyReport,
   PomodoroState,
   Settings,
@@ -130,8 +131,8 @@ export const api = {
   savePomodoroFloatPosition: (x: number, y: number) =>
     invoke<void>("save_pomodoro_float_position", { x, y }),
   popupPomodoroFloatMenu: () => invoke<void>("popup_pomodoro_float_menu"),
-  getClipboardHistory: (query?: string, limit?: number) =>
-    invoke<ClipboardEntry[]>("get_clipboard_history", { query, limit }),
+  getClipboardHistory: (query?: string, limit?: number, offset?: number) =>
+    invoke<ClipboardHistoryPage>("get_clipboard_history", { query, limit, offset }),
   deleteClipboardEntry: (id: number) =>
     invoke<void>("delete_clipboard_history_entry", { id }),
   clearClipboardHistory: () => invoke<number>("clear_clipboard_history_command"),

@@ -14,27 +14,18 @@ pub struct ForegroundApp {
     pub icon_data_url: Option<String>,
 }
 
-pub fn resolve_app_icon_data_url(app_name: &str, process_name: &str) -> Option<String> {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-
-    static APP_ICON_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-
-    let key = format!("{}|{}", app_name.trim(), process_name.trim()).to_lowercase();
-    let cache = APP_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-
-    if let Ok(icons) = cache.lock() {
-        if let Some(icon) = icons.get(&key) {
-            return Some(icon.clone());
+pub fn extract_icon_png_bytes(app_name: &str, process_name: &str) -> Option<Vec<u8>> {
+    for candidate in icon_path_candidates(app_name, process_name) {
+        if let Some(bytes) = get_cached_icon_png_bytes(&candidate) {
+            return Some(bytes);
         }
     }
+    None
+}
 
-    let icon = resolve_app_icon_data_url_uncached(app_name, process_name)?;
-    if let Ok(mut icons) = cache.lock() {
-        icons.insert(key, icon.clone());
-    }
-
-    Some(icon)
+pub fn resolve_app_icon_data_url(app_name: &str, process_name: &str) -> Option<String> {
+    let _ = (app_name, process_name);
+    None
 }
 
 #[cfg(windows)]
@@ -202,15 +193,7 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
             Some(ForegroundApp {
                 name,
                 process_name: process,
-                icon_data_url: get_cached_icon_data_url(&process_path).or_else(|| {
-                    resolve_app_icon_data_url(
-                        win.app_name.trim(),
-                        &win.process_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default(),
-                    )
-                }),
+                icon_data_url: None,
             })
         }
         Err(_) => None,
@@ -302,17 +285,10 @@ fn get_foreground_app_macos() -> Option<ForegroundApp> {
             return None;
         }
 
-        let icon_data_url = if bundle_path.extension().is_some_and(|ext| ext == "app") {
-            get_cached_icon_data_url(&bundle_path)
-                .or_else(|| resolve_app_icon_data_url(&display_name, &process_name))
-        } else {
-            resolve_app_icon_data_url(&display_name, &process_name)
-        };
-
         Some(ForegroundApp {
             name: display_name,
             process_name,
-            icon_data_url,
+            icon_data_url: None,
         })
     }
 }
@@ -349,11 +325,11 @@ pub fn should_count_screen_time(foreground: &Option<ForegroundApp>) -> bool {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
-fn get_cached_icon_data_url(path: &Path) -> Option<String> {
+fn get_cached_icon_png_bytes(path: &Path) -> Option<Vec<u8>> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
-    static ICON_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = OnceLock::new();
+    static ICON_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<Vec<u8>>>>> = OnceLock::new();
 
     let cache = ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(icons) = cache.lock() {
@@ -362,7 +338,7 @@ fn get_cached_icon_data_url(path: &Path) -> Option<String> {
         }
     }
 
-    let icon = extract_icon_data_url(path);
+    let icon = extract_icon_png_bytes_from_path(path);
     if let Ok(mut icons) = cache.lock() {
         icons.insert(path.to_path_buf(), icon.clone());
     }
@@ -370,16 +346,7 @@ fn get_cached_icon_data_url(path: &Path) -> Option<String> {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn get_cached_icon_data_url(_path: &Path) -> Option<String> {
-    None
-}
-
-fn resolve_app_icon_data_url_uncached(app_name: &str, process_name: &str) -> Option<String> {
-    for candidate in icon_path_candidates(app_name, process_name) {
-        if let Some(icon) = get_cached_icon_data_url(&candidate) {
-            return Some(icon);
-        }
-    }
+fn get_cached_icon_png_bytes(_path: &Path) -> Option<Vec<u8>> {
     None
 }
 
@@ -444,8 +411,7 @@ fn icon_path_candidates(_app_name: &str, _process_name: &str) -> Vec<PathBuf> {
 }
 
 #[cfg(windows)]
-fn extract_icon_data_url(path: &Path) -> Option<String> {
-    use base64::Engine as _;
+fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
@@ -506,7 +472,7 @@ fn extract_icon_data_url(path: &Path) -> Option<String> {
         let _ = SelectObject(hdc, old_object);
         let _ = DestroyIcon(icon);
 
-        let data_url = if drawn && !bits.is_null() {
+        let png_bytes = if drawn && !bits.is_null() {
             let len = (ICON_SIZE * ICON_SIZE * 4) as usize;
             let bgra = std::slice::from_raw_parts(bits as *const u8, len);
             let has_alpha = bgra.chunks_exact(4).any(|pixel| pixel[3] != 0);
@@ -519,19 +485,14 @@ fn extract_icon_data_url(path: &Path) -> Option<String> {
                 rgba.push(if has_alpha { pixel[3] } else { 255 });
             }
 
-            encode_png(ICON_SIZE as u32, ICON_SIZE as u32, &rgba).map(|png| {
-                format!(
-                    "data:image/png;base64,{}",
-                    base64::engine::general_purpose::STANDARD.encode(png)
-                )
-            })
+            encode_png(ICON_SIZE as u32, ICON_SIZE as u32, &rgba)
         } else {
             None
         };
 
         let _ = DeleteObject(bitmap);
         let _ = DeleteDC(hdc);
-        return data_url;
+        return png_bytes;
     }
 
     unsafe fn shell_icon_from_path(path: PCWSTR) -> Option<HICON> {
@@ -608,8 +569,7 @@ fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
 }
 
 #[cfg(target_os = "macos")]
-fn extract_icon_data_url(path: &Path) -> Option<String> {
-    use base64::Engine as _;
+fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
     use std::fs;
     use std::hash::{Hash, Hasher};
     use std::process::Command;
@@ -621,8 +581,8 @@ fn extract_icon_data_url(path: &Path) -> Option<String> {
         .to_string_lossy()
         .to_ascii_lowercase();
 
-    let bytes = if icon_ext == "png" {
-        fs::read(&icon_path).ok()?
+    if icon_ext == "png" {
+        fs::read(&icon_path).ok()
     } else {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         icon_path.hash(&mut hasher);
@@ -647,13 +607,8 @@ fn extract_icon_data_url(path: &Path) -> Option<String> {
 
         let bytes = fs::read(&out).ok()?;
         let _ = fs::remove_file(&out);
-        bytes
-    };
-
-    Some(format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
+        Some(bytes)
+    }
 }
 
 #[cfg(target_os = "macos")]

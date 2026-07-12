@@ -321,7 +321,7 @@ fn phase_label(phase: PomodoroPhase) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::TrackerState;
+    use crate::db::{ClipboardRuntime, TrackerState};
     use parking_lot::Mutex;
     use rusqlite::Connection;
     use std::{
@@ -359,6 +359,7 @@ mod tests {
             db: Arc::new(Mutex::new(conn)),
             tracker: Arc::new(Mutex::new(TrackerState::default())),
             pomodoro: Arc::new(Mutex::new(PomodoroRuntime::default())),
+            clipboard: Arc::new(Mutex::new(ClipboardRuntime::default())),
         }
     }
 

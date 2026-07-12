@@ -119,10 +119,17 @@ export interface ClipboardEntry {
   kind: "text" | "image" | string;
   source_app?: string | null;
   source_process?: string | null;
+  source_icon_data_url?: string | null;
   image_width?: number | null;
   image_height?: number | null;
   pinned: boolean;
   created_at: string;
+}
+
+export interface ClipboardHistoryPage {
+  entries: ClipboardEntry[];
+  total: number;
+  has_more: boolean;
 }
 
 export interface Snippet {

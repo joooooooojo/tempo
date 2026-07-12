@@ -20,12 +20,10 @@ pub const QUICK_TODO_PANEL_HEIGHT: f64 = 44.0;
 pub const POMODORO_FLOAT_PANEL_WIDTH: f64 = 300.0;
 pub const POMODORO_FLOAT_PANEL_HEIGHT: f64 = 56.0;
 
-pub const CLIPBOARD_PICKER_LABEL: &str = "clipboard-picker";
-pub const SNIPPET_PICKER_LABEL: &str = "snippet-picker";
+pub const SHELF_PICKER_LABEL: &str = "shelf-picker";
 pub const SHELF_HEIGHT: f64 = 292.0;
 pub const SHELF_SIDE_MARGIN: f64 = 8.0;
 pub const SHELF_BOTTOM_MARGIN: f64 = 8.0;
-pub const SHELF_WIDTH_RATIO: f64 = 0.88;
 pub const CLIPBOARD_SHELF_WIDTH_RATIO: f64 = 1.0;
 
 const SHELF_SHORTCUT_DEBOUNCE_MS: u64 = 280;
@@ -85,24 +83,19 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         let _ = window.hide();
     }
 
-    for (label, view) in [
-        (CLIPBOARD_PICKER_LABEL, "clipboard-picker"),
-        (SNIPPET_PICKER_LABEL, "snippet-picker"),
-    ] {
-        if app.get_webview_window(label).is_none() {
-            let window = build_shelf_picker_window(app, label, view)?;
-            // macOS: defer native NSWindow tweaks to F4/F5 show time. Calling with_webview
-            // or setFrame during did_finish_launching aborts the process.
-            #[cfg(not(target_os = "macos"))]
-            polish_shelf_picker_window(&window, label == CLIPBOARD_PICKER_LABEL);
-            #[cfg(target_os = "macos")]
-            {
-                let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
-                let _ = window.set_shadow(true);
-                apply_macos_shelf_vibrancy(&window);
-            }
-            let _ = window.hide();
+    if app.get_webview_window(SHELF_PICKER_LABEL).is_none() {
+        let window = build_shelf_picker_window(app)?;
+        // macOS: defer native NSWindow tweaks to F4/F5 show time. Calling with_webview
+        // or setFrame during did_finish_launching aborts the process.
+        #[cfg(not(target_os = "macos"))]
+        polish_shelf_picker_window(&window, true);
+        #[cfg(target_os = "macos")]
+        {
+            let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+            let _ = window.set_shadow(true);
+            apply_macos_shelf_vibrancy(&window);
         }
+        let _ = window.hide();
     }
 
     Ok(())
@@ -138,49 +131,49 @@ pub fn show_snippet_picker(app: AppHandle) -> Result<(), String> {
     show_snippet_picker_window(&app).map_err(|error| error.to_string())
 }
 
+#[derive(serde::Serialize)]
+struct ShelfPickerTabPayload {
+    tab: &'static str,
+}
+
+enum ShelfPickerTab {
+    Clipboard,
+    Snippets,
+}
+
+fn shelf_picker_tab_name(tab: ShelfPickerTab) -> &'static str {
+    match tab {
+        ShelfPickerTab::Clipboard => "clipboard",
+        ShelfPickerTab::Snippets => "snippets",
+    }
+}
+
 pub fn show_clipboard_picker_window(app: &AppHandle) -> tauri::Result<()> {
-    show_shelf_picker(
-        app,
-        CLIPBOARD_PICKER_LABEL,
-        "clipboard-picker",
-        "clipboard-picker:open",
-        CLIPBOARD_SHELF_WIDTH_RATIO,
-        true,
-    )
+    show_shelf_picker_window(app, ShelfPickerTab::Clipboard)
 }
 
 pub fn show_snippet_picker_window(app: &AppHandle) -> tauri::Result<()> {
-    show_shelf_picker(
-        app,
-        SNIPPET_PICKER_LABEL,
-        "snippet-picker",
-        "snippet-picker:open",
-        SHELF_WIDTH_RATIO,
-        false,
-    )
+    show_shelf_picker_window(app, ShelfPickerTab::Snippets)
 }
 
-fn show_shelf_picker(
-    app: &AppHandle,
-    label: &str,
-    view: &str,
-    open_event: &str,
-    width_ratio: f64,
-    topmost: bool,
-) -> tauri::Result<()> {
-    let window = if let Some(window) = app.get_webview_window(label) {
+fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Result<()> {
+    let window = if let Some(window) = app.get_webview_window(SHELF_PICKER_LABEL) {
         window
     } else {
-        let window = build_shelf_picker_window(app, label, view)?;
-        polish_shelf_picker_window(&window, topmost);
+        let window = build_shelf_picker_window(app)?;
+        polish_shelf_picker_window(&window, true);
         window
+    };
+
+    let payload = ShelfPickerTabPayload {
+        tab: shelf_picker_tab_name(tab),
     };
 
     if window.is_visible().unwrap_or(false) {
         if !consume_shelf_shortcut_action() {
             return Ok(());
         }
-        hide_shelf_picker_window(&window)?;
+        let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:activate", &payload);
         return Ok(());
     }
 
@@ -188,20 +181,16 @@ fn show_shelf_picker(
         return Ok(());
     }
 
-    place_bottom_shelf_window(app, &window, width_ratio)?;
+    place_bottom_shelf_window(app, &window, CLIPBOARD_SHELF_WIDTH_RATIO)?;
     #[cfg(not(target_os = "macos"))]
     {
         let _ = window.set_always_on_top(true);
     }
     window.show()?;
     window.set_focus()?;
-    polish_shelf_picker_window(&window, topmost);
-    let _ = app.emit_to(label, open_event, ());
+    polish_shelf_picker_window(&window, true);
+    let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:open", &payload);
     Ok(())
-}
-
-pub(crate) fn hide_shelf_picker_window(window: &WebviewWindow) -> tauri::Result<()> {
-    window.hide()
 }
 
 fn consume_shelf_shortcut_action() -> bool {
@@ -280,15 +269,11 @@ fn place_bottom_shelf_window(
     Ok(())
 }
 
-fn build_shelf_picker_window(
-    app: &AppHandle,
-    label: &str,
-    view: &str,
-) -> tauri::Result<WebviewWindow> {
+fn build_shelf_picker_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let builder = WebviewWindowBuilder::new(
         app,
-        label,
-        WebviewUrl::App(format!("/?view={view}").into()),
+        SHELF_PICKER_LABEL,
+        WebviewUrl::App("/?view=shelf-picker".into()),
     )
     .title("")
     .inner_size(960.0, SHELF_HEIGHT)
@@ -673,6 +658,7 @@ pub fn hide_eye_care_overlay(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn eye_care_label(index: usize) -> String {
     if index == 0 {
         EYE_CARE_PRIMARY_LABEL.to_string()

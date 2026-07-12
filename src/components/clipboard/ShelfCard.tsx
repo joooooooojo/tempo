@@ -1,3 +1,4 @@
+import { AppIcon } from "@/components/AppIcon";
 import { cn, formatRelativeTime, previewLines } from "@/lib/utils";
 
 type ShelfCardProps = {
@@ -6,9 +7,11 @@ type ShelfCardProps = {
   headerTone: "text" | "image" | "snippet";
   timeLabel: string;
   sourceApp?: string | null;
+  sourceAppIcon?: string | null;
   content: string;
   imageSrc?: string | null;
   footer: string;
+  title?: string;
   onClick?: () => void;
   onDoubleClick?: () => void;
 };
@@ -25,9 +28,11 @@ export function ShelfCard({
   headerTone,
   timeLabel,
   sourceApp,
+  sourceAppIcon,
   content,
   imageSrc,
   footer,
+  title,
   onClick,
   onDoubleClick,
 }: ShelfCardProps) {
@@ -35,21 +40,28 @@ export function ShelfCard({
     <button
       type="button"
       className={cn("shelf-card", selected && "shelf-card--selected")}
+      title={title}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
       <div className={cn("shelf-card__header", headerToneClass[headerTone])}>
         <span className="shelf-card__type">{headerLabel}</span>
-        <span className="shelf-card__time">{timeLabel}</span>
         {sourceApp && (
           <span className="shelf-card__app" title={sourceApp}>
-            {sourceApp}
+            <AppIcon
+              name={sourceApp}
+              iconDataUrl={sourceAppIcon}
+              size="xs"
+              className="shelf-card__app-icon"
+            />
+            <span className="shelf-card__app-name">{sourceApp}</span>
           </span>
         )}
+        <span className="shelf-card__time">{timeLabel}</span>
       </div>
       <div className="shelf-card__body">
         {imageSrc ? (
-          <img src={imageSrc} alt="" className="shelf-card__image" />
+          <img src={imageSrc} alt="" loading="lazy" className="shelf-card__image" />
         ) : (
           <p className="shelf-card__preview">{previewLines(content)}</p>
         )}

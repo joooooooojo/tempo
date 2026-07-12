@@ -1,4 +1,9 @@
 use crate::db::{TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoSubtask, AppState};
+use crate::todo_images::{
+    backup_todo_image_file_name, hydrate_todo_images as hydrate_todo_image_urls,
+    hydrate_todo_note_images as hydrate_todo_note_image_urls, maybe_delete_todo_image_file,
+    normalize_todo_image_reference, save_todo_image_input, todo_images_dir, TODO_IMAGE_SUBDIR,
+};
 use base64::Engine as _;
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -6,7 +11,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
-
 use super::markdown::{
     backup_markdown_image_file_name, cleanup_unreferenced_markdown_images,
     markdown_images_dir, markdown_image_url_for_path, read_backup_entries,
@@ -60,6 +64,7 @@ pub fn check_pending_recurrences(app: &AppHandle, state: &AppState) {
 
 #[tauri::command]
 pub fn add_todo(
+    app: AppHandle,
     state: tauri::State<AppState>,
     title: String,
     content: Option<String>,
@@ -112,7 +117,7 @@ pub fn add_todo(
         )
         .map_err(|e| e.to_string())?;
     }
-    insert_todo_images(&conn, id, &images)?;
+    insert_todo_images(&app, &conn, id, &images)?;
     insert_subtasks(&conn, id, &subtask_titles)?;
     insert_todo_tags(&conn, id, &tag_names)?;
     fetch_todo(&conn, id)
@@ -423,6 +428,7 @@ pub fn delete_todo_image(state: tauri::State<AppState>, image_id: i64) -> Result
 
 #[tauri::command]
 pub fn add_todo_note(
+    app: AppHandle,
     state: tauri::State<AppState>,
     todo_id: i64,
     body: String,
@@ -441,7 +447,7 @@ pub fn add_todo_note(
     .map_err(|e| e.to_string())?;
 
     let note_id = conn.last_insert_rowid();
-    insert_todo_note_images(&conn, note_id, &images)?;
+    insert_todo_note_images(&app, &conn, note_id, &images)?;
     fetch_todo(&conn, todo_id)
 }
 
@@ -915,10 +921,14 @@ fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "待办不存在".to_string())?;
 
-    hydrate_todo_images(conn, std::slice::from_mut(&mut todo))?;
-    hydrate_todo_notes(conn, std::slice::from_mut(&mut todo))?;
+    load_todo_images_from_db(conn, std::slice::from_mut(&mut todo))?;
+    load_todo_notes_from_db(conn, std::slice::from_mut(&mut todo))?;
     hydrate_todo_subtasks(conn, std::slice::from_mut(&mut todo))?;
     hydrate_todo_tags(conn, std::slice::from_mut(&mut todo))?;
+    hydrate_todo_image_urls(&mut todo.images);
+    for note in &mut todo.notes {
+        hydrate_todo_note_image_urls(&mut note.images);
+    }
     todo.image_count = todo.images.len() as u32;
     todo.lightweight = false;
     Ok(todo)
@@ -926,11 +936,15 @@ fn fetch_todo(conn: &Connection, id: i64) -> Result<TodoItem, String> {
 
 fn list_todos(conn: &Connection) -> Result<Vec<TodoItem>, String> {
     let mut todos = query_todo_rows(conn)?;
-    hydrate_todo_images(conn, &mut todos)?;
-    hydrate_todo_notes(conn, &mut todos)?;
+    load_todo_images_from_db(conn, &mut todos)?;
+    load_todo_notes_from_db(conn, &mut todos)?;
     hydrate_todo_subtasks(conn, &mut todos)?;
     hydrate_todo_tags(conn, &mut todos)?;
     for todo in &mut todos {
+        hydrate_todo_image_urls(&mut todo.images);
+        for note in &mut todo.notes {
+            hydrate_todo_note_image_urls(&mut note.images);
+        }
         todo.image_count = todo.images.len() as u32;
         todo.lightweight = false;
     }
@@ -940,7 +954,7 @@ fn list_todos(conn: &Connection) -> Result<Vec<TodoItem>, String> {
 fn list_todos_light(conn: &Connection) -> Result<Vec<TodoItem>, String> {
     let mut todos = query_todo_rows(conn)?;
     hydrate_todo_image_counts(conn, &mut todos)?;
-    hydrate_todo_notes(conn, &mut todos)?;
+    load_todo_notes_from_db(conn, &mut todos)?;
     hydrate_todo_subtasks(conn, &mut todos)?;
     hydrate_todo_tags(conn, &mut todos)?;
     for todo in &mut todos {
@@ -1002,17 +1016,19 @@ fn todo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TodoItem> {
 }
 
 fn insert_todo_images(
+    app: &AppHandle,
     conn: &Connection,
     todo_id: i64,
     images: &[TodoImageInput],
 ) -> Result<(), String> {
     for image in images {
+        let storage_key = save_todo_image_input(app, image)?;
         conn.execute(
             "INSERT INTO todo_images (todo_id, data_url, mime_type, created_at)
              VALUES (?1, ?2, ?3, ?4)",
             params![
                 todo_id,
-                image.data_url,
+                storage_key,
                 image.mime_type.trim().to_ascii_lowercase(),
                 Local::now().to_rfc3339()
             ],
@@ -1038,7 +1054,7 @@ fn hydrate_todo_image_counts(conn: &Connection, todos: &mut [TodoItem]) -> Resul
     Ok(())
 }
 
-fn hydrate_todo_images(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), String> {
+fn load_todo_images_from_db(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), String> {
     for todo in todos {
         let mut stmt = conn
             .prepare(
@@ -1070,17 +1086,19 @@ fn hydrate_todo_images(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), 
 }
 
 fn insert_todo_note_images(
+    app: &AppHandle,
     conn: &Connection,
     note_id: i64,
     images: &[TodoImageInput],
 ) -> Result<(), String> {
     for image in images {
+        let storage_key = save_todo_image_input(app, image)?;
         conn.execute(
             "INSERT INTO todo_note_images (note_id, data_url, mime_type, created_at)
              VALUES (?1, ?2, ?3, ?4)",
             params![
                 note_id,
-                image.data_url,
+                storage_key,
                 image.mime_type.trim().to_ascii_lowercase(),
                 Local::now().to_rfc3339()
             ],
@@ -1091,7 +1109,7 @@ fn insert_todo_note_images(
     Ok(())
 }
 
-fn hydrate_todo_notes(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), String> {
+fn load_todo_notes_from_db(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), String> {
     for todo in todos {
         let mut stmt = conn
             .prepare(
@@ -1118,14 +1136,14 @@ fn hydrate_todo_notes(conn: &Connection, todos: &mut [TodoItem]) -> Result<(), S
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
 
-        hydrate_todo_note_images(conn, &mut notes)?;
+        load_todo_note_images_from_db(conn, &mut notes)?;
         todo.notes = notes;
     }
 
     Ok(())
 }
 
-fn hydrate_todo_note_images(conn: &Connection, notes: &mut [TodoNote]) -> Result<(), String> {
+fn load_todo_note_images_from_db(conn: &Connection, notes: &mut [TodoNote]) -> Result<(), String> {
     for note in notes {
         let mut stmt = conn
             .prepare(

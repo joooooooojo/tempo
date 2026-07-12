@@ -11,6 +11,10 @@ const sizeStyles = {
     slot: "h-7 w-7",
     fallbackText: "text-[11px]",
   },
+  xs: {
+    slot: "h-3.5 w-3.5",
+    fallbackText: "text-[8px]",
+  },
 } as const;
 
 interface AppIconProps {

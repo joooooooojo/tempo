@@ -139,11 +139,17 @@ pub fn set_storage_dir(
     }
 
     let current_markdown_dir = current_dir.join("markdown-images");
+    let current_clipboard_images_dir = current_dir.join("clipboard-images");
     let canonical_current_markdown_dir = current_markdown_dir
         .canonicalize()
         .unwrap_or_else(|_| current_markdown_dir.clone());
-    if path_is_within_or_same(&target_dir, &canonical_current_markdown_dir) {
-        return Err("请选择 markdown-images 之外的位置".into());
+    let canonical_current_clipboard_images_dir = current_clipboard_images_dir
+        .canonicalize()
+        .unwrap_or_else(|_| current_clipboard_images_dir.clone());
+    if path_is_within_or_same(&target_dir, &canonical_current_markdown_dir)
+        || path_is_within_or_same(&target_dir, &canonical_current_clipboard_images_dir)
+    {
+        return Err("请选择数据目录之外的位置".into());
     }
 
     let current_db = current_dir.join("screen_time.db");
@@ -153,6 +159,7 @@ pub fn set_storage_dir(
     }
 
     let target_markdown_dir = target_dir.join("markdown-images");
+    let target_clipboard_images_dir = target_dir.join("clipboard-images");
 
     let mut conn_guard = state.db.lock();
     conn_guard
@@ -160,6 +167,7 @@ pub fn set_storage_dir(
         .ok();
     vacuum_database_into(&conn_guard, &target_db)?;
     copy_dir_contents(&current_markdown_dir, &target_markdown_dir)?;
+    copy_dir_contents(&current_clipboard_images_dir, &target_clipboard_images_dir)?;
 
     let next_conn = crate::db::init_db(&target_db);
     rewrite_markdown_storage_urls(&next_conn, &current_markdown_dir, &target_markdown_dir)?;
@@ -172,6 +180,7 @@ pub fn set_storage_dir(
         &target_dir,
         &current_db,
         &current_markdown_dir,
+        &current_clipboard_images_dir,
     );
 
     Ok(settings_with_storage_dir(&app, &state))
@@ -196,6 +205,9 @@ fn normalize_storage_dir(value: &str) -> Result<PathBuf, String> {
     if path
         .file_name()
         .is_some_and(|name| name == "markdown-images")
+        || path
+            .file_name()
+            .is_some_and(|name| name == "clipboard-images")
         || path
             .file_name()
             .is_some_and(|name| name == "screen_time.db")
@@ -311,6 +323,7 @@ fn cleanup_old_storage_files(
     new_dir: &Path,
     old_db: &Path,
     old_markdown_dir: &Path,
+    old_clipboard_images_dir: &Path,
 ) {
     if same_path(old_dir, new_dir) {
         return;
@@ -320,6 +333,7 @@ fn cleanup_old_storage_files(
     let _ = std::fs::remove_file(old_dir.join("screen_time.db-wal"));
     let _ = std::fs::remove_file(old_dir.join("screen_time.db-shm"));
     let _ = std::fs::remove_dir_all(old_markdown_dir);
+    let _ = std::fs::remove_dir_all(old_clipboard_images_dir);
 }
 #[tauri::command]
 pub fn reset_today(state: tauri::State<AppState>) {

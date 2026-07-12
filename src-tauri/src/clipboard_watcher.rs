@@ -1,7 +1,8 @@
 use crate::clipboard_db::{
-    decode_png_data_url, get_clipboard_entry, insert_clipboard_image, insert_clipboard_text,
-    rgba_to_png_data_url,
+    encode_rgba_png, get_clipboard_entry, hash_bytes, insert_clipboard_image,
+    insert_clipboard_text, touch_clipboard_entry,
 };
+use crate::clipboard_images::{load_clipboard_image_rgba, save_clipboard_image_png};
 use crate::db::{load_settings, AppState};
 use crate::platform::{get_foreground_app, ForegroundApp};
 use arboard::{Clipboard, ImageData};
@@ -65,27 +66,32 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
                 let height = image.height as u32;
                 let pixel_count = width as u64 * height as u64;
                 if pixel_count > 0 && pixel_count <= crate::clipboard_db::MAX_CLIPBOARD_IMAGE_PIXELS {
-                    let hash = crate::clipboard_db::hash_bytes(image.bytes.as_ref());
-                    if hash != last_image_hash {
-                        last_image_hash = hash.clone();
-                        last_text_hash.clear();
+                    if let Some(png_bytes) = encode_rgba_png(width, height, image.bytes.as_ref()) {
+                        if png_bytes.len() <= crate::clipboard_db::MAX_CLIPBOARD_IMAGE_BYTES {
+                            let content_hash = hash_bytes(&png_bytes);
+                            if content_hash != last_image_hash {
+                                last_image_hash = content_hash.clone();
+                                last_text_hash.clear();
 
-                        if let Some(data_url) =
-                            rgba_to_png_data_url(width, height, image.bytes.as_ref())
-                        {
-                            let inserted = {
-                                let conn = state.db.lock();
-                                insert_clipboard_image(
-                                    &conn,
-                                    &data_url,
-                                    width,
-                                    height,
-                                    source_app.as_deref(),
-                                    source_process.as_deref(),
-                                    max_entries,
-                                )
-                            };
-                            changed = inserted.is_some();
+                                let inserted = if let Ok(storage_key) =
+                                    save_clipboard_image_png(&app, &content_hash, &png_bytes)
+                                {
+                                    let conn = state.db.lock();
+                                    insert_clipboard_image(
+                                        &conn,
+                                        &storage_key,
+                                        &content_hash,
+                                        width,
+                                        height,
+                                        source_app.as_deref(),
+                                        source_process.as_deref(),
+                                        max_entries,
+                                    )
+                                } else {
+                                    None
+                                };
+                                changed = inserted.is_some();
+                            }
                         }
                     }
                 }
@@ -120,7 +126,7 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
 
 pub fn emit_clipboard_update(app: &AppHandle) {
     let _ = app.emit("clipboard-update", ());
-    let _ = app.emit_to("clipboard-picker", "clipboard-update", ());
+    let _ = app.emit_to("shelf-picker", "clipboard-update", ());
     let _ = app.emit_to("main", "clipboard-update", ());
 }
 
@@ -133,9 +139,13 @@ pub fn write_clipboard_text(state: &AppState, text: &str) -> Result<(), String> 
     })
 }
 
-pub fn write_clipboard_image(state: &AppState, data_url: &str) -> Result<(), String> {
+pub fn write_clipboard_image(
+    state: &AppState,
+    app: &AppHandle,
+    content: &str,
+) -> Result<(), String> {
     let (width, height, rgba) =
-        decode_png_data_url(data_url).ok_or_else(|| "图片数据无效".to_string())?;
+        load_clipboard_image_rgba(app, content).ok_or_else(|| "图片数据无效".to_string())?;
     with_skip_capture(state, || {
         Clipboard::new()
             .map_err(|error| error.to_string())?
@@ -148,20 +158,30 @@ pub fn write_clipboard_image(state: &AppState, data_url: &str) -> Result<(), Str
     })
 }
 
-pub fn write_clipboard_entry(state: &AppState, entry: &crate::clipboard_db::ClipboardEntry) -> Result<(), String> {
+pub fn write_clipboard_entry(
+    state: &AppState,
+    app: &AppHandle,
+    entry: &crate::clipboard_db::ClipboardEntry,
+) -> Result<(), String> {
     if entry.kind == "image" {
-        write_clipboard_image(state, &entry.content)
+        write_clipboard_image(state, app, &entry.content)
     } else {
         write_clipboard_text(state, &entry.content)
     }
 }
 
-pub fn copy_clipboard_entry_by_id(state: &AppState, id: i64) -> Result<(), String> {
+pub fn copy_clipboard_entry_by_id(state: &AppState, app: &AppHandle, id: i64) -> Result<(), String> {
     let entry = {
         let conn = state.db.lock();
         get_clipboard_entry(&conn, id).ok_or_else(|| "记录不存在".to_string())?
     };
-    write_clipboard_entry(state, &entry)
+    write_clipboard_entry(state, app, &entry)?;
+    {
+        let conn = state.db.lock();
+        touch_clipboard_entry(&conn, id);
+    }
+    emit_clipboard_update(app);
+    Ok(())
 }
 
 fn with_skip_capture<T>(state: &AppState, write: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
