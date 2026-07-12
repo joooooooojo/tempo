@@ -8,8 +8,6 @@ mod clipboard_db;
 mod clipboard_watcher;
 #[cfg(target_os = "macos")]
 mod macos_dock;
-#[cfg(target_os = "macos")]
-mod macos_shelf_dismiss;
 mod tray_menu;
 
 #[cfg(target_os = "macos")]
@@ -89,8 +87,6 @@ pub fn run() {
             tray_menu::setup_tray(app)?;
             register_global_shortcuts(app.handle());
             auxiliary_windows::precache_auxiliary_windows(app.handle())?;
-            #[cfg(target_os = "macos")]
-            macos_shelf_dismiss::install_shelf_dismiss_monitors(app.handle());
 
             if let Some(state) = app.try_state::<AppState>() {
                 let should_restore_float = {

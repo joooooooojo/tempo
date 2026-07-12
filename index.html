@@ -161,6 +161,15 @@
 
         if (view === "quick-todo" || view === "pomodoro-float" || view === "clipboard-picker" || view === "snippet-picker") {
           root.style.background = "transparent";
+          var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          root.classList.toggle("dark", prefersDark);
+          if (view === "clipboard-picker" || view === "snippet-picker") {
+            var isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || "");
+            root.classList.add("shelf-picker-window");
+            root.classList.add(isMac ? "shelf-picker-window--mac" : "shelf-picker-window--css-shadow");
+            document.body.style.background = "transparent";
+            document.body.classList.add("shelf-picker-window");
+          }
           document.addEventListener("DOMContentLoaded", function () {
             var splash = document.getElementById("boot-splash");
             if (splash) splash.remove();

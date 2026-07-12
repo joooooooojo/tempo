@@ -22,7 +22,9 @@ pub const POMODORO_FLOAT_PANEL_HEIGHT: f64 = 56.0;
 
 pub const CLIPBOARD_PICKER_LABEL: &str = "clipboard-picker";
 pub const SNIPPET_PICKER_LABEL: &str = "snippet-picker";
-pub const SHELF_HEIGHT: f64 = 228.0;
+pub const SHELF_HEIGHT: f64 = 292.0;
+pub const SHELF_SIDE_MARGIN: f64 = 8.0;
+pub const SHELF_BOTTOM_MARGIN: f64 = 8.0;
 pub const SHELF_WIDTH_RATIO: f64 = 0.88;
 pub const CLIPBOARD_SHELF_WIDTH_RATIO: f64 = 1.0;
 
@@ -97,6 +99,7 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
             {
                 let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
                 let _ = window.set_shadow(true);
+                apply_macos_shelf_vibrancy(&window);
             }
             let _ = window.hide();
         }
@@ -185,22 +188,14 @@ fn show_shelf_picker(
         return Ok(());
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        // Never call Tauri set_always_on_top/show on macOS: tao resets level to
-        // NSFloatingWindowLevel (3) asynchronously, which sits below the Dock (~20)
-        // and causes Dock flicker when the level changes.
-        place_bottom_shelf_window(app, &window, width_ratio)?;
-        show_macos_shelf_picker(&window, topmost)?;
-        crate::macos_shelf_dismiss::note_shelf_shown();
-    }
+    place_bottom_shelf_window(app, &window, width_ratio)?;
     #[cfg(not(target_os = "macos"))]
     {
-        place_bottom_shelf_window(app, &window, width_ratio)?;
         let _ = window.set_always_on_top(true);
-        window.show()?;
-        window.set_focus()?;
     }
+    window.show()?;
+    window.set_focus()?;
+    polish_shelf_picker_window(&window, topmost);
     let _ = app.emit_to(label, open_event, ());
     Ok(())
 }
@@ -264,15 +259,23 @@ fn place_bottom_shelf_window(
         )
     };
 
-    let width = (area_w / scale) * width_ratio;
+    let side_margin = (SHELF_SIDE_MARGIN * scale).round() as i32;
+    let bottom_margin = (SHELF_BOTTOM_MARGIN * scale).round() as i32;
+    let full_width = (width_ratio - 1.0).abs() < f64::EPSILON;
+
+    let width = if full_width {
+        (area_w / scale) - SHELF_SIDE_MARGIN * 2.0
+    } else {
+        (area_w / scale) * width_ratio
+    };
     let height = SHELF_HEIGHT;
     let _ = window.set_size(LogicalSize::new(width, height));
-    let x = if (width_ratio - 1.0).abs() < f64::EPSILON {
-        area_pos.x
+    let x = if full_width {
+        area_pos.x + side_margin
     } else {
         area_pos.x + ((area_w - width * scale) / 2.0).round() as i32
     };
-    let y = area_pos.y + (area_h - height * scale).round() as i32;
+    let y = area_pos.y + (area_h - height * scale).round() as i32 - bottom_margin;
     let _ = window.set_position(PhysicalPosition::new(x, y));
     Ok(())
 }
@@ -308,16 +311,13 @@ fn build_shelf_picker_window(
     Ok(window)
 }
 
-fn attach_shelf_dismiss_on_blur(_window: &WebviewWindow) {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let window = window.clone();
-        window.on_window_event(move |event| {
-            if matches!(event, tauri::WindowEvent::Focused(false)) {
-                let _ = window.hide();
-            }
-        });
-    }
+fn attach_shelf_dismiss_on_blur(window: &WebviewWindow) {
+    let window = window.clone();
+    window.clone().on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Focused(false)) {
+            let _ = window.hide();
+        }
+    });
 }
 
 pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
@@ -329,7 +329,13 @@ pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
         polish_macos_shelf_picker_window(window, topmost);
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window.set_shadow(false);
+        let _ = topmost;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = window.set_shadow(false);
         let _ = topmost;
@@ -337,39 +343,28 @@ pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
 }
 
 #[cfg(target_os = "macos")]
-fn show_macos_shelf_picker(window: &WebviewWindow, topmost: bool) -> tauri::Result<()> {
-    window
-        .with_webview(move |webview| unsafe {
-            apply_macos_shelf_appearance(webview.ns_window(), topmost);
-            present_macos_shelf_without_activation(webview.ns_window());
-        })
-        .map_err(Into::into)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn present_macos_shelf_without_activation(ns_window: *mut std::ffi::c_void) {
-    use objc::runtime::Object;
-    use objc::{msg_send, sel, sel_impl};
-
-    let ns_window = ns_window.cast::<Object>();
-    if ns_window.is_null() {
-        return;
-    }
-
-    // orderFrontRegardless shows the window without activating the app.
-    // Avoid makeKeyAndOrderFront / set_focus, which steal focus and make the Dock flicker.
-    let _: () = msg_send![ns_window, orderFrontRegardless];
-    let is_key: bool = msg_send![ns_window, isKeyWindow];
-    if is_key {
-        let _: () = msg_send![ns_window, resignKey];
-    }
-}
-
-#[cfg(target_os = "macos")]
 const MACOS_SHELF_WINDOW_LEVEL: i64 = 25;
 
 #[cfg(target_os = "macos")]
+const MACOS_SHELF_CORNER_RADIUS: f64 = 16.0;
+
+#[cfg(target_os = "macos")]
+fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
+    use window_vibrancy::{apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+
+    let _ = clear_vibrancy(window);
+    let _ = apply_vibrancy(
+        window,
+        NSVisualEffectMaterial::HudWindow,
+        Some(NSVisualEffectState::Active),
+        Some(MACOS_SHELF_CORNER_RADIUS),
+    );
+}
+
+#[cfg(target_os = "macos")]
 fn polish_macos_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
+    apply_macos_shelf_vibrancy(window);
+
     let _ = window.with_webview(move |webview| unsafe {
         apply_macos_shelf_appearance(webview.ns_window(), topmost);
     });
@@ -407,20 +402,6 @@ unsafe fn apply_macos_shelf_appearance(ns_window: *mut std::ffi::c_void, topmost
     let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
     let _: () = msg_send![ns_window, setOpaque: false];
     let _: () = msg_send![ns_window, setHasShadow: true];
-
-    let content_view: *mut Object = msg_send![ns_window, contentView];
-    if content_view.is_null() {
-        return;
-    }
-
-    let _: () = msg_send![content_view, setWantsLayer: true];
-    let layer: *mut Object = msg_send![content_view, layer];
-    if layer.is_null() {
-        return;
-    }
-
-    let _: () = msg_send![layer, setCornerRadius: 16.0_f64];
-    let _: () = msg_send![layer, setMasksToBounds: true];
 }
 
 pub fn is_pomodoro_float_visible(app: &AppHandle) -> bool {

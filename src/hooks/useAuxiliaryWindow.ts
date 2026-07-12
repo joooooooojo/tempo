@@ -15,6 +15,7 @@ export function useAuxiliaryWindowShell(className: string) {
     document.body.classList.add(className);
     document.body.style.overflow = "hidden";
 
+    applyTheme("system");
     void applyThemeFromSettings();
     const unsubscribeTheme = subscribeThemeChanges((theme) => {
       applyTheme(theme);
@@ -31,11 +32,6 @@ export function useAuxiliaryWindowShell(className: string) {
 
 export function useShelfBlurClose(openEvent: string, busy = false) {
   useEffect(() => {
-    if (isMacTarget) {
-      // macOS uses native NSEvent monitors; blur-based hide fights non-activating panels.
-      return;
-    }
-
     const appWindow = getCurrentWindow();
     let armed = false;
     let armTimer = 0;
