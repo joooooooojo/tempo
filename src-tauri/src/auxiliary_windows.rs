@@ -155,6 +155,7 @@ pub fn is_shelf_picker_visible(app: &AppHandle) -> bool {
 pub fn hide_shelf_picker_window(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
+        crate::macos_overlay_panel::remove_shelf_outside_click_monitor();
         crate::macos_overlay_panel::hide_overlay(app, SHELF_PICKER_LABEL);
     }
 
@@ -204,21 +205,8 @@ fn show_shelf_window_without_stealing_focus(
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn show_window_without_activation(window: &WebviewWindow) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = window.with_webview(|webview| unsafe {
-            use objc::runtime::Object;
-            use objc::{msg_send, sel, sel_impl};
-
-            let ns_window = webview.ns_window().cast::<Object>();
-            if !ns_window.is_null() {
-                let _: () = msg_send![ns_window, orderFrontRegardless];
-            }
-        });
-        return Ok(());
-    }
-
     #[cfg(windows)]
     {
         use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
@@ -302,6 +290,10 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
     }
     polish_shelf_picker_window(&window, true);
     show_shelf_window_without_stealing_focus(app, SHELF_PICKER_LABEL, &window)?;
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_overlay_panel::install_shelf_outside_click_monitor(app, SHELF_PICKER_LABEL);
+    }
     #[cfg(target_os = "windows")]
     {
         align_windows_shelf_client_to_monitor(app, &window, CLIPBOARD_SHELF_WIDTH_RATIO);

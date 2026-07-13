@@ -1,6 +1,10 @@
 //! Non-activating NSPanel overlays: show/focus overlays without activating Tempo
 //! or touching the main window.
 
+use block::ConcreteBlock;
+use objc::runtime::{Class, Object};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_nspanel::{
     tauri_panel, CollectionBehavior, ManagerExt, Panel, PanelLevel, StyleMask, WebviewWindowExt,
@@ -10,13 +14,6 @@ tauri_panel! {
     panel!(OverlayInputPanel {
         config: {
             can_become_key_window: true,
-            can_become_main_window: false,
-        }
-    })
-
-    panel!(OverlayPassivePanel {
-        config: {
-            can_become_key_window: false,
             can_become_main_window: false,
         }
     })
@@ -33,10 +30,6 @@ pub struct OverlayPanelConfig {
 impl OverlayPanelConfig {
     fn apply_input(&self, panel: &dyn Panel) {
         apply_base(panel, true, self);
-    }
-
-    fn apply_passive(&self, panel: &dyn Panel) {
-        apply_base(panel, false, self);
     }
 }
 
@@ -73,18 +66,6 @@ pub fn shelf_picker_config() -> OverlayPanelConfig {
     }
 }
 
-pub fn shelf_backdrop_config() -> OverlayPanelConfig {
-    OverlayPanelConfig {
-        level: PanelLevel::MainMenu,
-        collection_behavior: CollectionBehavior::new()
-            .can_join_all_spaces()
-            .stationary()
-            .full_screen_auxiliary(),
-        has_shadow: false,
-        becomes_key_only_if_needed: false,
-    }
-}
-
 pub fn ensure_input_panel(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -100,34 +81,11 @@ pub fn ensure_input_panel(
     Ok(())
 }
 
-pub fn ensure_passive_panel(
-    app: &AppHandle,
-    window: &WebviewWindow,
-    label: &str,
-    config: &OverlayPanelConfig,
-) -> tauri::Result<()> {
-    if app.get_webview_panel(label).is_ok() {
-        return Ok(());
-    }
-
-    let panel = window.to_panel::<OverlayPassivePanel>()?;
-    config.apply_passive(panel.as_ref());
-    Ok(())
-}
-
 pub fn show_input_overlay(app: &AppHandle, label: &str) -> tauri::Result<()> {
     let panel = app
         .get_webview_panel(label)
         .map_err(|_| tauri::Error::WindowNotFound)?;
     panel.show_and_make_key();
-    Ok(())
-}
-
-pub fn show_passive_overlay(app: &AppHandle, label: &str) -> tauri::Result<()> {
-    let panel = app
-        .get_webview_panel(label)
-        .map_err(|_| tauri::Error::WindowNotFound)?;
-    panel.order_front_regardless();
     Ok(())
 }
 
@@ -140,4 +98,217 @@ pub fn hide_overlay(app: &AppHandle, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
         let _ = window.hide();
     }
+}
+
+#[derive(Clone, Copy)]
+struct EventMonitorTokens {
+    local: usize,
+    global: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CocoaPoint {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CocoaSize {
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CocoaRect {
+    origin: CocoaPoint,
+    size: CocoaSize,
+}
+
+type NSEventMask = usize;
+
+const NSEVENT_TYPE_LEFT_MOUSE_DOWN: NSEventMask = 1;
+const NSEVENT_TYPE_RIGHT_MOUSE_DOWN: NSEventMask = 3;
+const NSEVENT_TYPE_OTHER_MOUSE_DOWN: NSEventMask = 25;
+const SHELF_OUTSIDE_CLICK_EVENT_MASK: NSEventMask = (1 << NSEVENT_TYPE_LEFT_MOUSE_DOWN)
+    | (1 << NSEVENT_TYPE_RIGHT_MOUSE_DOWN)
+    | (1 << NSEVENT_TYPE_OTHER_MOUSE_DOWN);
+
+static SHELF_OUTSIDE_CLICK_MONITOR_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn shelf_outside_click_monitors() -> &'static Mutex<Option<EventMonitorTokens>> {
+    static MONITORS: OnceLock<Mutex<Option<EventMonitorTokens>>> = OnceLock::new();
+    MONITORS.get_or_init(|| Mutex::new(None))
+}
+
+/// Installs AppKit event monitors that close the shelf when the next mouse
+/// down happens outside the shelf panel.
+///
+/// AppKit splits this into two official monitors: local monitors see events
+/// dispatched inside Tempo, while global monitors see mouse events dispatched
+/// to other apps/the desktop.  Keeping both lets the shelf remain a single
+/// NSPanel instead of using a transparent backdrop window as a click target.
+pub fn install_shelf_outside_click_monitor(app: &AppHandle, label: &'static str) {
+    remove_shelf_outside_click_monitor();
+
+    let generation = SHELF_OUTSIDE_CLICK_MONITOR_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    let app_for_local = app.clone();
+    let app_for_global = app.clone();
+
+    let Some(event_class) = Class::get("NSEvent") else {
+        return;
+    };
+
+    let local_block = ConcreteBlock::new(move |event: *mut Object| -> *mut Object {
+        if should_close_shelf_for_current_mouse_location(&app_for_local, label, generation) {
+            let _ = crate::auxiliary_windows::hide_shelf_picker_window(&app_for_local);
+        }
+        event
+    })
+    .copy();
+
+    let global_block = ConcreteBlock::new(move |_event: *mut Object| {
+        if should_close_shelf_for_current_mouse_location(&app_for_global, label, generation) {
+            let _ = crate::auxiliary_windows::hide_shelf_picker_window(&app_for_global);
+        }
+    })
+    .copy();
+
+    let local_monitor = unsafe {
+        use objc::{msg_send, sel, sel_impl};
+
+        let monitor: *mut Object = msg_send![
+            event_class,
+            addLocalMonitorForEventsMatchingMask: SHELF_OUTSIDE_CLICK_EVENT_MASK
+            handler: &*local_block
+        ];
+        retain_event_monitor(monitor)
+    };
+
+    let global_monitor = unsafe {
+        use objc::{msg_send, sel, sel_impl};
+
+        let monitor: *mut Object = msg_send![
+            event_class,
+            addGlobalMonitorForEventsMatchingMask: SHELF_OUTSIDE_CLICK_EVENT_MASK
+            handler: &*global_block
+        ];
+        retain_event_monitor(monitor)
+    };
+
+    if local_monitor == 0 && global_monitor == 0 {
+        return;
+    }
+
+    if let Ok(mut monitors) = shelf_outside_click_monitors().lock() {
+        *monitors = Some(EventMonitorTokens {
+            local: local_monitor,
+            global: global_monitor,
+        });
+    } else {
+        unsafe {
+            remove_event_monitor(local_monitor);
+            remove_event_monitor(global_monitor);
+        }
+    }
+}
+
+pub fn remove_shelf_outside_click_monitor() {
+    SHELF_OUTSIDE_CLICK_MONITOR_GENERATION.fetch_add(1, Ordering::Relaxed);
+
+    let tokens = shelf_outside_click_monitors()
+        .lock()
+        .ok()
+        .and_then(|mut monitors| monitors.take());
+
+    if let Some(tokens) = tokens {
+        unsafe {
+            remove_event_monitor(tokens.local);
+            remove_event_monitor(tokens.global);
+        }
+    }
+}
+
+fn should_close_shelf_for_current_mouse_location(
+    app: &AppHandle,
+    label: &str,
+    generation: u64,
+) -> bool {
+    if SHELF_OUTSIDE_CLICK_MONITOR_GENERATION.load(Ordering::Relaxed) != generation {
+        return false;
+    }
+
+    let visible = app
+        .get_webview_window(label)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if !visible {
+        return false;
+    }
+
+    !current_mouse_location_is_inside_window(app, label)
+}
+
+fn current_mouse_location_is_inside_window(app: &AppHandle, label: &str) -> bool {
+    let Some(window) = app.get_webview_window(label) else {
+        return false;
+    };
+
+    let inside = Arc::new(AtomicBool::new(false));
+    let inside_for_webview = Arc::clone(&inside);
+
+    let _ = window.with_webview(move |webview| unsafe {
+        use objc::{msg_send, sel, sel_impl};
+
+        let ns_window = webview.ns_window().cast::<Object>();
+        if ns_window.is_null() {
+            return;
+        }
+
+        let Some(event_class) = Class::get("NSEvent") else {
+            return;
+        };
+
+        let frame: CocoaRect = msg_send![ns_window, frame];
+        let point: CocoaPoint = msg_send![event_class, mouseLocation];
+        inside_for_webview.store(cocoa_point_in_rect(point, frame), Ordering::Relaxed);
+    });
+
+    inside.load(Ordering::Relaxed)
+}
+
+fn cocoa_point_in_rect(point: CocoaPoint, rect: CocoaRect) -> bool {
+    let min_x = rect.origin.x;
+    let max_x = rect.origin.x + rect.size.width;
+    let min_y = rect.origin.y;
+    let max_y = rect.origin.y + rect.size.height;
+
+    point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y
+}
+
+unsafe fn remove_event_monitor(monitor: usize) {
+    if monitor == 0 {
+        return;
+    }
+
+    let Some(event_class) = Class::get("NSEvent") else {
+        return;
+    };
+
+    use objc::{msg_send, sel, sel_impl};
+
+    let monitor = monitor as *mut Object;
+    let _: () = msg_send![event_class, removeMonitor: monitor];
+    let _: () = msg_send![monitor, release];
+}
+
+unsafe fn retain_event_monitor(monitor: *mut Object) -> usize {
+    if !monitor.is_null() {
+        use objc::{msg_send, sel, sel_impl};
+
+        let _: *mut Object = msg_send![monitor, retain];
+    }
+    monitor as usize
 }
