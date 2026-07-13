@@ -1,5 +1,6 @@
+import type { MouseEvent } from "react";
 import { AppIcon } from "@/components/AppIcon";
-import { cn, formatRelativeTime, previewLines } from "@/lib/utils";
+import { cn, formatRelativeTime, isWindowsTarget, previewLines } from "@/lib/utils";
 
 type ShelfCardProps = {
   selected?: boolean;
@@ -36,13 +37,26 @@ export function ShelfCard({
   onClick,
   onDoubleClick,
 }: ShelfCardProps) {
+  const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+    onClick?.();
+    if (isWindowsTarget && event.detail >= 2) {
+      event.preventDefault();
+      onDoubleClick?.();
+    }
+  };
+
+  const handleDoubleClick = () => {
+    if (isWindowsTarget) return;
+    onDoubleClick?.();
+  };
+
   return (
     <button
       type="button"
       className={cn("shelf-card", selected && "shelf-card--selected")}
       title={title}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
     >
       <div className={cn("shelf-card__header", headerToneClass[headerTone])}>
         <span className="shelf-card__type">{headerLabel}</span>
@@ -60,11 +74,26 @@ export function ShelfCard({
         <span className="shelf-card__time">{timeLabel}</span>
       </div>
       <div className="shelf-card__body">
-        {imageSrc ? (
-          <img src={imageSrc} alt="" loading="lazy" className="shelf-card__image" />
-        ) : (
-          <p className="shelf-card__preview">{previewLines(content)}</p>
-        )}
+        <div
+          className={cn(
+            "shelf-card__body-inner",
+            imageSrc ? "shelf-card__body-inner--image" : "shelf-card__body-inner--text"
+          )}
+        >
+          {imageSrc ? (
+            <img
+              src={imageSrc}
+              alt=""
+              loading="lazy"
+              draggable={isWindowsTarget ? false : undefined}
+              style={isWindowsTarget ? { pointerEvents: "none", userSelect: "none" } : undefined}
+              className="shelf-card__image"
+              onDragStart={isWindowsTarget ? (event) => event.preventDefault() : undefined}
+            />
+          ) : (
+            <p className="shelf-card__preview">{previewLines(content)}</p>
+          )}
+        </div>
       </div>
       <div className="shelf-card__footer">{footer}</div>
     </button>
@@ -76,7 +105,10 @@ export function shelfTimeLabel(iso: string) {
 }
 
 export function shelfCharCount(text: string) {
-  const count = [...text].length;
+  let count = 0;
+  for (const _char of text) {
+    count += 1;
+  }
   return `${count} 个字符`;
 }
 

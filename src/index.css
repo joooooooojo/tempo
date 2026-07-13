@@ -1218,6 +1218,12 @@ html.shelf-picker-window #root {
   position: relative;
 }
 
+html.shelf-picker-window--windows,
+html.shelf-picker-window--windows body,
+html.shelf-picker-window--windows #root {
+  background: hsl(var(--background)) !important;
+}
+
 .shelf-picker-page {
   position: absolute;
   inset: 0;
@@ -1236,10 +1242,6 @@ html.shelf-picker-window #root {
   flex: none;
 }
 
-.shelf-picker-page--full .shelf-picker-panel {
-  border-radius: 16px;
-}
-
 html.shelf-picker-window--mac .shelf-picker-page--full .shelf-picker-panel {
   border-radius: 16px;
 }
@@ -1250,7 +1252,6 @@ html.shelf-picker-window--mac .shelf-picker-page--full .shelf-picker-panel {
   height: 100%;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 16px;
   background: hsl(var(--background) / 0.78);
   color: hsl(var(--foreground));
 }
@@ -1263,6 +1264,10 @@ html.shelf-picker-window--css-shadow .shelf-picker-panel {
     0 -16px 40px rgba(0, 0, 0, 0.18);
 }
 
+html.shelf-picker-window--windows .shelf-picker-panel {
+  background: hsl(var(--background));
+}
+
 html.shelf-picker-window--css-shadow.dark .shelf-picker-panel {
   box-shadow:
     0 -4px 16px rgba(0, 0, 0, 0.28),
@@ -1270,6 +1275,7 @@ html.shelf-picker-window--css-shadow.dark .shelf-picker-panel {
 }
 
 html.shelf-picker-window--mac .shelf-picker-panel {
+  border-radius: 16px;
   background: hsl(var(--background) / 0.28);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1433,6 +1439,7 @@ html.shelf-picker-window--mac .shelf-picker-tab--active {
   display: flex;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .shelf-picker-track {
@@ -1447,10 +1454,135 @@ html.shelf-picker-window--mac .shelf-picker-tab--active {
   scroll-padding-inline: 12px;
 }
 
+html.shelf-picker-window--windows .shelf-picker-track {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+html.shelf-picker-window--windows .shelf-picker-track::-webkit-scrollbar {
+  display: none;
+}
+
+.shelf-picker-scroll-area {
+  display: none;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scroll-area {
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scroll-area[hidden] {
+  display: none;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scroll-viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scroll-viewport > div {
+  height: 100%;
+}
+
+html.shelf-picker-window--windows .shelf-picker-track--scroll-area {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  height: 100%;
+  flex: none;
+  overflow: visible;
+  padding: 6px 0 16px;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  background: transparent;
+  padding: 4px 10px;
+  user-select: none;
+  touch-action: none;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar[data-orientation="horizontal"] {
+  flex-direction: column;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar[data-state="hidden"] {
+  opacity: 0;
+  visibility: hidden;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar__thumb {
+  position: relative;
+  flex: 1;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: grab;
+  transition: background-color 120ms ease;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar__thumb::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  min-width: 36px;
+  height: 100%;
+  min-height: 20px;
+  transform: translate(-50%, -50%);
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar__thumb:hover,
+html.shelf-picker-window--windows .shelf-picker-scrollbar__thumb:focus-visible {
+  background: rgba(0, 0, 0, 0.38);
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar__thumb:focus-visible {
+  outline: 2px solid rgba(0, 0, 0, 0.24);
+  outline-offset: 2px;
+}
+
+html.shelf-picker-window--windows .shelf-picker-scrollbar__thumb:active {
+  cursor: grabbing;
+  background: rgba(0, 0, 0, 0.46);
+}
+
+html.shelf-picker-window--windows.dark .shelf-picker-scrollbar__thumb {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+html.shelf-picker-window--windows.dark .shelf-picker-scrollbar__thumb:hover,
+html.shelf-picker-window--windows.dark .shelf-picker-scrollbar__thumb:focus-visible {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+html.shelf-picker-window--windows.dark .shelf-picker-scrollbar__thumb:focus-visible {
+  outline-color: rgba(255, 255, 255, 0.28);
+}
+
+html.shelf-picker-window--windows.dark .shelf-picker-scrollbar__thumb:active {
+  background: rgba(255, 255, 255, 0.46);
+}
+
 .shelf-picker-track::before,
 .shelf-picker-track::after {
   content: "";
   flex: 0 0 12px;
+}
+
+html.shelf-picker-window--windows .shelf-picker-track::before,
+html.shelf-picker-window--windows .shelf-picker-track::after {
+  content: '';
+  flex: initial;
 }
 
 .shelf-picker-empty {
@@ -1464,6 +1596,9 @@ html.shelf-picker-window--mac .shelf-picker-tab--active {
 
 .shelf-card {
   display: flex;
+  height: 100%;
+  min-height: 0;
+  flex: 0 0 200px;
   width: 200px;
   min-width: 200px;
   flex-direction: column;
@@ -1481,12 +1616,13 @@ html.shelf-picker-window--mac .shelf-picker-tab--active {
 }
 
 .shelf-card--selected {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35);
+  border-color: hsl(var(--primary) / 0.45);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.22);
 }
 
 .shelf-card__header {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: 1fr auto;
   grid-template-rows: auto auto;
   gap: 4px 6px;
@@ -1564,25 +1700,47 @@ html.shelf-picker-window--mac .shelf-picker-tab--active {
 }
 
 .shelf-card__body {
-  display: flex;
+  position: relative;
   min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  padding: 10px;
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+.shelf-card__body-inner {
+  position: absolute;
+  inset: 10px;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shelf-card__body-inner--image {
+  align-items: center;
+  justify-content: center;
+}
+
+.shelf-card__body-inner--text {
+  align-items: flex-start;
+  justify-content: flex-start;
 }
 
 .shelf-card__image {
   display: block;
   width: 100%;
   height: 100%;
-  min-height: 110px;
+  min-height: 0;
+  max-height: 100%;
   border-radius: 8px;
   object-fit: contain;
+  object-position: center;
   background: hsl(var(--foreground) / 0.04);
 }
 
 .shelf-card__preview {
   display: -webkit-box;
+  width: 100%;
+  max-height: 100%;
   overflow: hidden;
   margin: 0;
   -webkit-box-orient: vertical;
@@ -1596,6 +1754,7 @@ html.shelf-picker-window--mac .shelf-picker-tab--active {
 }
 
 .shelf-card__footer {
+  flex: 0 0 auto;
   padding: 0 10px 10px;
   text-align: center;
   font-size: 11px;

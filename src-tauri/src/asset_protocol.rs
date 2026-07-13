@@ -30,7 +30,8 @@ pub fn asset_protocol_response(
         return empty_response(StatusCode::METHOD_NOT_ALLOWED);
     }
 
-    let Some(file_name) = asset_file_name_from_request_path(request.uri().path(), validate_file_name)
+    let Some(file_name) =
+        asset_file_name_from_request_path(request.uri().path(), validate_file_name)
     else {
         return empty_response(StatusCode::BAD_REQUEST);
     };
@@ -75,7 +76,10 @@ pub fn asset_protocol_response(
 
 pub fn storage_key_from_protocol_url(protocol: &str, subdir: &str, value: &str) -> Option<String> {
     let file_name = protocol_file_name(protocol, value)?;
-    if !Path::new(&file_name).file_name().is_some_and(|name| name == file_name.as_str()) {
+    if !Path::new(&file_name)
+        .file_name()
+        .is_some_and(|name| name == file_name.as_str())
+    {
         return None;
     }
     Some(format!("{subdir}/{file_name}"))

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
-import { isMacTarget } from "@/lib/utils";
+import { isMacTarget, isWindowsTarget } from "@/lib/utils";
 
 export function useAuxiliaryWindowShell(className: string) {
   useEffect(() => {
@@ -10,8 +10,13 @@ export function useAuxiliaryWindowShell(className: string) {
 
     const previousBodyOverflow = document.body.style.overflow;
     const root = document.documentElement;
+    const platformClass = isMacTarget
+      ? `${className}--mac`
+      : isWindowsTarget
+        ? `${className}--windows`
+        : `${className}--css-shadow`;
     root.classList.add(className);
-    root.classList.add(isMacTarget ? `${className}--mac` : `${className}--css-shadow`);
+    root.classList.add(platformClass);
     document.body.classList.add(className);
     document.body.style.overflow = "hidden";
 
@@ -22,7 +27,12 @@ export function useAuxiliaryWindowShell(className: string) {
     });
 
     return () => {
-      root.classList.remove(className, `${className}--mac`, `${className}--css-shadow`);
+      root.classList.remove(
+        className,
+        `${className}--mac`,
+        `${className}--windows`,
+        `${className}--css-shadow`
+      );
       document.body.classList.remove(className);
       document.body.style.overflow = previousBodyOverflow;
       unsubscribeTheme();

@@ -3,7 +3,6 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
-pub const MAX_CLIPBOARD_CONTENT_CHARS: usize = 32 * 1024;
 pub const MAX_CLIPBOARD_IMAGE_PIXELS: u64 = 4096 * 4096;
 pub const MAX_CLIPBOARD_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -65,9 +64,6 @@ pub fn insert_clipboard_text(
     max_entries: u32,
 ) -> Option<ClipboardEntry> {
     if content.is_empty() {
-        return None;
-    }
-    if content.chars().count() > MAX_CLIPBOARD_CONTENT_CHARS {
         return None;
     }
 
@@ -206,9 +202,11 @@ pub fn count_clipboard_entries(conn: &Connection, query: Option<&str>) -> u32 {
         .map(|count| count as u32)
         .unwrap_or(0)
     } else {
-        conn.query_row("SELECT COUNT(*) FROM clipboard_history", [], |row| row.get::<_, i64>(0))
-            .map(|count| count as u32)
-            .unwrap_or(0)
+        conn.query_row("SELECT COUNT(*) FROM clipboard_history", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map(|count| count as u32)
+        .unwrap_or(0)
     }
 }
 
@@ -240,7 +238,10 @@ pub fn list_clipboard_entries(
             .unwrap_or_default()
     } else {
         conn.prepare(&sql)
-            .and_then(|mut stmt| stmt.query_map([], map_clipboard_row).and_then(|rows| rows.collect()))
+            .and_then(|mut stmt| {
+                stmt.query_map([], map_clipboard_row)
+                    .and_then(|rows| rows.collect())
+            })
             .unwrap_or_default()
     }
 }
@@ -285,7 +286,11 @@ pub fn purge_clipboard_history_by_retention(conn: &Connection, retention: &str) 
     .unwrap_or(0) as u32
 }
 
-pub fn set_clipboard_entry_pinned(conn: &Connection, id: i64, pinned: bool) -> Option<ClipboardEntry> {
+pub fn set_clipboard_entry_pinned(
+    conn: &Connection,
+    id: i64,
+    pinned: bool,
+) -> Option<ClipboardEntry> {
     conn.execute(
         "UPDATE clipboard_history SET pinned = ?1 WHERE id = ?2",
         params![pinned as i32, id],
@@ -314,7 +319,10 @@ pub fn list_snippets(conn: &Connection, query: Option<&str>) -> Vec<Snippet> {
              FROM snippets
              ORDER BY sort_order ASC, updated_at DESC, id DESC",
         )
-        .and_then(|mut stmt| stmt.query_map([], map_snippet_row).and_then(|rows| rows.collect()))
+        .and_then(|mut stmt| {
+            stmt.query_map([], map_snippet_row)
+                .and_then(|rows| rows.collect())
+        })
         .unwrap_or_default()
     }
 }
@@ -329,7 +337,12 @@ pub fn get_snippet(conn: &Connection, id: i64) -> Option<Snippet> {
     .ok()
 }
 
-pub fn add_snippet(conn: &Connection, title: &str, content: &str, tags: &[String]) -> Option<Snippet> {
+pub fn add_snippet(
+    conn: &Connection,
+    title: &str,
+    content: &str,
+    tags: &[String],
+) -> Option<Snippet> {
     let title = title.trim();
     let content = content.trim();
     if title.is_empty() || content.is_empty() {

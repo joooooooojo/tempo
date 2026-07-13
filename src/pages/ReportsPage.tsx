@@ -16,8 +16,10 @@ const GRID = "rgba(42, 84, 70, 0.1)";
 const HOUR_AXIS_TICKS = [0, 900, 1800, 2700, 3600];
 
 export function ReportsPage() {
+  const [activeTab, setActiveTab] = useState<"daily" | "weekly">("daily");
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
+  const [iconsReady, setIconsReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,6 +29,21 @@ export function ReportsPage() {
           if (!cancelled) setDaily(report);
         })
         .catch(console.error);
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "weekly") return;
+
+    let cancelled = false;
+    const refresh = () => {
       api.getWeeklyReport()
         .then((report) => {
           if (!cancelled) setWeekly(report);
@@ -40,7 +57,24 @@ export function ReportsPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [activeTab]);
+
+  const reportIconKey = activeTab === "daily"
+    ? daily && `daily:${daily.date}:${daily.top_apps.length}`
+    : weekly && `weekly:${weekly.days[0]?.date ?? ""}:${weekly.days[weekly.days.length - 1]?.date ?? ""}:${weekly.top_apps.length}`;
+
+  useEffect(() => {
+    if (!reportIconKey) {
+      setIconsReady(false);
+      return;
+    }
+
+    setIconsReady(false);
+    const timer = window.setTimeout(() => setIconsReady(true), 180);
+    return () => window.clearTimeout(timer);
+  }, [reportIconKey]);
+
+  const appIconUrl = (url?: string | null) => (iconsReady ? url : null);
 
   const hourlyChart = daily?.hourly.map((h) => ({
     hour: h.hour,
@@ -62,7 +96,7 @@ export function ReportsPage() {
 
   return (
     <div>
-      <Tabs defaultValue="daily">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "daily" | "weekly")}>
         <div className="mb-4 flex items-center justify-between gap-4">
           <TabsList className="w-[240px]">
             <TabsTrigger value="daily" className="min-w-0 flex-1">日报</TabsTrigger>
@@ -154,7 +188,7 @@ export function ReportsPage() {
                           <span className="w-5 text-[11px] font-bold text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
                           <AppIcon
                             name={app.app_name}
-                            iconDataUrl={app.icon_data_url}
+                            iconDataUrl={appIconUrl(app.icon_data_url)}
                             size="sm"
                             fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
                           />
@@ -255,7 +289,7 @@ export function ReportsPage() {
                           <span className="w-5 text-[11px] font-bold text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
                           <AppIcon
                             name={app.app_name}
-                            iconDataUrl={app.icon_data_url}
+                            iconDataUrl={appIconUrl(app.icon_data_url)}
                             size="sm"
                             fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
                           />

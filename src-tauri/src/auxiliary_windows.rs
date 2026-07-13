@@ -1,12 +1,12 @@
+use tauri::menu::{Menu, MenuItem};
 use tauri::window::Color;
-#[cfg(not(target_os = "macos"))]
-use tauri::{Monitor, PhysicalPosition, PhysicalSize};
 #[cfg(target_os = "macos")]
 use tauri::PhysicalPosition;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
-use tauri::menu::{Menu, MenuItem};
+#[cfg(not(target_os = "macos"))]
+use tauri::{Monitor, PhysicalPosition, PhysicalSize};
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,9 +21,12 @@ pub const POMODORO_FLOAT_PANEL_WIDTH: f64 = 300.0;
 pub const POMODORO_FLOAT_PANEL_HEIGHT: f64 = 56.0;
 
 pub const SHELF_PICKER_LABEL: &str = "shelf-picker";
-pub const SHELF_BACKDROP_LABEL: &str = "shelf-backdrop";
 pub const SHELF_HEIGHT: f64 = 292.0;
+#[cfg(target_os = "windows")]
+pub const SHELF_SIDE_MARGIN: f64 = 0.0;
+#[cfg(not(target_os = "windows"))]
 pub const SHELF_SIDE_MARGIN: f64 = 8.0;
+#[cfg(not(target_os = "windows"))]
 pub const SHELF_BOTTOM_MARGIN: f64 = 8.0;
 pub const CLIPBOARD_SHELF_WIDTH_RATIO: f64 = 1.0;
 
@@ -34,6 +37,8 @@ const SHELF_TAB_SNIPPETS: u8 = 2;
 
 static LAST_SHELF_SHORTCUT_MS: AtomicU64 = AtomicU64::new(0);
 static SHELF_VISIBLE_TAB: AtomicU8 = AtomicU8::new(SHELF_TAB_NONE);
+#[cfg(target_os = "windows")]
+static SHELF_OUTSIDE_CLOSE_TOKEN: AtomicU64 = AtomicU64::new(0);
 
 pub fn quick_todo_window_size() -> (f64, f64) {
     (QUICK_TODO_PANEL_WIDTH, QUICK_TODO_PANEL_HEIGHT)
@@ -103,15 +108,6 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         let _ = window.hide();
     }
 
-    if app.get_webview_window(SHELF_BACKDROP_LABEL).is_none() {
-        let window = build_shelf_backdrop_window(app)?;
-        #[cfg(target_os = "macos")]
-        {
-            let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
-        }
-        let _ = window.hide();
-    }
-
     Ok(())
 }
 
@@ -160,7 +156,6 @@ pub fn hide_shelf_picker_window(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
         crate::macos_overlay_panel::hide_overlay(app, SHELF_PICKER_LABEL);
-        crate::macos_overlay_panel::hide_overlay(app, SHELF_BACKDROP_LABEL);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -168,12 +163,11 @@ pub fn hide_shelf_picker_window(app: &AppHandle) -> tauri::Result<()> {
         if let Some(window) = app.get_webview_window(SHELF_PICKER_LABEL) {
             let _ = window.hide();
         }
-        if let Some(window) = app.get_webview_window(SHELF_BACKDROP_LABEL) {
-            let _ = window.hide();
-        }
     }
 
     SHELF_VISIBLE_TAB.store(SHELF_TAB_NONE, Ordering::Relaxed);
+    #[cfg(target_os = "windows")]
+    SHELF_OUTSIDE_CLOSE_TOKEN.fetch_add(1, Ordering::Relaxed);
     Ok(())
 }
 
@@ -193,21 +187,14 @@ fn show_shelf_window_without_stealing_focus(
     label: &str,
     window: &WebviewWindow,
 ) -> tauri::Result<()> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, label);
+
     #[cfg(target_os = "macos")]
     {
-        match label {
-            SHELF_PICKER_LABEL => {
-                let config = crate::macos_overlay_panel::shelf_picker_config();
-                crate::macos_overlay_panel::ensure_input_panel(app, window, label, &config)?;
-                crate::macos_overlay_panel::show_input_overlay(app, label)?;
-            }
-            SHELF_BACKDROP_LABEL => {
-                let config = crate::macos_overlay_panel::shelf_backdrop_config();
-                crate::macos_overlay_panel::ensure_passive_panel(app, window, label, &config)?;
-                crate::macos_overlay_panel::show_passive_overlay(app, label)?;
-            }
-            _ => show_window_without_activation(window)?,
-        }
+        let config = crate::macos_overlay_panel::shelf_picker_config();
+        crate::macos_overlay_panel::ensure_input_panel(app, window, label, &config)?;
+        crate::macos_overlay_panel::show_input_overlay(app, label)?;
         return Ok(());
     }
 
@@ -234,12 +221,14 @@ fn show_window_without_activation(window: &WebviewWindow) -> tauri::Result<()> {
 
     #[cfg(windows)]
     {
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+
         window.show()?;
-        let _ = window.with_webview(|webview| unsafe {
-            use windows::Win32::Foundation::HWND;
-            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
-            ShowWindow(HWND(webview.hwnd() as _), SW_SHOWNOACTIVATE);
-        });
+        if let Some(hwnd) = windows_hwnd(window) {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+        }
         return Ok(());
     }
 
@@ -306,18 +295,18 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         return Ok(());
     }
 
-    let backdrop = get_or_create_shelf_backdrop_window(app)?;
-    place_shelf_backdrop_window(app, &backdrop)?;
     place_bottom_shelf_window(app, &window, CLIPBOARD_SHELF_WIDTH_RATIO)?;
     #[cfg(not(target_os = "macos"))]
     {
         let _ = window.set_always_on_top(true);
-        let _ = backdrop.set_always_on_top(true);
     }
-    polish_shelf_backdrop_window(&backdrop);
     polish_shelf_picker_window(&window, true);
-    show_shelf_window_without_stealing_focus(app, SHELF_BACKDROP_LABEL, &backdrop)?;
     show_shelf_window_without_stealing_focus(app, SHELF_PICKER_LABEL, &window)?;
+    #[cfg(target_os = "windows")]
+    {
+        align_windows_shelf_client_to_monitor(app, &window, CLIPBOARD_SHELF_WIDTH_RATIO);
+        start_windows_shelf_outside_click_watcher(app, &window);
+    }
     on_shelf_picker_shown(app, &window, tab);
     let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:open", &payload);
     Ok(())
@@ -345,8 +334,7 @@ fn shelf_monitor(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<tauri
         return Ok(monitor);
     }
 
-    app.primary_monitor()?
-        .ok_or(tauri::Error::WindowNotFound)
+    app.primary_monitor()?.ok_or(tauri::Error::WindowNotFound)
 }
 
 fn place_bottom_shelf_window(
@@ -361,14 +349,17 @@ fn place_bottom_shelf_window(
     let (area_pos, area_w, area_h) = {
         let position = monitor.position();
         let size = monitor.size();
-        (
-            position,
-            size.width as f64,
-            size.height as f64,
-        )
+        (position, size.width as f64, size.height as f64)
     };
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let (area_pos, area_w, area_h) = {
+        let position = monitor.position();
+        let size = monitor.size();
+        (position, size.width as f64, size.height as f64)
+    };
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let (area_pos, area_w, area_h) = {
         let work = monitor.work_area();
         (
@@ -379,6 +370,9 @@ fn place_bottom_shelf_window(
     };
 
     let side_margin = (SHELF_SIDE_MARGIN * scale).round() as i32;
+    #[cfg(target_os = "windows")]
+    let bottom_margin = 0;
+    #[cfg(not(target_os = "windows"))]
     let bottom_margin = (SHELF_BOTTOM_MARGIN * scale).round() as i32;
     let full_width = (width_ratio - 1.0).abs() < f64::EPSILON;
 
@@ -399,92 +393,225 @@ fn place_bottom_shelf_window(
     Ok(())
 }
 
-fn get_or_create_shelf_backdrop_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    if let Some(window) = app.get_webview_window(SHELF_BACKDROP_LABEL) {
-        Ok(window)
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct WindowsShelfTarget {
+    left: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+}
+
+#[cfg(target_os = "windows")]
+fn windows_shelf_target(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    width_ratio: f64,
+) -> Option<WindowsShelfTarget> {
+    let monitor = shelf_monitor(app, window).ok()?;
+    let scale = monitor.scale_factor();
+    let position = monitor.position();
+    let size = monitor.size();
+    let side_margin = (SHELF_SIDE_MARGIN * scale).round() as i32;
+    let full_width = (width_ratio - 1.0).abs() < f64::EPSILON;
+    let width = if full_width {
+        size.width as i32 - side_margin * 2
     } else {
-        build_shelf_backdrop_window(app)
+        (size.width as f64 * width_ratio).round() as i32
+    };
+    let height = (SHELF_HEIGHT * scale).round() as i32;
+    let left = if full_width {
+        position.x + side_margin
+    } else {
+        position.x + ((size.width as f64 - width as f64) / 2.0).round() as i32
+    };
+    let top = position.y + size.height as i32 - height;
+
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+
+    Some(WindowsShelfTarget {
+        left,
+        top,
+        width,
+        height,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn align_windows_shelf_client_to_monitor(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    width_ratio: f64,
+) {
+    let Some(target) = windows_shelf_target(app, window, width_ratio) else {
+        return;
+    };
+    let Some(hwnd) = windows_hwnd(window) else {
+        return;
+    };
+    align_windows_shelf_client_to_target(hwnd, target);
+}
+
+#[cfg(target_os = "windows")]
+fn align_windows_shelf_client_to_target(
+    hwnd: windows::Win32::Foundation::HWND,
+    target: WindowsShelfTarget,
+) {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetWindowRect, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE,
+        SWP_NOOWNERZORDER, SWP_SHOWWINDOW,
+    };
+
+    unsafe {
+        let mut window_rect = RECT::default();
+        if GetWindowRect(hwnd, &mut window_rect).is_err() {
+            return;
+        }
+
+        let mut client_rect = RECT::default();
+        if GetClientRect(hwnd, &mut client_rect).is_err() {
+            return;
+        }
+
+        let mut client_origin = POINT { x: 0, y: 0 };
+        if !ClientToScreen(hwnd, &mut client_origin).as_bool() {
+            return;
+        }
+
+        let client_width = client_rect.right - client_rect.left;
+        let client_height = client_rect.bottom - client_rect.top;
+        if client_width <= 0 || client_height <= 0 {
+            return;
+        }
+
+        let client_right = client_origin.x + client_width;
+        let client_bottom = client_origin.y + client_height;
+        let left_inset = client_origin.x - window_rect.left;
+        let top_inset = client_origin.y - window_rect.top;
+        let right_inset = window_rect.right - client_right;
+        let bottom_inset = window_rect.bottom - client_bottom;
+
+        let window_left = target.left - left_inset;
+        let window_top = target.top - top_inset;
+        let window_width = target.width + left_inset + right_inset;
+        let window_height = target.height + top_inset + bottom_inset;
+
+        if window_width <= 0 || window_height <= 0 {
+            return;
+        }
+
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            window_left,
+            window_top,
+            window_width,
+            window_height,
+            SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        );
     }
 }
 
-fn build_shelf_backdrop_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    let builder = WebviewWindowBuilder::new(
-        app,
-        SHELF_BACKDROP_LABEL,
-        WebviewUrl::App("/?view=shelf-backdrop".into()),
-    )
-    .title("")
-    .decorations(false)
-    .transparent(true)
-    .background_color(Color(0, 0, 0, 0))
-    .resizable(false)
-    .skip_taskbar(true)
-    .visible_on_all_workspaces(true)
-    .visible(false)
-    .focused(false)
-    .focusable(false);
-
-    #[cfg(not(target_os = "macos"))]
-    let builder = builder.always_on_top(true);
-
-    builder.build()
-}
-
-fn place_shelf_backdrop_window(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
-    let monitor = shelf_monitor(app, window)?;
-    let scale = monitor.scale_factor();
-
-    #[cfg(target_os = "macos")]
-    let (area_pos, area_w, area_h) = {
-        let position = monitor.position();
-        let size = monitor.size();
-        (
-            position,
-            size.width as f64,
-            size.height as f64,
-        )
+#[cfg(target_os = "windows")]
+fn start_windows_shelf_outside_click_watcher(app: &AppHandle, window: &WebviewWindow) {
+    let Some(hwnd) = windows_hwnd(window) else {
+        return;
     };
+    let hwnd_value = hwnd.0 as isize;
+    let app = app.clone();
+    let token = SHELF_OUTSIDE_CLOSE_TOKEN.fetch_add(1, Ordering::Relaxed) + 1;
 
-    #[cfg(not(target_os = "macos"))]
-    let (area_pos, area_w, area_h) = {
-        let work = monitor.work_area();
-        (
-            work.position,
-            work.size.width as f64,
-            work.size.height as f64,
-        )
-    };
+    std::thread::spawn(move || {
+        let hwnd = windows::Win32::Foundation::HWND(hwnd_value as *mut _);
+        let mut previous_buttons = windows_pressed_mouse_buttons();
 
-    let _ = window.set_size(LogicalSize::new(area_w / scale, area_h / scale));
-    let _ = window.set_position(PhysicalPosition::new(area_pos.x, area_pos.y));
-    Ok(())
-}
-
-fn polish_shelf_backdrop_window(window: &WebviewWindow) {
-    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
-
-    #[cfg(target_os = "macos")]
-    {
-        const MACOS_SHELF_BACKDROP_WINDOW_LEVEL: i64 = 24;
-        let _ = window.with_webview(move |webview| unsafe {
-            use objc::runtime::Object;
-            use objc::{msg_send, sel, sel_impl};
-
-            let ns_window = webview.ns_window().cast::<Object>();
-            if ns_window.is_null() {
-                return;
+        loop {
+            if SHELF_OUTSIDE_CLOSE_TOKEN.load(Ordering::Relaxed) != token {
+                break;
             }
 
-            let _: () = msg_send![ns_window, setLevel: MACOS_SHELF_BACKDROP_WINDOW_LEVEL];
-            let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
-            const NS_WINDOW_COLLECTION_CAN_JOIN_ALL_SPACES: usize = 1 << 0;
-            const NS_WINDOW_COLLECTION_STATIONARY: usize = 1 << 4;
-            const NS_WINDOW_COLLECTION_FULL_SCREEN_AUXILIARY: usize = 1 << 8;
-            let behavior = NS_WINDOW_COLLECTION_CAN_JOIN_ALL_SPACES
-                | NS_WINDOW_COLLECTION_STATIONARY
-                | NS_WINDOW_COLLECTION_FULL_SCREEN_AUXILIARY;
-            let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-        });
+            let visible = app
+                .get_webview_window(SHELF_PICKER_LABEL)
+                .and_then(|window| window.is_visible().ok())
+                .unwrap_or(false);
+            if !visible {
+                break;
+            }
+
+            let buttons = windows_pressed_mouse_buttons();
+            let newly_pressed = buttons & !previous_buttons;
+            previous_buttons = buttons;
+
+            if newly_pressed != 0 && !windows_cursor_is_over_shelf(hwnd) {
+                let _ = hide_shelf_picker_window(&app);
+                break;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn windows_pressed_mouse_buttons() -> u8 {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
+    };
+
+    fn pressed(vkey: u16) -> bool {
+        unsafe { (GetAsyncKeyState(vkey as i32) as u16 & 0x8000) != 0 }
+    }
+
+    let mut buttons = 0;
+    if pressed(VK_LBUTTON.0) {
+        buttons |= 1;
+    }
+    if pressed(VK_RBUTTON.0) {
+        buttons |= 2;
+    }
+    if pressed(VK_MBUTTON.0) {
+        buttons |= 4;
+    }
+    buttons
+}
+
+#[cfg(target_os = "windows")]
+fn windows_cursor_is_over_shelf(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetCursorPos, GetWindowRect, IsChild, WindowFromPoint, GA_ROOT,
+    };
+
+    unsafe {
+        let mut point = POINT { x: 0, y: 0 };
+        if GetCursorPos(&mut point).is_err() {
+            return true;
+        }
+
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return false;
+        }
+
+        if point.x < rect.left
+            || point.x >= rect.right
+            || point.y < rect.top
+            || point.y >= rect.bottom
+        {
+            return false;
+        }
+
+        let hit = WindowFromPoint(point);
+        if hit == hwnd || IsChild(hwnd, hit).as_bool() {
+            return true;
+        }
+
+        let root = GetAncestor(hit, GA_ROOT);
+        root == hwnd
     }
 }
 
@@ -500,7 +627,7 @@ fn build_shelf_picker_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     .decorations(false)
     .transparent(true)
     .background_color(Color(0, 0, 0, 0))
-    .shadow(cfg!(target_os = "macos"))
+    .shadow(cfg!(any(target_os = "macos", target_os = "windows")))
     .skip_taskbar(true)
     .visible_on_all_workspaces(true)
     .visible(false)
@@ -525,7 +652,8 @@ pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
 
     #[cfg(target_os = "windows")]
     {
-        let _ = window.set_shadow(false);
+        let _ = window.set_shadow(true);
+        apply_windows_shelf_appearance(window);
         let _ = topmost;
     }
 
@@ -539,12 +667,50 @@ pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
 #[cfg(target_os = "macos")]
 const MACOS_SHELF_WINDOW_LEVEL: i64 = 25;
 
+#[cfg(target_os = "windows")]
+fn apply_windows_shelf_appearance(window: &WebviewWindow) {
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_DEFAULT,
+    };
+
+    let Some(hwnd) = windows_hwnd(window) else {
+        return;
+    };
+
+    let border_color = DWMWA_COLOR_DEFAULT;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            &border_color as *const _ as *const _,
+            std::mem::size_of_val(&border_color) as u32,
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_hwnd(window: &WebviewWindow) -> Option<windows::Win32::Foundation::HWND> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+
+    let Ok(handle) = window.window_handle() else {
+        return None;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return None;
+    };
+
+    Some(HWND(handle.hwnd.get() as *mut _))
+}
+
 #[cfg(target_os = "macos")]
 const MACOS_SHELF_CORNER_RADIUS: f64 = 16.0;
 
 #[cfg(target_os = "macos")]
 fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
-    use window_vibrancy::{apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+    use window_vibrancy::{
+        apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+    };
 
     let _ = clear_vibrancy(window);
     let _ = apply_vibrancy(
@@ -706,8 +872,14 @@ pub fn popup_pomodoro_float_menu(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window(POMODORO_FLOAT_LABEL)
         .ok_or_else(|| "未找到番茄钟悬浮窗".to_string())?;
-    let hide = MenuItem::with_id(&app, "pomodoro-float-hide", "关闭悬浮窗", true, None::<&str>)
-        .map_err(|error| error.to_string())?;
+    let hide = MenuItem::with_id(
+        &app,
+        "pomodoro-float-hide",
+        "关闭悬浮窗",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| error.to_string())?;
     let menu = Menu::with_items(&app, &[&hide]).map_err(|error| error.to_string())?;
     window.popup_menu(&menu).map_err(|error| error.to_string())
 }
@@ -920,7 +1092,10 @@ fn present_eye_care_window(window: &WebviewWindow) -> tauri::Result<()> {
 fn ordered_monitors(app: &AppHandle) -> tauri::Result<Vec<Monitor>> {
     let mut monitors = app.available_monitors()?;
     if let Some(primary) = app.primary_monitor()? {
-        if let Some(index) = monitors.iter().position(|monitor| same_monitor(monitor, &primary)) {
+        if let Some(index) = monitors
+            .iter()
+            .position(|monitor| same_monitor(monitor, &primary))
+        {
             let primary_monitor = monitors.remove(index);
             monitors.insert(0, primary_monitor);
         } else {
@@ -1006,26 +1181,22 @@ pub fn build_quick_todo_window(
 }
 
 fn build_eye_care_overlay_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(
-        app,
-        label,
-        WebviewUrl::App("/?view=eye-care".into()),
-    )
-    .title("")
-    .inner_size(1280.0, 800.0)
-    .decorations(false)
-    .resizable(false)
-    .maximizable(false)
-    .minimizable(false)
-    .closable(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .visible_on_all_workspaces(true)
-    .visible(false)
-    .focused(false)
-    .shadow(false)
-    .background_color(Color(239, 251, 244, 255))
-    .build()
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App("/?view=eye-care".into()))
+        .title("")
+        .inner_size(1280.0, 800.0)
+        .decorations(false)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible_on_all_workspaces(true)
+        .visible(false)
+        .focused(false)
+        .shadow(false)
+        .background_color(Color(239, 251, 244, 255))
+        .build()
 }
 
 #[cfg(target_os = "macos")]

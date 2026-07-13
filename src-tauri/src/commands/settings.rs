@@ -1,11 +1,16 @@
-use crate::db::{current_storage_dir, default_storage_dir, load_settings, save_storage_dir, today_str, AppState, Settings};
 use crate::clipboard_db::purge_clipboard_history_by_retention;
+use crate::db::{
+    current_storage_dir, default_storage_dir, load_settings, save_storage_dir, today_str, AppState,
+    Settings,
+};
 use crate::db::{normalize_clipboard_history_retention, normalize_clipboard_paste_mode};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
-use super::markdown::{markdown_image_reference, markdown_image_sources, markdown_image_url_for_path};
+use super::markdown::{
+    markdown_image_reference, markdown_image_sources, markdown_image_url_for_path,
+};
 
 #[tauri::command]
 pub fn get_settings(app: AppHandle, state: tauri::State<AppState>) -> Settings {
@@ -120,7 +125,10 @@ pub fn update_settings(
     {
         current.clipboard_max_entries = (v as u32).clamp(1, 1000);
     }
-    if let Some(v) = settings.get("clipboard_paste_mode").and_then(|v| v.as_str()) {
+    if let Some(v) = settings
+        .get("clipboard_paste_mode")
+        .and_then(|v| v.as_str())
+    {
         current.clipboard_paste_mode = normalize_clipboard_paste_mode(v);
     }
     if let Some(v) = settings

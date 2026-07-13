@@ -4,7 +4,10 @@ use chrono::Local;
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use tauri::http::{header::{CONTENT_LENGTH, CONTENT_TYPE}, Method, Request, Response, StatusCode};
+use tauri::http::{
+    header::{CONTENT_LENGTH, CONTENT_TYPE},
+    Method, Request, Response, StatusCode,
+};
 use tauri::AppHandle;
 
 use super::{TodoBackupFile, MARKDOWN_IMAGE_PROTOCOL, MAX_TODO_IMAGE_BYTES};
@@ -285,7 +288,10 @@ pub(crate) fn markdown_image_sources(content: &str) -> Vec<String> {
     sources
 }
 
-pub(crate) fn markdown_image_reference(src: &str, markdown_dir: &Path) -> Option<(String, PathBuf)> {
+pub(crate) fn markdown_image_reference(
+    src: &str,
+    markdown_dir: &Path,
+) -> Option<(String, PathBuf)> {
     if let Some(file_name) = markdown_image_file_name_from_url(src) {
         return Some((file_name.clone(), markdown_dir.join(file_name)));
     }

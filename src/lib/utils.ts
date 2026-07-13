@@ -6,6 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const isMacTarget = __TAURI_TARGET_PLATFORM__ === "macos";
+export const isWindowsTarget = __TAURI_TARGET_PLATFORM__ === "windows";
 
 export function getDurationParts(seconds: number) {
   const totalSeconds = Math.max(0, Math.floor(seconds));
@@ -67,5 +68,18 @@ export function appBadgeLabel(name?: string | null): string {
 }
 
 export function previewLines(text: string, maxLines = 4): string {
-  return text.split(/\r?\n/).slice(0, maxLines).join("\n");
+  if (maxLines <= 0) return "";
+
+  let lines = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char !== "\n") continue;
+
+    lines += 1;
+    if (lines > maxLines) {
+      return text.slice(0, text[index - 1] === "\r" ? index - 1 : index);
+    }
+  }
+
+  return text;
 }

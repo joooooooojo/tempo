@@ -9,11 +9,11 @@ mod auxiliary_windows;
 mod clipboard_db;
 mod clipboard_images;
 mod clipboard_watcher;
-mod todo_images;
 #[cfg(target_os = "macos")]
 mod macos_dock;
 #[cfg(target_os = "macos")]
 mod macos_overlay_panel;
+mod todo_images;
 mod tray_menu;
 
 #[cfg(target_os = "macos")]
@@ -40,9 +40,12 @@ pub fn run() {
         .register_uri_scheme_protocol(commands::MARKDOWN_IMAGE_PROTOCOL, |ctx, request| {
             commands::markdown_image_protocol_response(ctx.app_handle(), request)
         })
-        .register_uri_scheme_protocol(clipboard_images::CLIPBOARD_IMAGE_PROTOCOL, |ctx, request| {
-            clipboard_images::clipboard_image_protocol_response(ctx.app_handle(), request)
-        })
+        .register_uri_scheme_protocol(
+            clipboard_images::CLIPBOARD_IMAGE_PROTOCOL,
+            |ctx, request| {
+                clipboard_images::clipboard_image_protocol_response(ctx.app_handle(), request)
+            },
+        )
         .register_uri_scheme_protocol(todo_images::TODO_IMAGE_PROTOCOL, |ctx, request| {
             todo_images::todo_image_protocol_response(ctx.app_handle(), request)
         })
@@ -71,7 +74,9 @@ pub fn run() {
                     let app_for_main = app.clone();
                     let _ = app.run_on_main_thread(move || {
                         let result = match id.as_str() {
-                            QUICK_TODO_SHORTCUT => auxiliary_windows::show_quick_todo(&app_for_main),
+                            QUICK_TODO_SHORTCUT => {
+                                auxiliary_windows::show_quick_todo(&app_for_main)
+                            }
                             CLIPBOARD_PICKER_SHORTCUT => {
                                 auxiliary_windows::show_clipboard_picker_window(&app_for_main)
                             }
@@ -206,6 +211,7 @@ pub fn run() {
             commands::markdown::save_markdown_image,
             commands::settings::complete_onboarding,
             commands::window::quit_app,
+            commands::window::debug_log,
             commands::window::hide_to_tray_command,
             commands::window::show_window,
             commands::pomodoro_cmds::get_pomodoro_state,

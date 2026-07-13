@@ -5,6 +5,7 @@ use crate::clipboard_db::{hash_bytes, ClipboardEntry};
 use base64::Engine as _;
 use rusqlite::Connection;
 use std::path::Path;
+use std::time::Instant;
 use tauri::http::{Request, Response};
 use tauri::AppHandle;
 
@@ -100,23 +101,116 @@ pub fn normalize_clipboard_image_reference(value: &str) -> String {
     value.to_string()
 }
 
-pub fn load_clipboard_image_rgba(app: &AppHandle, content: &str) -> Option<(u32, u32, Vec<u8>)> {
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone, Copy)]
+pub struct ClipboardImageLoadTiming {
+    pub read_ms: u128,
+    pub decode_ms: u128,
+    pub total_ms: u128,
+    pub png_bytes: usize,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy)]
+pub struct ClipboardImagePngLoadTiming {
+    pub read_ms: u128,
+    pub total_ms: u128,
+    pub png_bytes: usize,
+}
+
+#[cfg(target_os = "windows")]
+pub fn load_clipboard_image_png_bytes_timed(
+    app: &AppHandle,
+    content: &str,
+) -> Option<(Vec<u8>, ClipboardImagePngLoadTiming)> {
+    let total_start = Instant::now();
     if is_legacy_clipboard_image_data_url(content) {
-        return decode_legacy_png_data_url(content);
+        let png_bytes = decode_legacy_png_bytes(content)?;
+        if !looks_like_png(&png_bytes) {
+            return None;
+        }
+        let png_len = png_bytes.len();
+        return Some((
+            png_bytes,
+            ClipboardImagePngLoadTiming {
+                read_ms: 0,
+                total_ms: total_start.elapsed().as_millis(),
+                png_bytes: png_len,
+            },
+        ));
+    }
+
+    let storage_key = normalize_clipboard_image_reference(content);
+    if !is_clipboard_image_storage_key(&storage_key) {
+        return None;
+    }
+
+    let read_start = Instant::now();
+    let png_bytes = read_clipboard_image_bytes(app, &storage_key).ok()?;
+    if !looks_like_png(&png_bytes) {
+        return None;
+    }
+    let read_ms = read_start.elapsed().as_millis();
+    let png_len = png_bytes.len();
+    Some((
+        png_bytes,
+        ClipboardImagePngLoadTiming {
+            read_ms,
+            total_ms: total_start.elapsed().as_millis(),
+            png_bytes: png_len,
+        },
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn load_clipboard_image_rgba_timed(
+    app: &AppHandle,
+    content: &str,
+) -> Option<(u32, u32, Vec<u8>, ClipboardImageLoadTiming)> {
+    let total_start = Instant::now();
+    if is_legacy_clipboard_image_data_url(content) {
+        let decode_start = Instant::now();
+        let png_bytes = decode_legacy_png_bytes(content)?;
+        let png_len = png_bytes.len();
+        let (width, height, rgba) = decode_png_bytes(&png_bytes)?;
+        let decode_ms = decode_start.elapsed().as_millis();
+        return Some((
+            width,
+            height,
+            rgba,
+            ClipboardImageLoadTiming {
+                read_ms: 0,
+                decode_ms,
+                total_ms: total_start.elapsed().as_millis(),
+                png_bytes: png_len,
+            },
+        ));
     }
     let storage_key = normalize_clipboard_image_reference(content);
     if !is_clipboard_image_storage_key(&storage_key) {
         return None;
     }
+    let read_start = Instant::now();
     let png_bytes = read_clipboard_image_bytes(app, &storage_key).ok()?;
-    decode_png_bytes(&png_bytes)
+    let read_ms = read_start.elapsed().as_millis();
+    let png_len = png_bytes.len();
+    let decode_start = Instant::now();
+    let (width, height, rgba) = decode_png_bytes(&png_bytes)?;
+    let decode_ms = decode_start.elapsed().as_millis();
+    Some((
+        width,
+        height,
+        rgba,
+        ClipboardImageLoadTiming {
+            read_ms,
+            decode_ms,
+            total_ms: total_start.elapsed().as_millis(),
+            png_bytes: png_len,
+        },
+    ))
 }
 
-pub fn maybe_delete_clipboard_image_file(
-    conn: &Connection,
-    app: &AppHandle,
-    content: &str,
-) {
+pub fn maybe_delete_clipboard_image_file(conn: &Connection, app: &AppHandle, content: &str) {
     let storage_key = normalize_clipboard_image_reference(content);
     if !is_clipboard_image_storage_key(&storage_key) {
         return;
@@ -147,7 +241,9 @@ pub fn migrate_legacy_clipboard_images(app: &AppHandle, conn: &Connection) {
         Ok(stmt) => stmt,
         Err(_) => return,
     };
-    let rows = match stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))) {
+    let rows = match stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    }) {
         Ok(rows) => rows.filter_map(Result::ok).collect::<Vec<_>>(),
         Err(_) => return,
     };
@@ -206,11 +302,7 @@ fn decode_legacy_png_bytes(data_url: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
-fn decode_legacy_png_data_url(data_url: &str) -> Option<(u32, u32, Vec<u8>)> {
-    let png_bytes = decode_legacy_png_bytes(data_url)?;
-    decode_png_bytes(&png_bytes)
-}
-
+#[cfg(not(target_os = "windows"))]
 fn decode_png_bytes(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     let mut reader = decoder.read_info().ok()?;
@@ -222,11 +314,17 @@ fn decode_png_bytes(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((width, height, rgba))
 }
 
+#[cfg(target_os = "windows")]
+fn looks_like_png(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+}
+
 fn is_valid_clipboard_image_file_name(file_name: &str) -> bool {
-    let Some(stem) = Path::new(file_name).file_stem().and_then(|value| value.to_str()) else {
+    let Some(stem) = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+    else {
         return false;
     };
-    file_name.ends_with(".png")
-        && stem.len() == 16
-        && stem.chars().all(|ch| ch.is_ascii_hexdigit())
+    file_name.ends_with(".png") && stem.len() == 16 && stem.chars().all(|ch| ch.is_ascii_hexdigit())
 }

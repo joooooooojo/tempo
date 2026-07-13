@@ -57,6 +57,7 @@ pub fn hydrate_app_icon_url(value: &str) -> Option<String> {
     None
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn resolve_app_icon_protocol_url(
     app: &AppHandle,
     app_name: &str,
@@ -92,23 +93,6 @@ pub fn resolve_app_icon_storage_key(
     Some(storage_key)
 }
 
-pub fn ensure_app_icon_storage_key(
-    app: &AppHandle,
-    app_name: &str,
-    process_name: &str,
-    current: Option<&str>,
-) -> Option<String> {
-    if let Some(current) = current {
-        if is_app_icon_storage_key(current) {
-            return Some(current.to_string());
-        }
-        if let Some(storage_key) = migrate_legacy_app_icon_value(app, current) {
-            return Some(storage_key);
-        }
-    }
-    resolve_app_icon_storage_key(app, app_name, process_name)
-}
-
 pub fn migrate_legacy_app_icons(app: &AppHandle, conn: &Connection) {
     let mut stmt = match conn.prepare(
         "SELECT date, app_name, process_name, icon_data_url
@@ -131,9 +115,9 @@ pub fn migrate_legacy_app_icons(app: &AppHandle, conn: &Connection) {
     };
 
     for (date, app_name, process_name, icon_data_url) in rows {
-        let Some(storage_key) = migrate_legacy_app_icon_value(app, &icon_data_url).or_else(|| {
-            resolve_app_icon_storage_key(app, &app_name, &process_name)
-        }) else {
+        let Some(storage_key) = migrate_legacy_app_icon_value(app, &icon_data_url)
+            .or_else(|| resolve_app_icon_storage_key(app, &app_name, &process_name))
+        else {
             continue;
         };
         let _ = conn.execute(
@@ -143,10 +127,7 @@ pub fn migrate_legacy_app_icons(app: &AppHandle, conn: &Connection) {
     }
 }
 
-pub fn app_icon_protocol_response(
-    app: &AppHandle,
-    request: Request<Vec<u8>>,
-) -> Response<Vec<u8>> {
+pub fn app_icon_protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     asset_protocol_response(
         app,
         APP_ICON_SUBDIR,
@@ -169,10 +150,11 @@ fn decode_legacy_png_data_url(data_url: &str) -> Option<Vec<u8>> {
 }
 
 fn is_valid_app_icon_file_name(file_name: &str) -> bool {
-    let Some(stem) = Path::new(file_name).file_stem().and_then(|value| value.to_str()) else {
+    let Some(stem) = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+    else {
         return false;
     };
-    file_name.ends_with(".png")
-        && stem.len() == 16
-        && stem.chars().all(|ch| ch.is_ascii_hexdigit())
+    file_name.ends_with(".png") && stem.len() == 16 && stem.chars().all(|ch| ch.is_ascii_hexdigit())
 }

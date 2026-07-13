@@ -41,3 +41,12 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn debug_log(scope: String, message: String) {
+    #[cfg(debug_assertions)]
+    eprintln!("[tempo-debug][{scope}] {message}");
+
+    #[cfg(not(debug_assertions))]
+    let _ = (scope, message);
+}

@@ -1,4 +1,6 @@
-use crate::clipboard_db::{add_snippet, delete_snippet, get_snippet, list_snippets, update_snippet, Snippet};
+use crate::clipboard_db::{
+    add_snippet, delete_snippet, get_snippet, list_snippets, update_snippet, Snippet,
+};
 use crate::clipboard_watcher::use_clipboard_text;
 use crate::db::AppState;
 use tauri::Emitter;
@@ -18,7 +20,8 @@ pub fn create_snippet(
     tags: Vec<String>,
 ) -> Result<Snippet, String> {
     let conn = state.db.lock();
-    let snippet = add_snippet(&conn, &title, &content, &tags).ok_or_else(|| "标题和内容不能为空".to_string())?;
+    let snippet = add_snippet(&conn, &title, &content, &tags)
+        .ok_or_else(|| "标题和内容不能为空".to_string())?;
     let _ = app.emit("snippets-update", ());
     Ok(snippet)
 }
@@ -33,8 +36,8 @@ pub fn update_snippet_command(
     tags: Vec<String>,
 ) -> Result<Snippet, String> {
     let conn = state.db.lock();
-    let snippet =
-        update_snippet(&conn, id, &title, &content, &tags).ok_or_else(|| "短语不存在或内容无效".to_string())?;
+    let snippet = update_snippet(&conn, id, &title, &content, &tags)
+        .ok_or_else(|| "短语不存在或内容无效".to_string())?;
     let _ = app.emit("snippets-update", ());
     Ok(snippet)
 }

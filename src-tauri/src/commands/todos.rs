@@ -1,4 +1,15 @@
-use crate::db::{TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoSubtask, AppState};
+use super::markdown::{
+    backup_markdown_image_file_name, cleanup_unreferenced_markdown_images,
+    markdown_image_url_for_path, markdown_images_dir, read_backup_entries,
+    restore_backup_markdown_image_urls, rewrite_markdown_images_for_backup,
+    unique_markdown_image_path, write_zip_archive, ZipEntryInput,
+};
+use super::tracker::emit_on_main;
+use super::{
+    TodoBackupFile, TodoImageInput, MAX_TODO_IMAGES, MAX_TODO_IMAGE_BYTES, MAX_TODO_NOTE_CHARS,
+    MAX_TODO_NOTE_IMAGES,
+};
+use crate::db::{AppState, TodoImage, TodoItem, TodoNote, TodoNoteImage, TodoSubtask};
 use crate::todo_images::{
     hydrate_todo_images as hydrate_todo_image_urls,
     hydrate_todo_note_images as hydrate_todo_note_image_urls, save_todo_image_input,
@@ -10,14 +21,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
-use super::markdown::{
-    backup_markdown_image_file_name, cleanup_unreferenced_markdown_images,
-    markdown_images_dir, markdown_image_url_for_path, read_backup_entries,
-    restore_backup_markdown_image_urls, rewrite_markdown_images_for_backup, unique_markdown_image_path,
-    write_zip_archive, ZipEntryInput,
-};
-use super::tracker::emit_on_main;
-use super::{TodoBackupFile, TodoImageInput, MAX_TODO_IMAGE_BYTES, MAX_TODO_IMAGES, MAX_TODO_NOTE_CHARS, MAX_TODO_NOTE_IMAGES};
 
 #[tauri::command]
 pub fn get_todos(app: AppHandle, state: tauri::State<AppState>) -> Result<Vec<TodoItem>, String> {

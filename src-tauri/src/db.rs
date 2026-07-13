@@ -2,6 +2,8 @@ use chrono::Local;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "windows"))]
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -266,6 +268,20 @@ pub struct ClipboardRuntime {
     pub skip_next_capture: bool,
     pub last_source_app: Option<String>,
     pub last_source_process: Option<String>,
+    #[cfg(not(target_os = "windows"))]
+    pub decoded_image_cache: HashMap<String, CachedClipboardImage>,
+    #[cfg(not(target_os = "windows"))]
+    pub decoded_image_cache_order: VecDeque<String>,
+    #[cfg(not(target_os = "windows"))]
+    pub decoded_image_cache_bytes: usize,
+}
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone)]
+pub struct CachedClipboardImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -528,12 +544,21 @@ pub fn init_db(path: &PathBuf) -> Connection {
         ",
     )
     .expect("init schema");
-    conn.execute("ALTER TABLE clipboard_history ADD COLUMN image_width INTEGER", [])
-        .ok();
-    conn.execute("ALTER TABLE clipboard_history ADD COLUMN image_height INTEGER", [])
-        .ok();
-    conn.execute("ALTER TABLE clipboard_history ADD COLUMN source_process TEXT", [])
-        .ok();
+    conn.execute(
+        "ALTER TABLE clipboard_history ADD COLUMN image_width INTEGER",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE clipboard_history ADD COLUMN image_height INTEGER",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE clipboard_history ADD COLUMN source_process TEXT",
+        [],
+    )
+    .ok();
     conn.execute("ALTER TABLE app_usage ADD COLUMN icon_data_url TEXT", [])
         .ok();
     conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", [])
@@ -777,11 +802,7 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         "clipboard_max_entries",
         &settings.clipboard_max_entries.to_string(),
     );
-    set_setting(
-        conn,
-        "clipboard_paste_mode",
-        &settings.clipboard_paste_mode,
-    );
+    set_setting(conn, "clipboard_paste_mode", &settings.clipboard_paste_mode);
     set_setting(
         conn,
         "clipboard_plain_text_only",

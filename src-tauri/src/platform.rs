@@ -170,6 +170,19 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
     match active_win_pos_rs::get_active_window() {
         Ok(win) => {
             let name = win.app_name.trim().to_string();
+            #[cfg(windows)]
+            let process = {
+                let path = win.process_path.to_string_lossy().trim().to_string();
+                if path.is_empty() {
+                    win.process_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                } else {
+                    path
+                }
+            };
+            #[cfg(not(windows))]
             let process = win
                 .process_path
                 .file_name()
@@ -363,10 +376,6 @@ fn icon_path_candidates(app_name: &str, process_name: &str) -> Vec<PathBuf> {
     push_existing_path_candidate(&mut candidates, process_name);
     push_existing_path_candidate(&mut candidates, app_name);
 
-    if let Some(path) = find_running_process_path_windows(process_name) {
-        candidates.push(path);
-    }
-
     candidates
 }
 
@@ -516,37 +525,6 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
 
         (count > 0 && !icons[0].0.is_null()).then_some(icons[0])
     }
-}
-
-#[cfg(windows)]
-fn find_running_process_path_windows(process_name: &str) -> Option<PathBuf> {
-    let name = process_name
-        .trim()
-        .trim_end_matches(".exe")
-        .trim_end_matches(".EXE");
-
-    if name.is_empty() {
-        return None;
-    }
-
-    let quoted_name = name.replace('\'', "''");
-    let script = format!(
-        "$p = Get-Process -Name '{}' -ErrorAction SilentlyContinue | Where-Object {{ $_.Path }} | Select-Object -First 1 -ExpandProperty Path; if ($p) {{ [Console]::Out.Write($p) }}",
-        quoted_name
-    );
-
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let path = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    let path = PathBuf::from(path);
-    path.exists().then_some(path)
 }
 
 #[cfg(windows)]

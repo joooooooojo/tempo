@@ -46,7 +46,9 @@ pub fn save_todo_image_input(app: &AppHandle, image: &TodoImageInput) -> Result<
 
 pub fn hydrate_todo_image_data_url(value: &str) -> String {
     if is_todo_image_storage_key(value) {
-        let file_name = value.strip_prefix(&format!("{TODO_IMAGE_SUBDIR}/")).unwrap_or(value);
+        let file_name = value
+            .strip_prefix(&format!("{TODO_IMAGE_SUBDIR}/"))
+            .unwrap_or(value);
         return asset_url_for_file_name(TODO_IMAGE_PROTOCOL, file_name);
     }
     if storage_key_from_protocol_url(TODO_IMAGE_PROTOCOL, TODO_IMAGE_SUBDIR, value).is_some() {
@@ -95,18 +97,17 @@ pub fn todo_image_protocol_response(
     )
 }
 
-fn migrate_table_legacy_images(
-    app: &AppHandle,
-    conn: &Connection,
-    table: &str,
-    query: &str,
-) {
+fn migrate_table_legacy_images(app: &AppHandle, conn: &Connection, table: &str, query: &str) {
     let mut stmt = match conn.prepare(query) {
         Ok(stmt) => stmt,
         Err(_) => return,
     };
     let rows = match stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
     }) {
         Ok(rows) => rows.filter_map(Result::ok).collect::<Vec<_>>(),
         Err(_) => return,
@@ -163,7 +164,10 @@ fn todo_image_extension(mime_type: &str) -> Result<&'static str, String> {
 }
 
 fn is_valid_todo_image_file_name(file_name: &str) -> bool {
-    let Some(stem) = Path::new(file_name).file_stem().and_then(|value| value.to_str()) else {
+    let Some(stem) = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+    else {
         return false;
     };
     if stem.len() != 16 || !stem.chars().all(|ch| ch.is_ascii_hexdigit()) {

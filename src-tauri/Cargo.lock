@@ -4633,6 +4633,7 @@ dependencies = [
  "objc",
  "parking_lot",
  "png 0.17.16",
+ "raw-window-handle",
  "rusqlite",
  "serde",
  "serde_json",

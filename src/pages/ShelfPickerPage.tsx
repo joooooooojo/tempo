@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+} from "react";
+import * as ScrollArea from "@radix-ui/react-scroll-area";
 import { listen } from "@tauri-apps/api/event";
 import { ClipboardList, MoreHorizontal, Plus, Search, TextQuote } from "lucide-react";
 import { toast } from "sonner";
@@ -13,6 +23,7 @@ import {
 } from "@/components/clipboard/ShelfCard";
 import { useAuxiliaryWindowShell } from "@/hooks/useAuxiliaryWindow";
 import { api } from "@/lib/api";
+import { isWindowsTarget } from "@/lib/utils";
 import type { ClipboardEntry, Snippet } from "@/types";
 
 const CLIPBOARD_LIMIT = 200;
@@ -42,7 +53,66 @@ function filterSnippets(items: Snippet[], query: string) {
   );
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function debugShelf(message: string, details?: Record<string, unknown>) {
+  if (!import.meta.env.DEV) return;
+
+  let rendered = message;
+  if (details) {
+    try {
+      rendered = `${message} ${JSON.stringify(details)}`;
+    } catch {
+      rendered = message;
+    }
+  }
+
+  console.debug("[shelf-picker]", message, details ?? "");
+  void api.debugLog("shelf-picker", rendered).catch(() => undefined);
+}
+
 const MemoShelfCard = memo(ShelfCard);
+
+type ShelfTrackViewportProps = {
+  active: boolean;
+  children: ReactNode;
+  scrollerRef: RefObject<HTMLDivElement | null>;
+  label: string;
+};
+
+function ShelfTrackViewport({ active, children, label, scrollerRef }: ShelfTrackViewportProps) {
+  if (isWindowsTarget) {
+    return (
+      <ScrollArea.Root
+        className="shelf-picker-scroll-area"
+        type="auto"
+        hidden={!active}
+        aria-hidden={!active}
+        aria-label={label}
+      >
+        <ScrollArea.Viewport className="shelf-picker-scroll-viewport" ref={scrollerRef}>
+          <div className="shelf-picker-track shelf-picker-track--scroll-area">{children}</div>
+        </ScrollArea.Viewport>
+        <ScrollArea.Scrollbar className="shelf-picker-scrollbar" orientation="horizontal">
+          <ScrollArea.Thumb className="shelf-picker-scrollbar__thumb" />
+        </ScrollArea.Scrollbar>
+      </ScrollArea.Root>
+    );
+  }
+
+  return (
+    <div
+      className="shelf-picker-track"
+      ref={scrollerRef}
+      hidden={!active}
+      aria-hidden={!active}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function ShelfPickerPage() {
   const [tab, setTab] = useState<ShelfTab>("clipboard");
@@ -184,8 +254,19 @@ export function ShelfPickerPage() {
   }, [loadClipboard, loadSnippets, resetAndOpen]);
 
   const copyEntry = useCallback(async (entry: ClipboardEntry) => {
+    debugShelf("copy clipboard entry requested", {
+      id: entry.id,
+      kind: entry.kind,
+      contentPrefix: entry.content.slice(0, 96),
+      imageWidth: entry.image_width,
+      imageHeight: entry.image_height,
+    });
     try {
       await api.copyClipboardEntry(entry.id);
+      debugShelf("copy clipboard entry succeeded", {
+        id: entry.id,
+        kind: entry.kind,
+      });
       setClipboardCache((current) => {
         const nextEntry = { ...entry, created_at: new Date().toISOString() };
         return [nextEntry, ...current.filter((item) => item.id !== entry.id)];
@@ -193,9 +274,16 @@ export function ShelfPickerPage() {
       setClipboardIndex(0);
       await api.hideShelfPicker();
     } catch (error) {
+      debugShelf("copy clipboard entry failed", {
+        id: entry.id,
+        kind: entry.kind,
+        error: errorMessage(error),
+      });
+      console.error("[shelf-picker] copy clipboard entry failed", error, entry);
       toast.error(error instanceof Error ? error.message : "复制失败");
     }
   }, []);
+
 
   const copySnippet = useCallback(async (snippet: Snippet) => {
     try {
@@ -211,7 +299,7 @@ export function ShelfPickerPage() {
 
   const scrollSelectedCardIntoView = useCallback(
     (container: HTMLDivElement | null, index: number) => {
-      const node = container?.children[index] as HTMLElement | undefined;
+      const node = container?.querySelectorAll<HTMLElement>(".shelf-card")[index];
       node?.scrollIntoView({ behavior: "auto", inline: "nearest", block: "nearest" });
     },
     []
@@ -353,11 +441,10 @@ export function ShelfPickerPage() {
         </div>
 
         <div className="shelf-picker-track-host">
-          <div
-            className="shelf-picker-track"
-            ref={clipboardScrollerRef}
-            hidden={tab !== "clipboard"}
-            aria-hidden={tab !== "clipboard"}
+          <ShelfTrackViewport
+            active={tab === "clipboard"}
+            label="剪贴板水平滚动区域"
+            scrollerRef={clipboardScrollerRef}
           >
             {entries.length === 0 ? (
               <div className="shelf-picker-empty">暂无剪贴记录</div>
@@ -379,18 +466,24 @@ export function ShelfPickerPage() {
                       : shelfCharCount(entry.content)
                   }
                   onClick={() => setClipboardIndex(index)}
-                  onDoubleClick={() => void copyEntry(entry)}
+                  onDoubleClick={() => {
+                    debugShelf("clipboard card double click", {
+                      id: entry.id,
+                      kind: entry.kind,
+                      index,
+                    });
+                    void copyEntry(entry);
+                  }}
                   title="双击复制到剪贴板并置顶"
                 />
               ))
             )}
-          </div>
+          </ShelfTrackViewport>
 
-          <div
-            className="shelf-picker-track"
-            ref={snippetsScrollerRef}
-            hidden={tab !== "snippets"}
-            aria-hidden={tab !== "snippets"}
+          <ShelfTrackViewport
+            active={tab === "snippets"}
+            label="快捷短语水平滚动区域"
+            scrollerRef={snippetsScrollerRef}
           >
             {snippets.length === 0 ? (
               <div className="shelf-picker-empty">还没有快捷短语</div>
@@ -414,7 +507,7 @@ export function ShelfPickerPage() {
                 />
               ))
             )}
-          </div>
+          </ShelfTrackViewport>
         </div>
       </div>
     </div>

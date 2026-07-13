@@ -109,6 +109,8 @@ export const api = {
   saveMarkdownImage: (dataUrl: string, mimeType: string) =>
     invoke<string>("save_markdown_image", { dataUrl, mimeType }),
   completeOnboarding: () => invoke<void>("complete_onboarding"),
+  debugLog: (scope: string, message: string) =>
+    invoke<void>("debug_log", { scope, message }),
   hideToTray: () => invoke<void>("hide_to_tray_command"),
   getPomodoroState: () => invoke<PomodoroState>("get_pomodoro_state"),
   setPomodoroTodo: (todoId: number | null) =>

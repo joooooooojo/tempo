@@ -82,7 +82,6 @@ export function AppLayout() {
             )}
           >
             <div
-              key={location.pathname}
               className={cn("page-transition", isTodoPage && "flex min-h-0 flex-1 flex-col")}
             >
               <Outlet />

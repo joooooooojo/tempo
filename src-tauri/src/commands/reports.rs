@@ -1,40 +1,23 @@
-use crate::db::{get_daily_total, today_str, AppState, AppUsage, DailyReport, HourlyData, WeeklyDay, WeeklyReport, MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS};
+use crate::db::{
+    get_daily_total, today_str, AppState, AppUsage, DailyReport, HourlyData, WeeklyDay,
+    WeeklyReport, MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS,
+};
 use chrono::Local;
 use rusqlite::{params, Connection};
-use tauri::AppHandle;
 
 pub(crate) const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
 
-fn hydrate_app_icons(app: &AppHandle, state: &AppState, date: &str, apps: &mut [AppUsage]) {
+fn hydrate_app_icons(apps: &mut [AppUsage]) {
     for app_usage in apps.iter_mut() {
-        let Some(storage_key) = crate::app_icons::ensure_app_icon_storage_key(
-            app,
-            &app_usage.app_name,
-            &app_usage.process_name,
-            app_usage.icon_data_url.as_deref(),
-        ) else {
-            continue;
-        };
-
-        if app_usage.icon_data_url.as_deref() != Some(storage_key.as_str()) {
-            let conn = state.db.lock();
-            conn.execute(
-                "UPDATE app_usage SET icon_data_url = ?1 WHERE date = ?2 AND app_name = ?3",
-                params![storage_key, date, app_usage.app_name],
-            )
-            .ok();
-        }
-
-        app_usage.icon_data_url = crate::app_icons::hydrate_app_icon_url(&storage_key);
+        app_usage.icon_data_url = app_usage
+            .icon_data_url
+            .as_deref()
+            .and_then(crate::app_icons::hydrate_app_icon_url);
     }
 }
 
 #[tauri::command]
-pub fn get_daily_report(
-    app: AppHandle,
-    state: tauri::State<AppState>,
-    date: Option<String>,
-) -> DailyReport {
+pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> DailyReport {
     let date = date.unwrap_or_else(today_str);
     let (total, hourly, mut top_apps) = {
         let conn = state.db.lock();
@@ -60,7 +43,7 @@ pub fn get_daily_report(
 
         (total, hourly, crate::db::top_apps(&conn, &date, i64::MAX))
     };
-    hydrate_app_icons(&app, &state, &date, &mut top_apps);
+    hydrate_app_icons(&mut top_apps);
 
     let peak = hourly
         .iter()
@@ -86,7 +69,7 @@ pub fn get_daily_report(
 }
 
 #[tauri::command]
-pub fn get_weekly_report(app: AppHandle, state: tauri::State<AppState>) -> WeeklyReport {
+pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
     let today = Local::now().date_naive();
     let today_text = today.format("%Y-%m-%d").to_string();
     let start_text = (today - chrono::Duration::days(6))
@@ -116,7 +99,7 @@ pub fn get_weekly_report(app: AppHandle, state: tauri::State<AppState>) -> Weekl
         )
     };
 
-    hydrate_app_icons(&app, &state, &today_text, &mut top_apps);
+    hydrate_app_icons(&mut top_apps);
     for day in &mut days {
         day.is_over_limit = day.seconds > DAILY_RECOMMENDED_LIMIT_SECONDS;
     }
@@ -172,12 +155,12 @@ pub(crate) fn format_duration(seconds: i64) -> String {
     }
 }
 #[tauri::command]
-pub fn get_known_apps(app: AppHandle, state: tauri::State<AppState>) -> Vec<AppUsage> {
+pub fn get_known_apps(state: tauri::State<AppState>) -> Vec<AppUsage> {
     let today = today_str();
     let mut apps = {
         let conn = state.db.lock();
         crate::db::top_apps(&conn, &today, 50)
     };
-    hydrate_app_icons(&app, &state, &today, &mut apps);
+    hydrate_app_icons(&mut apps);
     apps
 }
