@@ -8,7 +8,6 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
-import * as ScrollArea from "@radix-ui/react-scroll-area";
 import { listen } from "@tauri-apps/api/event";
 import { ClipboardList, MoreHorizontal, Plus, Search, TextQuote } from "lucide-react";
 import { toast } from "sonner";
@@ -21,6 +20,7 @@ import {
   shelfImageSize,
   shelfTimeLabel,
 } from "@/components/clipboard/ShelfCard";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuxiliaryWindowShell } from "@/hooks/useAuxiliaryWindow";
 import { api } from "@/lib/api";
 import { isWindowsTarget } from "@/lib/utils";
@@ -85,20 +85,19 @@ type ShelfTrackViewportProps = {
 function ShelfTrackViewport({ active, children, label, scrollerRef }: ShelfTrackViewportProps) {
   if (isWindowsTarget) {
     return (
-      <ScrollArea.Root
+      <ScrollArea
         className="shelf-picker-scroll-area"
-        type="auto"
+        scrollbars="horizontal"
+        scrollbarClassName="shelf-picker-scrollbar"
+        thumbClassName="shelf-picker-scrollbar__thumb"
         hidden={!active}
         aria-hidden={!active}
         aria-label={label}
+        viewportClassName="shelf-picker-scroll-viewport"
+        viewportRef={scrollerRef}
       >
-        <ScrollArea.Viewport className="shelf-picker-scroll-viewport" ref={scrollerRef}>
-          <div className="shelf-picker-track shelf-picker-track--scroll-area">{children}</div>
-        </ScrollArea.Viewport>
-        <ScrollArea.Scrollbar className="shelf-picker-scrollbar" orientation="horizontal">
-          <ScrollArea.Thumb className="shelf-picker-scrollbar__thumb" />
-        </ScrollArea.Scrollbar>
-      </ScrollArea.Root>
+        <div className="shelf-picker-track shelf-picker-track--scroll-area">{children}</div>
+      </ScrollArea>
     );
   }
 

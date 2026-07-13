@@ -2,32 +2,22 @@ use crate::clipboard_db::{
     encode_rgba_png, get_clipboard_entry, hash_bytes, insert_clipboard_image,
     insert_clipboard_text, touch_clipboard_entry,
 };
-#[cfg(target_os = "windows")]
-use crate::clipboard_images::load_clipboard_image_png_bytes_timed;
 use crate::clipboard_images::save_clipboard_image_png;
-#[cfg(not(target_os = "windows"))]
 use crate::clipboard_images::{
     load_clipboard_image_rgba_timed, normalize_clipboard_image_reference,
 };
-#[cfg(not(target_os = "windows"))]
 use crate::db::CachedClipboardImage;
 use crate::db::{load_settings, AppState};
 use crate::platform::{get_foreground_app, ForegroundApp};
 use arboard::Clipboard;
-#[cfg(not(target_os = "windows"))]
 use arboard::ImageData;
-#[cfg(not(target_os = "windows"))]
 use std::borrow::Cow;
-#[cfg(not(target_os = "windows"))]
 use std::collections::HashSet;
-#[cfg(not(target_os = "windows"))]
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 
-#[cfg(not(target_os = "windows"))]
 const DECODED_IMAGE_CACHE_MAX_ENTRIES: usize = 16;
-#[cfg(not(target_os = "windows"))]
 const DECODED_IMAGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
@@ -106,7 +96,6 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
                                 let inserted = if let Ok(storage_key) =
                                     save_clipboard_image_png(&app, &content_hash, &png_bytes)
                                 {
-                                    #[cfg(not(target_os = "windows"))]
                                     cache_decoded_clipboard_image(
                                         &state,
                                         &storage_key,
@@ -168,7 +157,6 @@ pub fn emit_clipboard_update(app: &AppHandle) {
     let _ = app.emit_to("main", "clipboard-update", ());
 }
 
-#[cfg(not(target_os = "windows"))]
 pub fn prewarm_clipboard_image_cache(app: AppHandle, state: AppState, contents: Vec<String>) {
     std::thread::spawn(move || {
         let mut seen = HashSet::new();
@@ -215,53 +203,6 @@ pub fn write_clipboard_text(state: &AppState, text: &str) -> Result<(), String> 
     })
 }
 
-#[cfg(target_os = "windows")]
-pub fn write_clipboard_image(
-    state: &AppState,
-    app: &AppHandle,
-    content: &str,
-) -> Result<(), String> {
-    let total_start = Instant::now();
-    debug_clipboard_log(format!(
-        "write image requested windows_png_direct content_prefix={}",
-        content.chars().take(96).collect::<String>()
-    ));
-
-    let load_start = Instant::now();
-    let (png_bytes, timing) = match load_clipboard_image_png_bytes_timed(app, content) {
-        Some(image) => image,
-        None => {
-            debug_clipboard_log("write image failed: load_clipboard_image_png_bytes returned None");
-            return Err("image data is invalid".to_string());
-        }
-    };
-    debug_clipboard_log(format!(
-        "write image png loaded png_bytes={} read_ms={} load_total_ms={} outer_load_ms={}",
-        timing.png_bytes,
-        timing.read_ms,
-        timing.total_ms,
-        load_start.elapsed().as_millis()
-    ));
-
-    let set_png_start = Instant::now();
-    let result = with_skip_capture(state, || write_clipboard_png_windows(&png_bytes));
-    let set_png_ms = set_png_start.elapsed().as_millis();
-    match &result {
-        Ok(_) => debug_clipboard_log(format!(
-            "write image succeeded windows_png_direct set_png_ms={} total_ms={}",
-            set_png_ms,
-            total_start.elapsed().as_millis()
-        )),
-        Err(error) => debug_clipboard_log(format!(
-            "write image failed windows_png_direct: {error} set_png_ms={} total_ms={}",
-            set_png_ms,
-            total_start.elapsed().as_millis()
-        )),
-    }
-    result
-}
-
-#[cfg(not(target_os = "windows"))]
 pub fn write_clipboard_image(
     state: &AppState,
     app: &AppHandle,
@@ -446,83 +387,6 @@ fn debug_clipboard_log(message: impl AsRef<str>) {
     let _ = message;
 }
 
-#[cfg(target_os = "windows")]
-fn write_clipboard_png_windows(png_bytes: &[u8]) -> Result<(), String> {
-    use windows::core::{Error as WindowsError, PCWSTR};
-    use windows::Win32::Foundation::{HANDLE, HWND};
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
-    };
-    use windows::Win32::System::Memory::{
-        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT,
-    };
-
-    if png_bytes.is_empty() {
-        return Err("image data is empty".to_string());
-    }
-
-    unsafe {
-        let png_format_name = "PNG"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>();
-        let png_format = RegisterClipboardFormatW(PCWSTR(png_format_name.as_ptr()));
-        if png_format == 0 {
-            return Err(format!(
-                "RegisterClipboardFormatW(PNG) failed: {}",
-                WindowsError::from_win32()
-            ));
-        }
-
-        let hglobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, png_bytes.len())
-            .map_err(|error| format!("GlobalAlloc failed: {error}"))?;
-        let data_ptr = GlobalLock(hglobal) as *mut u8;
-        if data_ptr.is_null() {
-            free_global(hglobal);
-            return Err(format!("GlobalLock failed: {}", WindowsError::from_win32()));
-        }
-        std::ptr::copy_nonoverlapping(png_bytes.as_ptr(), data_ptr, png_bytes.len());
-        // GlobalUnlock returns zero both on success when the lock count reaches zero and on
-        // failure; the windows crate maps zero to Err, so do not treat that wrapper result as
-        // authoritative here.
-        let _ = GlobalUnlock(hglobal);
-
-        OpenClipboard(HWND(std::ptr::null_mut())).map_err(|error| {
-            free_global(hglobal);
-            format!("OpenClipboard failed: {error}")
-        })?;
-
-        let mut ownership_transferred = false;
-        let write_result = (|| -> Result<(), String> {
-            EmptyClipboard().map_err(|error| format!("EmptyClipboard failed: {error}"))?;
-            SetClipboardData(png_format, HANDLE(hglobal.0))
-                .map_err(|error| format!("SetClipboardData(PNG) failed: {error}"))?;
-            ownership_transferred = true;
-            Ok(())
-        })();
-
-        let close_result = CloseClipboard();
-        if !ownership_transferred {
-            free_global(hglobal);
-        }
-        if let Err(error) = close_result {
-            if write_result.is_ok() {
-                return Err(format!("CloseClipboard failed: {error}"));
-            }
-        }
-
-        write_result
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn free_global(hglobal: windows::Win32::Foundation::HGLOBAL) {
-    unsafe {
-        let _ = windows::Win32::Foundation::GlobalFree(hglobal);
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
 fn get_cached_clipboard_image(state: &AppState, key: &str) -> Option<CachedClipboardImage> {
     let mut runtime = state.clipboard.lock();
     let cached = runtime.decoded_image_cache.get(key).cloned()?;
@@ -533,7 +397,6 @@ fn get_cached_clipboard_image(state: &AppState, key: &str) -> Option<CachedClipb
     Some(cached)
 }
 
-#[cfg(not(target_os = "windows"))]
 fn cache_decoded_clipboard_image(
     state: &AppState,
     key: &str,

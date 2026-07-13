@@ -152,7 +152,8 @@ export function PomodoroPage() {
     settings.pomodoro_sessions_per_cycle
   )} / ${settings.pomodoro_sessions_per_cycle}`;
 
-  const handleSelectTodo = async (value: string) => {
+  const handleSelectTodo = async (value: string | null) => {
+    if (!value) return;
     try {
       const todoId = value === "none" ? null : Number(value);
       setState(await api.setPomodoroTodo(todoId));

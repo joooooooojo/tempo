@@ -45,6 +45,14 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
                 continue;
             }
 
+            let foreground_icon = foreground.as_ref().and_then(|app_info| {
+                crate::app_icons::resolve_app_icon_storage_key(
+                    &app,
+                    &app_info.name,
+                    &app_info.process_name,
+                )
+            });
+
             {
                 let conn = state.db.lock();
                 for (bucket_date, bucket_hour, seconds) in second_buckets(now, elapsed_seconds) {
@@ -61,7 +69,7 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
                             &app_info.name,
                             &app_info.process_name,
                             tracked_seconds,
-                            app_info.icon_data_url.as_deref(),
+                            foreground_icon.as_deref(),
                         );
                     }
                 }

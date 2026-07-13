@@ -12,7 +12,6 @@ pub struct ClipboardHistoryPage {
     pub total: u32,
     pub has_more: bool,
 }
-#[cfg(not(target_os = "windows"))]
 use crate::clipboard_watcher::prewarm_clipboard_image_cache;
 use crate::clipboard_watcher::{copy_clipboard_entry_by_id, write_clipboard_text};
 use crate::db::AppState;
@@ -108,16 +107,13 @@ pub fn get_clipboard_history(
     hydrate_clipboard_icons(&app, &conn, &mut entries);
     hydrate_clipboard_image_urls(&app, &conn, &mut entries);
     drop(conn);
-    #[cfg(not(target_os = "windows"))]
-    {
-        let image_contents = entries
-            .iter()
-            .filter(|entry| entry.kind == "image")
-            .map(|entry| entry.content.clone())
-            .collect::<Vec<_>>();
-        if !image_contents.is_empty() {
-            prewarm_clipboard_image_cache(app.clone(), state.inner().clone(), image_contents);
-        }
+    let image_contents = entries
+        .iter()
+        .filter(|entry| entry.kind == "image")
+        .map(|entry| entry.content.clone())
+        .collect::<Vec<_>>();
+    if !image_contents.is_empty() {
+        prewarm_clipboard_image_cache(app.clone(), state.inner().clone(), image_contents);
     }
     let loaded = offset.saturating_add(entries.len() as u32);
     ClipboardHistoryPage {

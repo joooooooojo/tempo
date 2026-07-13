@@ -1,146 +1,192 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ClipboardList, Loader2, Pin, Search, Trash2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Loader2,
+  Maximize2,
+  Pin,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
+import { AppIcon } from "@/components/AppIcon";
 import {
   clipboardKindLabel,
   clipboardSourceLabel,
   shelfImageSize,
 } from "@/components/clipboard/ShelfCard";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { cn, formatRelativeTime, previewLines } from "@/lib/utils";
-import type { ClipboardEntry, Settings } from "@/types";
+import type { ClipboardEntry } from "@/types";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 15;
 
 export function ClipboardPage() {
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
   const [total, setTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [query, setQuery] = useState("");
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const [previewEntry, setPreviewEntry] = useState<ClipboardEntry | null>(null);
   const queryRef = useRef(query);
+  const pageRef = useRef(page);
+  const clipboardUpdateTimerRef = useRef<number | null>(null);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const rangeStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE, total);
 
   useEffect(() => {
     queryRef.current = query;
   }, [query]);
 
-  const loadPage = useCallback(async (offset: number, search?: string, append = false) => {
-    const isInitial = offset === 0 && !append;
-    if (isInitial) {
-      setLoading(true);
-    } else {
-      setLoadingMore(true);
-    }
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
-    try {
-      const [page, nextSettings] = await Promise.all([
-        api.getClipboardHistory(search, PAGE_SIZE, offset),
-        isInitial ? api.getSettings() : Promise.resolve(null),
-      ]);
-
-      setEntries((current) => (append ? [...current, ...page.entries] : page.entries));
-      setTotal(page.total);
-      setHasMore(page.has_more);
-      if (nextSettings) {
-        setSettings(nextSettings);
+  const loadPage = useCallback(
+    async (nextPage: number, search?: string, showLoading = true) => {
+      const normalizedPage = Math.max(1, nextPage);
+      if (showLoading) {
+        setLoading(true);
       }
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, []);
 
-  const reload = useCallback(async () => {
-    await loadPage(0, queryRef.current || undefined);
-  }, [loadPage]);
+      try {
+        const result = await api.getClipboardHistory(
+          search,
+          PAGE_SIZE,
+          (normalizedPage - 1) * PAGE_SIZE
+        );
+        const lastPage = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
 
-  const loadMore = useCallback(async () => {
-    if (loading || loadingMore || !hasMore) return;
-    await loadPage(entries.length, queryRef.current || undefined, true);
-  }, [entries.length, hasMore, loadPage, loading, loadingMore]);
+        if (result.total > 0 && normalizedPage > lastPage) {
+          setPage(lastPage);
+          pageRef.current = lastPage;
+          await loadPage(lastPage, search, showLoading);
+          return;
+        }
+
+        setEntries(result.entries);
+        setTotal(result.total);
+        setPage(normalizedPage);
+        pageRef.current = normalizedPage;
+      } finally {
+        if (showLoading) {
+          setLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  const reload = useCallback(
+    async (showLoading = false) => {
+      await loadPage(pageRef.current, queryRef.current || undefined, showLoading);
+    },
+    [loadPage]
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadPage(0, query || undefined);
+      void loadPage(1, query || undefined);
     }, 200);
     return () => window.clearTimeout(timer);
   }, [loadPage, query]);
 
   useEffect(() => {
-    const unlisten = listen("clipboard-update", () => void reload());
+    const unlisten = listen("clipboard-update", () => {
+      if (clipboardUpdateTimerRef.current) {
+        window.clearTimeout(clipboardUpdateTimerRef.current);
+      }
+      clipboardUpdateTimerRef.current = window.setTimeout(() => {
+        clipboardUpdateTimerRef.current = null;
+        void reload(false);
+      }, 160);
+    });
     return () => {
+      if (clipboardUpdateTimerRef.current) {
+        window.clearTimeout(clipboardUpdateTimerRef.current);
+        clipboardUpdateTimerRef.current = null;
+      }
       void unlisten.then((fn) => fn());
     };
   }, [reload]);
 
-  useEffect(() => {
-    const node = loadMoreRef.current;
-    if (!node || !hasMore) return;
-
-    const observer = new IntersectionObserver(
-      (records) => {
-        if (records[0]?.isIntersecting) {
-          void loadMore();
-        }
-      },
-      { rootMargin: "240px" }
-    );
-
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [hasMore, loadMore]);
-
   const copyEntry = async (entry: ClipboardEntry) => {
     try {
       await api.copyClipboardEntry(entry.id);
+      if (pageRef.current === 1) {
+        setEntries((current) => {
+          const nextEntry = { ...entry, created_at: new Date().toISOString() };
+          return [nextEntry, ...current.filter((item) => item.id !== entry.id)].slice(0, PAGE_SIZE);
+        });
+      }
       toast.success("已复制");
+      void reload(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
     }
   };
 
-  const toggleMonitor = async (enabled: boolean) => {
-    if (!settings) return;
-    setSettings({ ...settings, clipboard_monitor_enabled: enabled });
+  const togglePinned = async (entry: ClipboardEntry) => {
+    const nextPinned = !entry.pinned;
+    setEntries((current) =>
+      current.map((item) => (item.id === entry.id ? { ...item, pinned: nextPinned } : item))
+    );
     try {
-      await api.updateSettings({ clipboard_monitor_enabled: enabled });
-      toast.success("已保存");
+      await api.pinClipboardEntry(entry.id, nextPinned);
+      void reload(false);
     } catch (error) {
-      setSettings(settings);
-      toast.error(error instanceof Error ? error.message : "保存失败");
+      setEntries((current) =>
+        current.map((item) => (item.id === entry.id ? { ...item, pinned: entry.pinned } : item))
+      );
+      toast.error(error instanceof Error ? error.message : "操作失败");
     }
   };
 
-  return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight">
-            <ClipboardList className="h-5 w-5 text-primary" />
-            剪贴板
-          </h1>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            自动记录文字与截图，按 <kbd className="rounded bg-foreground/8 px-1.5 py-0.5 text-[11px]">F4</kbd> 快速呼出
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[12px] text-muted-foreground">记录剪贴板</span>
-          <Switch
-            checked={settings?.clipboard_monitor_enabled ?? true}
-            onCheckedChange={(value) => void toggleMonitor(value)}
-          />
-        </div>
-      </div>
+  const deleteEntry = async (entry: ClipboardEntry) => {
+    setEntries((current) => current.filter((item) => item.id !== entry.id));
+    setTotal((current) => Math.max(0, current - 1));
+    try {
+      await api.deleteClipboardEntry(entry.id);
+      void reload(false);
+    } catch (error) {
+      setEntries((current) => [entry, ...current]);
+      setTotal((current) => current + 1);
+      toast.error(error instanceof Error ? error.message : "删除失败");
+    }
+  };
 
-      <div className="flex flex-wrap items-center gap-2">
+  const goToPage = (nextPage: number) => {
+    const target = Math.min(Math.max(1, nextPage), totalPages);
+    if (target === page && !loading) return;
+    void loadPage(target, queryRef.current || undefined);
+  };
+
+  return (
+    <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -150,150 +196,291 @@ export function ClipboardPage() {
             className="h-9 border-0 pl-9 glass-subtle"
           />
         </div>
-        <Button
-          variant="outline"
-          className="h-9 border-0 glass-subtle"
-          onClick={() => void api.showClipboardPicker()}
-        >
-          打开浮层 (F4)
-        </Button>
-        <Button
-          variant="outline"
-          className="h-9 border-0 glass-subtle"
-          onClick={async () => {
-            await api.clearClipboardHistory();
-            toast.success("已清空未固定记录");
-            void reload();
-          }}
-        >
-          清空历史
-        </Button>
+        <span className="shrink-0 rounded-md bg-background/55 px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground ring-1 ring-border/50">
+          共 {total} 条
+        </span>
       </div>
 
-      {total > 0 && (
-        <p className="text-[12px] text-muted-foreground">
-          已加载 {entries.length} / {total} 条
-        </p>
+      <DataTable
+        loading={loading}
+        loadingContent={
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            加载中...
+          </>
+        }
+        empty={entries.length === 0}
+        emptyContent="还没有剪贴记录，复制文字或截图试试吧"
+        footer={
+          <TablePagination
+            page={page}
+            totalPages={totalPages}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            total={total}
+            onPageChange={goToPage}
+          />
+        }
+        scrollAreaLabel="剪贴板历史"
+      >
+        <Table className="w-full min-w-[914px] table-fixed border-collapse text-left">
+          <colgroup>
+            <col className="w-[82px]" />
+            <col className="w-[300px]" />
+            <col className="w-[170px]" />
+            <col className="w-[116px]" />
+            <col className="w-[106px]" />
+            <col className="w-[140px]" />
+          </colgroup>
+          <TableHeader className="sticky top-0 z-10 bg-background/90 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/75">
+            <TableRow className="border-b border-border/55 hover:bg-transparent">
+              <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">类型</TableHead>
+              <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">内容</TableHead>
+              <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">来源</TableHead>
+              <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">时间</TableHead>
+              <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">详情</TableHead>
+              <TableHead className="h-auto whitespace-nowrap px-2 py-2 text-right text-muted-foreground">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {entries.map((entry) => (
+              <ClipboardTableRow
+                key={entry.id}
+                entry={entry}
+                onCopy={() => void copyEntry(entry)}
+                onDelete={() => void deleteEntry(entry)}
+                onPreview={() => setPreviewEntry(entry)}
+                onTogglePinned={() => void togglePinned(entry)}
+              />
+            ))}
+          </TableBody>
+        </Table>
+      </DataTable>
+
+      <ImagePreviewDialog
+        entry={previewEntry}
+        onCopy={(entry) => void copyEntry(entry)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewEntry(null);
+        }}
+      />
+    </div>
+  );
+}
+
+function ClipboardTableRow({
+  entry,
+  onCopy,
+  onDelete,
+  onPreview,
+  onTogglePinned,
+}: {
+  entry: ClipboardEntry;
+  onCopy: () => void;
+  onDelete: () => void;
+  onPreview: () => void;
+  onTogglePinned: () => void;
+}) {
+  const isImage = entry.kind === "image";
+  const sourceLabel = clipboardSourceLabel(entry);
+  const detailLabel = isImage
+    ? shelfImageSize(entry.image_width, entry.image_height).replace(/\s×\s/g, "×")
+    : `${Array.from(entry.content).length} 字符`;
+
+  return (
+    <TableRow
+      className={cn(
+        "h-[52px] border-b border-border/45 text-[12px] transition-colors last:border-b-0 hover:bg-foreground/[0.025]",
+        entry.pinned && "bg-primary/[0.035]"
       )}
-
-      <div className="space-y-2">
-        {loading ? (
-          <Card className="border-dashed">
-            <CardContent className="flex items-center justify-center gap-2 py-10 text-[13px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              加载中...
-            </CardContent>
-          </Card>
-        ) : entries.length === 0 ? (
-          <Card className="border-dashed">
-            <CardContent className="py-10 text-center text-[13px] text-muted-foreground">
-              还没有剪贴记录，复制文字或截图试试吧
-            </CardContent>
-          </Card>
-        ) : (
-          entries.map((entry) => (
-            <Card
-              key={entry.id}
-              className={cn(
-                "cursor-pointer overflow-hidden transition-colors hover:bg-foreground/[0.03]",
-                entry.pinned && "ring-1 ring-primary/30"
-              )}
-              onClick={() => void copyEntry(entry)}
-            >
-              <CardContent className="p-0">
-                <div
-                  className={cn(
-                    "flex items-center justify-between gap-3 border-b border-border/40 px-3 py-2 text-[11px]",
-                    entry.kind === "image" ? "bg-amber-500/10" : "bg-emerald-500/10"
-                  )}
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className={cn(
-                        "shrink-0 font-semibold",
-                        entry.kind === "image"
-                          ? "text-amber-700 dark:text-amber-300"
-                          : "text-emerald-600 dark:text-emerald-300"
-                      )}
-                    >
-                      {clipboardKindLabel(entry.kind)}
-                    </span>
-                    <span className="text-muted-foreground">{formatRelativeTime(entry.created_at)}</span>
-                    {entry.pinned && <Pin className="h-3 w-3 text-primary" />}
-                  </div>
-                  <span
-                    className="max-w-[45%] truncate rounded bg-background/60 px-1.5 py-0.5 font-medium"
-                    title={clipboardSourceLabel(entry)}
-                  >
-                    {clipboardSourceLabel(entry)}
-                  </span>
-                </div>
-                <div className="flex items-start justify-between gap-3 px-3 py-3">
-                  {entry.kind === "image" ? (
-                    <div className="min-w-0 flex-1">
-                      <img
-                        src={entry.content}
-                        alt=""
-                        loading="lazy"
-                        className="max-h-40 rounded-lg border border-border/40 object-contain"
-                      />
-                      <p className="mt-2 text-[11px] text-muted-foreground">
-                        {shelfImageSize(entry.image_width, entry.image_height)}
-                      </p>
-                    </div>
-                  ) : (
-                    <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-foreground/90">
-                      {previewLines(entry.content, 6)}
-                    </pre>
-                  )}
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8"
-                      title={entry.pinned ? "取消固定" : "固定"}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void api.pinClipboardEntry(entry.id, !entry.pinned).then(() => reload());
-                      }}
-                    >
-                      <Pin className={cn("h-3.5 w-3.5", entry.pinned && "text-primary")} />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 text-destructive"
-                      title="删除"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void api.deleteClipboardEntry(entry.id).then(() => reload());
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-
-        {hasMore && (
-          <div
-            ref={loadMoreRef}
-            className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground"
-          >
-            {loadingMore ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                加载更多...
-              </>
-            ) : (
-              "继续下滑加载更多"
+    >
+      <TableCell className="whitespace-nowrap px-3 py-2 align-middle">
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "font-semibold",
+              isImage ? "text-amber-700 dark:text-amber-300" : "text-emerald-600 dark:text-emerald-300"
             )}
-          </div>
+          >
+            {clipboardKindLabel(entry.kind)}
+          </span>
+          {entry.pinned && <Pin className="h-3 w-3 text-primary" />}
+        </div>
+      </TableCell>
+
+      <TableCell className="max-w-0 px-3 py-2 align-middle">
+        {isImage ? (
+          <button
+            type="button"
+            className="group inline-flex max-w-full items-center rounded-md text-left transition hover:text-primary"
+            title="预览图片"
+            onClick={onPreview}
+          >
+            <span className="relative flex h-10 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded bg-background/72 ring-1 ring-border/60">
+              <img src={entry.content} alt="" loading="lazy" className="h-full w-full object-contain" />
+              <span className="absolute left-0.5 top-0.5 rounded bg-background/80 p-0.5 opacity-0 ring-1 ring-border/60 transition group-hover:opacity-100">
+                <Maximize2 className="h-2.5 w-2.5" />
+              </span>
+            </span>
+          </button>
+        ) : (
+          <pre className="m-0 block max-w-full truncate font-sans text-[12px] leading-[17px] text-foreground/88">
+            {previewLines(entry.content, 1)}
+          </pre>
         )}
+      </TableCell>
+
+      <TableCell className="px-3 py-2 align-middle">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {entry.source_app && (
+            <AppIcon
+              name={entry.source_app}
+              iconDataUrl={entry.source_icon_data_url}
+              size="xs"
+            />
+          )}
+          <span className="truncate text-muted-foreground" title={sourceLabel}>
+            {sourceLabel}
+          </span>
+        </div>
+      </TableCell>
+
+      <TableCell className="whitespace-nowrap px-3 py-2 align-middle text-muted-foreground">
+        {formatRelativeTime(entry.created_at)}
+      </TableCell>
+
+      <TableCell className="whitespace-nowrap px-3 py-2 align-middle text-muted-foreground">{detailLabel}</TableCell>
+
+      <TableCell className="px-2 py-2 align-middle">
+        <div className="flex justify-end gap-0.5">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 text-primary"
+            title="复制"
+            onClick={onCopy}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            title={entry.pinned ? "取消固定" : "固定"}
+            onClick={onTogglePinned}
+          >
+            <Pin className={cn("h-3.5 w-3.5", entry.pinned && "text-primary")} />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 text-destructive"
+            title="删除"
+            onClick={onDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function TablePagination({
+  page,
+  totalPages,
+  rangeStart,
+  rangeEnd,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  rangeStart: number;
+  rangeEnd: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-border/55 bg-foreground/[0.018] px-3 py-2">
+      <span className="text-[12px] text-muted-foreground">
+        显示 {rangeStart}-{rangeEnd}，共 {total} 条
+      </span>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 px-2.5 text-[12px]"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          上一页
+        </Button>
+        <span className="min-w-16 text-center text-[12px] font-medium text-muted-foreground">
+          {page} / {totalPages}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 px-2.5 text-[12px]"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          下一页
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
       </div>
     </div>
+  );
+}
+
+function ImagePreviewDialog({
+  entry,
+  onCopy,
+  onOpenChange,
+}: {
+  entry: ClipboardEntry | null;
+  onCopy: (entry: ClipboardEntry) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const open = Boolean(entry);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[86vw] p-4">
+        <DialogHeader className="pr-8">
+          <DialogTitle>图片预览</DialogTitle>
+          {entry && (
+            <DialogDescription>
+              {clipboardSourceLabel(entry)} · {shelfImageSize(entry.image_width, entry.image_height)} ·{" "}
+              {formatRelativeTime(entry.created_at)}
+            </DialogDescription>
+          )}
+        </DialogHeader>
+
+        {entry && (
+          <div className="flex max-h-[72vh] items-center justify-center overflow-auto rounded-lg bg-background/75 p-2 ring-1 ring-border/60">
+            <img src={entry.content} alt="" className="max-h-[68vh] max-w-full object-contain" />
+          </div>
+        )}
+
+        {entry && (
+          <DialogFooter>
+            <Button
+              size="sm"
+              onClick={() => {
+                onCopy(entry);
+              }}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              复制
+            </Button>
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

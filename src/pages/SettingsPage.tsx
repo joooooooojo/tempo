@@ -174,7 +174,7 @@ export function SettingsPage() {
             <Switch checked={settings.sound_enabled} onCheckedChange={(v) => update({ sound_enabled: v })} />
           </Row>
           <Row label="外观">
-            <Select value={settings.theme} onValueChange={(v) => update({ theme: v as Settings["theme"] })}>
+            <Select value={settings.theme} onValueChange={(v) => v && update({ theme: v as Settings["theme"] })}>
               <SelectTrigger className="h-8 w-28 border-0 bg-transparent text-[13px] shadow-none">
                 <SelectValue />
               </SelectTrigger>
@@ -263,7 +263,7 @@ export function SettingsPage() {
 
       <Section title="剪贴板">
         <Card className="overflow-hidden">
-          <Row label="记录剪贴板" desc="自动保存复制过的文字">
+          <Row label="记录剪贴板" desc="自动保存复制过的文字与截图">
             <Switch
               checked={settings.clipboard_monitor_enabled}
               onCheckedChange={(v) => update({ clipboard_monitor_enabled: v })}
@@ -326,12 +326,12 @@ export function SettingsPage() {
                 variant="outline"
                 size="sm"
                 onClick={async () => {
-                  if (!confirm("确定删除全部未固定的剪贴板历史？")) return;
+                  if (!confirm("确定清空全部未固定的剪贴板历史？")) return;
                   const count = await api.clearClipboardHistory();
-                  toast.success(count > 0 ? `已删除 ${count} 条记录` : "没有可删除的记录");
+                  toast.success(count > 0 ? `已清空 ${count} 条记录` : "没有可清空的记录");
                 }}
               >
-                删除历史...
+                清空历史
               </Button>
             </div>
           </div>

@@ -2,7 +2,6 @@ use chrono::Local;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_os = "windows"))]
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -268,15 +267,11 @@ pub struct ClipboardRuntime {
     pub skip_next_capture: bool,
     pub last_source_app: Option<String>,
     pub last_source_process: Option<String>,
-    #[cfg(not(target_os = "windows"))]
     pub decoded_image_cache: HashMap<String, CachedClipboardImage>,
-    #[cfg(not(target_os = "windows"))]
     pub decoded_image_cache_order: VecDeque<String>,
-    #[cfg(not(target_os = "windows"))]
     pub decoded_image_cache_bytes: usize,
 }
 
-#[cfg(not(target_os = "windows"))]
 #[derive(Debug, Clone)]
 pub struct CachedClipboardImage {
     pub width: u32,

@@ -827,11 +827,14 @@ function DueDateField({
           <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-3 p-3">
             <Calendar
               className="p-0"
+              mode="single"
               month={visibleMonth}
               selected={selectedDate}
-              isDateDisabled={isDueDateDisabled}
+              disabled={isDueDateDisabled}
               onMonthChange={setVisibleMonth}
-              onSelect={(date) => commit(date, DEFAULT_DUE_HOUR, DEFAULT_DUE_MINUTE)}
+              onSelect={(date) => {
+                if (date) commit(date, DEFAULT_DUE_HOUR, DEFAULT_DUE_MINUTE);
+              }}
             />
             <div className="rounded-lg border border-border/60 bg-foreground/[0.025] p-2.5">
               <div>

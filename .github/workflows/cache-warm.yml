@@ -11,7 +11,8 @@ on:
     paths:
       - "src-tauri/**"
       - "package.json"
-      - "package-lock.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/cache-warm.yml"
   workflow_dispatch:
 

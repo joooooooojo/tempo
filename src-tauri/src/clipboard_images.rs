@@ -101,7 +101,6 @@ pub fn normalize_clipboard_image_reference(value: &str) -> String {
     value.to_string()
 }
 
-#[cfg(not(target_os = "windows"))]
 #[derive(Debug, Clone, Copy)]
 pub struct ClipboardImageLoadTiming {
     pub read_ms: u128,
@@ -110,59 +109,6 @@ pub struct ClipboardImageLoadTiming {
     pub png_bytes: usize,
 }
 
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone, Copy)]
-pub struct ClipboardImagePngLoadTiming {
-    pub read_ms: u128,
-    pub total_ms: u128,
-    pub png_bytes: usize,
-}
-
-#[cfg(target_os = "windows")]
-pub fn load_clipboard_image_png_bytes_timed(
-    app: &AppHandle,
-    content: &str,
-) -> Option<(Vec<u8>, ClipboardImagePngLoadTiming)> {
-    let total_start = Instant::now();
-    if is_legacy_clipboard_image_data_url(content) {
-        let png_bytes = decode_legacy_png_bytes(content)?;
-        if !looks_like_png(&png_bytes) {
-            return None;
-        }
-        let png_len = png_bytes.len();
-        return Some((
-            png_bytes,
-            ClipboardImagePngLoadTiming {
-                read_ms: 0,
-                total_ms: total_start.elapsed().as_millis(),
-                png_bytes: png_len,
-            },
-        ));
-    }
-
-    let storage_key = normalize_clipboard_image_reference(content);
-    if !is_clipboard_image_storage_key(&storage_key) {
-        return None;
-    }
-
-    let read_start = Instant::now();
-    let png_bytes = read_clipboard_image_bytes(app, &storage_key).ok()?;
-    if !looks_like_png(&png_bytes) {
-        return None;
-    }
-    let read_ms = read_start.elapsed().as_millis();
-    let png_len = png_bytes.len();
-    Some((
-        png_bytes,
-        ClipboardImagePngLoadTiming {
-            read_ms,
-            total_ms: total_start.elapsed().as_millis(),
-            png_bytes: png_len,
-        },
-    ))
-}
-
-#[cfg(not(target_os = "windows"))]
 pub fn load_clipboard_image_rgba_timed(
     app: &AppHandle,
     content: &str,
@@ -302,7 +248,6 @@ fn decode_legacy_png_bytes(data_url: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
-#[cfg(not(target_os = "windows"))]
 fn decode_png_bytes(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     let mut reader = decoder.read_info().ok()?;
@@ -312,11 +257,6 @@ fn decode_png_bytes(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     reader.next_frame(&mut rgba).ok()?;
     rgba.truncate((width as usize) * (height as usize) * 4);
     Some((width, height, rgba))
-}
-
-#[cfg(target_os = "windows")]
-fn looks_like_png(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
 }
 
 fn is_valid_clipboard_image_file_name(file_name: &str) -> bool {

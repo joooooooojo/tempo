@@ -10,7 +10,7 @@ const macOS = isMacTarget;
 const navItems = [
   { to: "/", label: "待办事项", icon: ListTodo },
   { to: "/pomodoro", label: "番茄时钟", icon: Timer },
-  { to: "/reports", label: "屏幕显示时间", icon: BarChart3 },
+  { to: "/reports", label: "屏幕使用时间", icon: BarChart3 },
   { to: "/clipboard", label: "剪贴板", icon: ClipboardList },
   { to: "/snippets", label: "快捷短语", icon: TextQuote },
   { to: "/settings", label: "设置", icon: Settings },
@@ -19,6 +19,7 @@ const navItems = [
 export function AppLayout() {
   const location = useLocation();
   const isTodoPage = location.pathname === "/";
+  const isFullHeightPage = isTodoPage || location.pathname === "/clipboard";
 
   return (
     <div className="app-shell relative flex h-screen flex-col overflow-hidden">
@@ -78,11 +79,11 @@ export function AppLayout() {
           <main
             className={cn(
               "no-scrollbar flex-1 px-4 pb-4 pt-1",
-              isTodoPage ? "flex min-h-0 flex-col overflow-hidden" : "overflow-y-auto"
+              isFullHeightPage ? "flex min-h-0 flex-col overflow-hidden" : "overflow-y-auto"
             )}
           >
             <div
-              className={cn("page-transition", isTodoPage && "flex min-h-0 flex-1 flex-col")}
+              className={cn("page-transition", isFullHeightPage && "flex min-h-0 flex-1 flex-col")}
             >
               <Outlet />
             </div>

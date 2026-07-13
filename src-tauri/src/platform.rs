@@ -11,7 +11,6 @@ const IDLE_THRESHOLD_SECS: u32 = 180;
 pub struct ForegroundApp {
     pub name: String,
     pub process_name: String,
-    pub icon_data_url: Option<String>,
 }
 
 pub fn extract_icon_png_bytes(app_name: &str, process_name: &str) -> Option<Vec<u8>> {
@@ -200,7 +199,6 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
             Some(ForegroundApp {
                 name,
                 process_name: process,
-                icon_data_url: None,
             })
         }
         Err(_) => None,
@@ -295,7 +293,6 @@ fn get_foreground_app_macos() -> Option<ForegroundApp> {
         Some(ForegroundApp {
             name: display_name,
             process_name,
-            icon_data_url: None,
         })
     }
 }
