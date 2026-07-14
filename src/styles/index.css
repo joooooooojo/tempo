@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+@import "./tokens.css";
+@import "./base.css";
+@import "./app/shell.css";
+@import "./app/motion.css";
+@import "./components/glass.css";
+@import "./components/todo-create-dialog.css";
+@import "./components/todo-floating-label.css";
+@import "./components/github-markdown.css";
+@import "./components/ui.css";
+@import "./components/shelf-card.css";
+@import "./overlays/eye-care.css";
+@import "./overlays/quick-todo.css";
+@import "./overlays/pomodoro-float.css";
+@import "./overlays/shelf-picker.css";
+@import "@platform-styles";
+@import "./layer.css";

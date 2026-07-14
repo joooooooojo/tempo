@@ -1,0 +1,11 @@
+html.pomodoro-float-window,
+html.pomodoro-float-window body,
+html.pomodoro-float-window #root {
+  background: hsl(var(--background)) !important;
+}
+
+.pomodoro-float-panel {
+  border-radius: 0;
+  background: hsl(var(--background));
+  backdrop-filter: none;
+}

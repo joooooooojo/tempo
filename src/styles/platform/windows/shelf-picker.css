@@ -1,0 +1,130 @@
+html.shelf-picker-window,
+html.shelf-picker-window body,
+html.shelf-picker-window #root {
+  background: hsl(var(--background)) !important;
+}
+
+.shelf-picker-panel {
+  background: hsl(var(--background));
+}
+
+.shelf-picker-track {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.shelf-picker-track::-webkit-scrollbar {
+  display: none;
+}
+
+.shelf-picker-scroll-area {
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shelf-picker-scroll-area[hidden] {
+  display: none;
+}
+
+.shelf-picker-scroll-viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.shelf-picker-scroll-viewport > div {
+  height: 100%;
+}
+
+.shelf-picker-track--scroll-area {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  height: 100%;
+  flex: none;
+  overflow: visible;
+  padding: 6px 0 16px;
+}
+
+.shelf-picker-scrollbar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  background: transparent;
+  padding: 4px 10px;
+  user-select: none;
+  touch-action: none;
+}
+
+.shelf-picker-scrollbar[data-orientation="horizontal"] {
+  flex-direction: column;
+}
+
+.shelf-picker-scrollbar[data-state="hidden"] {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.shelf-picker-scrollbar__thumb {
+  position: relative;
+  flex: 1;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: grab;
+  transition: background-color 120ms ease;
+}
+
+.shelf-picker-scrollbar__thumb::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  min-width: 36px;
+  height: 100%;
+  min-height: 20px;
+  transform: translate(-50%, -50%);
+}
+
+.shelf-picker-scrollbar__thumb:hover,
+.shelf-picker-scrollbar__thumb:focus-visible {
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.shelf-picker-scrollbar__thumb:focus-visible {
+  outline: 2px solid rgba(0, 0, 0, 0.24);
+  outline-offset: 2px;
+}
+
+.shelf-picker-scrollbar__thumb:active {
+  cursor: grabbing;
+  background: rgba(0, 0, 0, 0.46);
+}
+
+.dark .shelf-picker-scrollbar__thumb {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.dark .shelf-picker-scrollbar__thumb:hover,
+.dark .shelf-picker-scrollbar__thumb:focus-visible {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.dark .shelf-picker-scrollbar__thumb:focus-visible {
+  outline-color: rgba(255, 255, 255, 0.28);
+}
+
+.dark .shelf-picker-scrollbar__thumb:active {
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.shelf-picker-track::before,
+.shelf-picker-track::after {
+  content: "";
+  flex: initial;
+}

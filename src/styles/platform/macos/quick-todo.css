@@ -1,0 +1,5 @@
+.quick-todo-panel {
+  border-radius: 0;
+  background: hsl(var(--background));
+  backdrop-filter: none;
+}

@@ -1,0 +1,162 @@
+html.pomodoro-float-window,
+html.pomodoro-float-window body,
+html.pomodoro-float-window #root {
+  background: transparent !important;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  min-height: 0 !important;
+  margin: 0;
+  padding: 0;
+}
+
+html.pomodoro-float-window #root {
+  position: relative;
+}
+
+.pomodoro-float-page {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.pomodoro-float-panel {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: hsl(var(--background) / 0.96);
+  backdrop-filter: blur(16px);
+  color: hsl(var(--foreground));
+}
+
+.pomodoro-float-panel--idle {
+  background: hsl(var(--background) / 0.94);
+}
+
+.pomodoro-float-drag-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  -webkit-app-region: drag;
+  app-region: drag;
+  cursor: grab;
+}
+
+.pomodoro-float-drag-layer:active {
+  cursor: grabbing;
+}
+
+.pomodoro-float-body {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 0 10px 2px;
+  pointer-events: none;
+}
+
+.pomodoro-float-ring {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+
+.pomodoro-float-ring__dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
+
+.pomodoro-float-info {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pomodoro-float-time {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.pomodoro-float-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  border-radius: 6px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.pomodoro-float-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  border-radius: 10px;
+  background: hsl(var(--foreground) / 0.05);
+  padding: 3px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  cursor: default;
+}
+
+.pomodoro-float-btn {
+  display: inline-flex;
+  height: 28px;
+  width: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: hsl(var(--foreground) / 0.72);
+  transition: background-color 150ms ease, color 150ms ease;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  cursor: pointer;
+}
+
+.pomodoro-float-btn:hover {
+  background: hsl(var(--foreground) / 0.08);
+  color: hsl(var(--foreground));
+}
+
+.pomodoro-float-btn--primary {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.pomodoro-float-btn--primary:hover {
+  filter: brightness(1.05);
+}
+
+.pomodoro-float-btn--muted {
+  color: hsl(var(--muted-foreground));
+}
+
+.pomodoro-float-progress {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 1;
+  height: 2px;
+  background: hsl(var(--foreground) / 0.06);
+  pointer-events: none;
+}

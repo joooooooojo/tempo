@@ -3,7 +3,6 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "@/lib/api";
 import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
-import { isMacTarget, isWindowsTarget } from "@/lib/utils";
 import type { TodoItem } from "@/types";
 
 export function QuickTodoPage() {
@@ -24,13 +23,7 @@ export function QuickTodoPage() {
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
     const root = document.documentElement;
-    const platformClass = isMacTarget
-      ? "quick-todo-window--mac"
-      : isWindowsTarget
-        ? "quick-todo-window--windows"
-        : "quick-todo-window--css-shadow";
     root.classList.add("quick-todo-window");
-    root.classList.add(platformClass);
     document.body.classList.add("quick-todo-window");
     document.body.style.overflow = "hidden";
     void applyThemeFromSettings();
@@ -40,12 +33,7 @@ export function QuickTodoPage() {
     });
 
     return () => {
-      root.classList.remove(
-        "quick-todo-window",
-        "quick-todo-window--mac",
-        "quick-todo-window--windows",
-        "quick-todo-window--css-shadow"
-      );
+      root.classList.remove("quick-todo-window");
       document.body.classList.remove("quick-todo-window");
       document.body.style.overflow = previousBodyOverflow;
       unsubscribeTheme();

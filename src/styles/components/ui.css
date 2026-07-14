@@ -1,0 +1,32 @@
+.nav-item:hover .nav-icon {
+  transform: translateX(2px) scale(1.04);
+}
+
+.progress-track {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-fill {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.52), transparent);
+  transform: translateX(-120%);
+  animation: progress-sheen 2.4s ease-in-out infinite;
+}
+
+.usage-chart,
+.usage-chart :where(.recharts-wrapper, .recharts-surface, svg) {
+  outline: none;
+}
+
+.usage-chart :where(.recharts-wrapper, .recharts-surface, svg, g, path, rect):focus,
+.usage-chart :where(.recharts-wrapper, .recharts-surface, svg, g, path, rect):focus-visible {
+  outline: none;
+}

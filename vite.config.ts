@@ -33,6 +33,13 @@ function normalizeTargetPlatform(platform?: string) {
   return normalized ?? "unknown";
 }
 
+const platformStylesFile =
+  targetPlatform === "macos"
+    ? "src/styles/platform/macos.css"
+    : targetPlatform === "windows"
+      ? "src/styles/platform/windows.css"
+      : "src/styles/platform/linux.css";
+
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   define: {
@@ -42,6 +49,7 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@platform-styles": path.resolve(__dirname, platformStylesFile),
     },
   },
   clearScreen: false,
