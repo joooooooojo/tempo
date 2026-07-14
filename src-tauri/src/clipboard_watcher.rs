@@ -9,40 +9,71 @@ use crate::clipboard_images::{
 use crate::db::CachedClipboardImage;
 use crate::db::{load_settings, AppState};
 use crate::platform::{get_foreground_app, ForegroundApp};
-use arboard::Clipboard;
 use arboard::ImageData;
+use arboard::{Clipboard, Error as ClipboardError};
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Instant;
+#[cfg(target_os = "windows")]
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(not(target_os = "windows"))]
+const CLIPBOARD_POLL_MS: u64 = 500;
 const DECODED_IMAGE_CACHE_MAX_ENTRIES: usize = 16;
 const DECODED_IMAGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(target_os = "windows")]
+const WINDOWS_CLIPBOARD_SETTLE_MS: u64 = 220;
+
+enum ClipboardCaptureResult {
+    Captured { changed: bool },
+    Busy,
+}
+
+enum ClipboardSnapshot {
+    Image(ImageData<'static>),
+    Text(String),
+    Empty,
+}
+
+static CLIPBOARD_ACCESS: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+
+fn clipboard_access_guard() -> MutexGuard<'static, ()> {
+    CLIPBOARD_ACCESS
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
     std::thread::spawn(move || {
-        let mut clipboard = match Clipboard::new() {
-            Ok(clipboard) => clipboard,
-            Err(error) => {
-                eprintln!("clipboard watcher unavailable: {error}");
-                return;
-            }
-        };
         let mut last_text_hash = String::new();
         let mut last_image_hash = String::new();
         let mut last_retention_purge = std::time::Instant::now();
 
+        #[cfg(target_os = "windows")]
+        let clipboard_update_rx = start_windows_clipboard_listener();
+        #[cfg(target_os = "windows")]
+        let mut last_windows_clipboard_sequence = 0;
+
+        #[cfg(target_os = "macos")]
+        let mut last_pasteboard_change_count = None;
+
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            let should_capture = wait_for_clipboard_change(
+                #[cfg(target_os = "windows")]
+                &clipboard_update_rx,
+                #[cfg(target_os = "windows")]
+                &last_windows_clipboard_sequence,
+                #[cfg(target_os = "macos")]
+                &mut last_pasteboard_change_count,
+            );
 
             let settings = {
                 let conn = state.db.lock();
                 load_settings(&conn)
             };
-            if !settings.clipboard_monitor_enabled {
-                continue;
-            }
 
             if last_retention_purge.elapsed() >= std::time::Duration::from_secs(3600) {
                 last_retention_purge = std::time::Instant::now();
@@ -57,9 +88,21 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
                 runtime.last_source_process = Some(app_info.process_name.clone());
             }
 
+            if !settings.clipboard_monitor_enabled {
+                #[cfg(target_os = "windows")]
+                sync_windows_clipboard_sequence(&mut last_windows_clipboard_sequence);
+                continue;
+            }
+
+            if !should_capture {
+                continue;
+            }
+
             {
                 let runtime = state.clipboard.lock();
                 if runtime.skip_next_capture {
+                    #[cfg(target_os = "windows")]
+                    sync_windows_clipboard_sequence(&mut last_windows_clipboard_sequence);
                     continue;
                 }
             }
@@ -78,77 +121,364 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
             );
 
             let max_entries = settings.clipboard_max_entries.max(1).min(1000);
-            let mut changed = false;
-
-            if let Ok(image) = clipboard.get_image() {
-                let width = image.width as u32;
-                let height = image.height as u32;
-                let pixel_count = width as u64 * height as u64;
-                if pixel_count > 0 && pixel_count <= crate::clipboard_db::MAX_CLIPBOARD_IMAGE_PIXELS
-                {
-                    if let Some(png_bytes) = encode_rgba_png(width, height, image.bytes.as_ref()) {
-                        if png_bytes.len() <= crate::clipboard_db::MAX_CLIPBOARD_IMAGE_BYTES {
-                            let content_hash = hash_bytes(&png_bytes);
-                            if content_hash != last_image_hash {
-                                last_image_hash = content_hash.clone();
-                                last_text_hash.clear();
-
-                                let inserted = if let Ok(storage_key) =
-                                    save_clipboard_image_png(&app, &content_hash, &png_bytes)
-                                {
-                                    cache_decoded_clipboard_image(
-                                        &state,
-                                        &storage_key,
-                                        width,
-                                        height,
-                                        image.bytes.as_ref().to_vec(),
-                                    );
-                                    let conn = state.db.lock();
-                                    insert_clipboard_image(
-                                        &conn,
-                                        &storage_key,
-                                        &content_hash,
-                                        width,
-                                        height,
-                                        source_app.as_deref(),
-                                        source_process.as_deref(),
-                                        max_entries,
-                                    )
-                                } else {
-                                    None
-                                };
-                                changed = inserted.is_some();
-                            }
-                        }
-                    }
-                }
-            } else if let Ok(text) = clipboard.get_text() {
-                if !text.is_empty() {
-                    let hash = crate::clipboard_db::hash_content(&text);
-                    if hash != last_text_hash {
-                        last_text_hash = hash;
-                        last_image_hash.clear();
-
-                        let inserted = {
-                            let conn = state.db.lock();
-                            insert_clipboard_text(
-                                &conn,
-                                &text,
-                                source_app.as_deref(),
-                                source_process.as_deref(),
-                                max_entries,
-                            )
-                        };
-                        changed = inserted.is_some();
-                    }
-                }
-            }
+            let changed = match capture_clipboard_snapshot(
+                &app,
+                &state,
+                source_app.as_deref(),
+                source_process.as_deref(),
+                max_entries,
+                &mut last_text_hash,
+                &mut last_image_hash,
+            ) {
+                ClipboardCaptureResult::Captured { changed } => changed,
+                ClipboardCaptureResult::Busy => continue,
+            };
+            #[cfg(target_os = "windows")]
+            sync_windows_clipboard_sequence(&mut last_windows_clipboard_sequence);
 
             if changed {
                 emit_clipboard_update(&app);
             }
         }
     });
+}
+
+fn wait_for_clipboard_change(
+    #[cfg(target_os = "windows")] clipboard_update_rx: &Receiver<()>,
+    #[cfg(target_os = "windows")] last_windows_clipboard_sequence: &u32,
+    #[cfg(target_os = "macos")] last_pasteboard_change_count: &mut Option<isize>,
+) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return wait_for_windows_clipboard_change(
+            clipboard_update_rx,
+            *last_windows_clipboard_sequence,
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::thread::sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
+        return macos_pasteboard_changed(last_pasteboard_change_count);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::thread::sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
+        true
+    }
+}
+
+fn capture_clipboard_snapshot(
+    app: &AppHandle,
+    state: &AppState,
+    source_app: Option<&str>,
+    source_process: Option<&str>,
+    max_entries: u32,
+    last_text_hash: &mut String,
+    last_image_hash: &mut String,
+) -> ClipboardCaptureResult {
+    match read_clipboard_snapshot() {
+        Ok(ClipboardSnapshot::Image(image)) => {
+            let width = image.width as u32;
+            let height = image.height as u32;
+            let pixel_count = width as u64 * height as u64;
+            if pixel_count == 0 || pixel_count > crate::clipboard_db::MAX_CLIPBOARD_IMAGE_PIXELS {
+                return ClipboardCaptureResult::Captured { changed: false };
+            }
+
+            let Some(png_bytes) = encode_rgba_png(width, height, image.bytes.as_ref()) else {
+                return ClipboardCaptureResult::Captured { changed: false };
+            };
+            if png_bytes.len() > crate::clipboard_db::MAX_CLIPBOARD_IMAGE_BYTES {
+                return ClipboardCaptureResult::Captured { changed: false };
+            }
+
+            let content_hash = hash_bytes(&png_bytes);
+            if content_hash == *last_image_hash {
+                return ClipboardCaptureResult::Captured { changed: false };
+            }
+
+            last_image_hash.clear();
+            last_image_hash.push_str(&content_hash);
+            last_text_hash.clear();
+
+            let inserted =
+                if let Ok(storage_key) = save_clipboard_image_png(app, &content_hash, &png_bytes) {
+                    cache_decoded_clipboard_image(
+                        state,
+                        &storage_key,
+                        width,
+                        height,
+                        image.bytes.as_ref().to_vec(),
+                    );
+                    let conn = state.db.lock();
+                    insert_clipboard_image(
+                        &conn,
+                        &storage_key,
+                        &content_hash,
+                        width,
+                        height,
+                        source_app,
+                        source_process,
+                        max_entries,
+                    )
+                } else {
+                    None
+                };
+
+            return ClipboardCaptureResult::Captured {
+                changed: inserted.is_some(),
+            };
+        }
+        Ok(ClipboardSnapshot::Text(text)) => {
+            if text.is_empty() {
+                return ClipboardCaptureResult::Captured { changed: false };
+            }
+
+            let hash = crate::clipboard_db::hash_content(&text);
+            if hash == *last_text_hash {
+                return ClipboardCaptureResult::Captured { changed: false };
+            }
+
+            last_text_hash.clear();
+            last_text_hash.push_str(&hash);
+            last_image_hash.clear();
+
+            let inserted = {
+                let conn = state.db.lock();
+                insert_clipboard_text(&conn, &text, source_app, source_process, max_entries)
+            };
+            ClipboardCaptureResult::Captured {
+                changed: inserted.is_some(),
+            }
+        }
+        Ok(ClipboardSnapshot::Empty) => ClipboardCaptureResult::Captured { changed: false },
+        Err(error) if clipboard_error_is_busy(&error) => ClipboardCaptureResult::Busy,
+        Err(_) => ClipboardCaptureResult::Captured { changed: false },
+    }
+}
+
+fn read_clipboard_snapshot() -> Result<ClipboardSnapshot, ClipboardError> {
+    let _guard = clipboard_access_guard();
+    let mut clipboard = Clipboard::new()?;
+
+    #[cfg(target_os = "windows")]
+    {
+        return match windows_preferred_clipboard_format() {
+            Some(WindowsClipboardFormat::Image) => {
+                clipboard.get_image().map(ClipboardSnapshot::Image)
+            }
+            Some(WindowsClipboardFormat::Text) => clipboard.get_text().map(ClipboardSnapshot::Text),
+            None => Ok(ClipboardSnapshot::Empty),
+        };
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        match clipboard.get_image() {
+            Ok(image) => Ok(ClipboardSnapshot::Image(image)),
+            Err(error) if clipboard_error_is_busy(&error) => Err(error),
+            Err(_) => match clipboard.get_text() {
+                Ok(text) => Ok(ClipboardSnapshot::Text(text)),
+                Err(error) if clipboard_error_is_busy(&error) => Err(error),
+                Err(_) => Ok(ClipboardSnapshot::Empty),
+            },
+        }
+    }
+}
+
+fn clipboard_error_is_busy(error: &ClipboardError) -> bool {
+    matches!(error, ClipboardError::ClipboardOccupied)
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+enum WindowsClipboardFormat {
+    Image,
+    Text,
+}
+
+#[cfg(target_os = "windows")]
+fn windows_preferred_clipboard_format() -> Option<WindowsClipboardFormat> {
+    use windows::Win32::System::DataExchange::{
+        IsClipboardFormatAvailable, RegisterClipboardFormatW,
+    };
+
+    const CF_UNICODETEXT: u32 = 13;
+    const CF_DIBV5: u32 = 17;
+
+    let png_name = windows_wide("PNG");
+    let png_format = unsafe { RegisterClipboardFormatW(windows::core::PCWSTR(png_name.as_ptr())) };
+    let has_png = png_format != 0 && unsafe { IsClipboardFormatAvailable(png_format).is_ok() };
+    let has_dib = unsafe { IsClipboardFormatAvailable(CF_DIBV5).is_ok() };
+    if has_png || has_dib {
+        return Some(WindowsClipboardFormat::Image);
+    }
+
+    let has_text = unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT).is_ok() };
+    has_text.then_some(WindowsClipboardFormat::Text)
+}
+
+#[cfg(target_os = "windows")]
+fn start_windows_clipboard_listener() -> Receiver<()> {
+    static WINDOWS_CLIPBOARD_SIGNAL: OnceLock<std::sync::Mutex<Option<Sender<()>>>> =
+        OnceLock::new();
+
+    unsafe extern "system" fn clipboard_listener_wnd_proc(
+        hwnd: windows::Win32::Foundation::HWND,
+        msg: u32,
+        wparam: windows::Win32::Foundation::WPARAM,
+        lparam: windows::Win32::Foundation::LPARAM,
+    ) -> windows::Win32::Foundation::LRESULT {
+        use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, WM_CLIPBOARDUPDATE};
+
+        if msg == WM_CLIPBOARDUPDATE {
+            if let Some(signal) = WINDOWS_CLIPBOARD_SIGNAL.get() {
+                let tx = signal.lock().ok().and_then(|guard| guard.as_ref().cloned());
+                if let Some(tx) = tx {
+                    let _ = tx.send(());
+                }
+            }
+            return windows::Win32::Foundation::LRESULT(0);
+        }
+
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
+
+    let (tx, rx) = mpsc::channel();
+    *WINDOWS_CLIPBOARD_SIGNAL
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(tx.clone());
+
+    std::thread::spawn(move || {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::System::DataExchange::AddClipboardFormatListener;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage,
+            HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+        };
+
+        unsafe {
+            let class_name = windows_wide("TempoClipboardListener");
+            let empty_title = windows_wide("");
+            let window_class = WNDCLASSW {
+                lpfnWndProc: Some(clipboard_listener_wnd_proc),
+                lpszClassName: windows::core::PCWSTR(class_name.as_ptr()),
+                ..Default::default()
+            };
+            let _ = RegisterClassW(&window_class);
+
+            let Ok(hwnd) = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                windows::core::PCWSTR(class_name.as_ptr()),
+                windows::core::PCWSTR(empty_title.as_ptr()),
+                WINDOW_STYLE::default(),
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE,
+                None,
+                None,
+                None,
+            ) else {
+                let _ = tx.send(());
+                return;
+            };
+
+            if AddClipboardFormatListener(hwnd).is_err() {
+                let _ = tx.send(());
+                return;
+            }
+
+            let _ = tx.send(());
+
+            let mut message = MSG::default();
+            while GetMessageW(&mut message, HWND(std::ptr::null_mut()), 0, 0).as_bool() {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    });
+
+    rx
+}
+
+#[cfg(target_os = "windows")]
+fn windows_wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn windows_clipboard_sequence() -> u32 {
+    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
+#[cfg(target_os = "windows")]
+fn sync_windows_clipboard_sequence(last_sequence: &mut u32) {
+    let sequence = windows_clipboard_sequence();
+    if sequence != 0 {
+        *last_sequence = sequence;
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_windows_clipboard_change(rx: &Receiver<()>, last_sequence: u32) -> bool {
+    let got_signal = match rx.recv_timeout(Duration::from_secs(1)) {
+        Ok(_) => {
+            while rx.try_recv().is_ok() {}
+            true
+        }
+        Err(RecvTimeoutError::Timeout) => false,
+        Err(RecvTimeoutError::Disconnected) => {
+            std::thread::sleep(Duration::from_secs(1));
+            false
+        }
+    };
+
+    let sequence = windows_clipboard_sequence();
+    let sequence_changed = sequence != 0 && sequence != last_sequence;
+    if !got_signal && !sequence_changed {
+        return false;
+    }
+
+    std::thread::sleep(Duration::from_millis(WINDOWS_CLIPBOARD_SETTLE_MS));
+    true
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pasteboard_changed(last_change_count: &mut Option<isize>) -> bool {
+    let Some(change_count) = macos_pasteboard_change_count() else {
+        return true;
+    };
+
+    let changed = last_change_count
+        .map(|last| last != change_count)
+        .unwrap_or(true);
+    *last_change_count = Some(change_count);
+
+    if changed {
+        std::thread::sleep(Duration::from_millis(160));
+    }
+    changed
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pasteboard_change_count() -> Option<isize> {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+
+    unsafe {
+        let pasteboard_class = Class::get("NSPasteboard")?;
+        let pasteboard: *mut Object = msg_send![pasteboard_class, generalPasteboard];
+        if pasteboard.is_null() {
+            return None;
+        }
+        let change_count: isize = msg_send![pasteboard, changeCount];
+        Some(change_count)
+    }
 }
 
 pub fn emit_clipboard_update(app: &AppHandle) {
@@ -196,6 +526,7 @@ pub fn write_clipboard_text(state: &AppState, text: &str) -> Result<(), String> 
         text.chars().count()
     ));
     with_skip_capture(state, || {
+        let _guard = clipboard_access_guard();
         Clipboard::new()
             .map_err(|error| error.to_string())?
             .set_text(text.to_string())
@@ -261,6 +592,7 @@ pub fn write_clipboard_image(
 
     let set_image_start = Instant::now();
     let result = with_skip_capture(state, || {
+        let _guard = clipboard_access_guard();
         clipboard
             .set_image(ImageData {
                 width: image.width as usize,

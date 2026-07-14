@@ -525,14 +525,29 @@ pub fn init_db(path: &PathBuf) -> Connection {
             pinned INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS snippet_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            color TEXT NOT NULL DEFAULT 'default',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS snippets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             content TEXT NOT NULL,
             tags TEXT NOT NULL DEFAULT '[]',
+            group_id INTEGER,
+            shortcut TEXT,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            use_count INTEGER NOT NULL DEFAULT 0,
+            last_used_at TEXT,
+            archived_at TEXT,
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(group_id) REFERENCES snippet_groups(id) ON DELETE SET NULL
         );
         CREATE INDEX IF NOT EXISTS idx_clipboard_history_created
             ON clipboard_history(created_at DESC);
@@ -619,6 +634,37 @@ pub fn init_db(path: &PathBuf) -> Connection {
         .ok();
     conn.execute(
         "ALTER TABLE todos ADD COLUMN subtasks_completion_snapshot TEXT",
+        [],
+    )
+    .ok();
+    conn.execute("ALTER TABLE snippets ADD COLUMN group_id INTEGER", [])
+        .ok();
+    conn.execute("ALTER TABLE snippets ADD COLUMN shortcut TEXT", [])
+        .ok();
+    conn.execute(
+        "ALTER TABLE snippets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "ALTER TABLE snippets ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
+        [],
+    )
+    .ok();
+    conn.execute("ALTER TABLE snippets ADD COLUMN last_used_at TEXT", [])
+        .ok();
+    conn.execute("ALTER TABLE snippets ADD COLUMN archived_at TEXT", [])
+        .ok();
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_snippets_usage
+         ON snippets(pinned DESC, sort_order ASC, last_used_at DESC, updated_at DESC)",
+        [],
+    )
+    .ok();
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_snippets_shortcut
+         ON snippets(shortcut)
+         WHERE shortcut IS NOT NULL AND shortcut <> ''",
         [],
     )
     .ok();

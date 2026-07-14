@@ -7,6 +7,7 @@ import type {
   PomodoroState,
   Settings,
   Snippet,
+  SnippetGroup,
   TodoFocusSummary,
   TodoImage,
   TodoItem,
@@ -112,6 +113,7 @@ export const api = {
   debugLog: (scope: string, message: string) =>
     invoke<void>("debug_log", { scope, message }),
   hideToTray: () => invoke<void>("hide_to_tray_command"),
+  showWindow: () => invoke<void>("show_window"),
   getPomodoroState: () => invoke<PomodoroState>("get_pomodoro_state"),
   setPomodoroTodo: (todoId: number | null) =>
     invoke<PomodoroState>("set_pomodoro_todo", { todoId }),
@@ -142,13 +144,34 @@ export const api = {
     invoke<ClipboardEntry>("pin_clipboard_history_entry", { id, pinned }),
   copyTextToClipboard: (text: string) => invoke<void>("copy_text_to_clipboard", { text }),
   copyClipboardEntry: (id: number) => invoke<void>("copy_clipboard_entry", { id }),
-  getSnippets: (query?: string) => invoke<Snippet[]>("get_snippets", { query }),
-  createSnippet: (title: string, content: string, tags: string[] = []) =>
-    invoke<Snippet>("create_snippet", { title, content, tags }),
-  updateSnippet: (id: number, title: string, content: string, tags: string[] = []) =>
-    invoke<Snippet>("update_snippet_command", { id, title, content, tags }),
+  getSnippets: (query?: string, groupId?: number | null, sort?: string) =>
+    invoke<Snippet[]>("get_snippets", { query, groupId, sort }),
+  getSnippetGroups: () => invoke<SnippetGroup[]>("get_snippet_groups"),
+  createSnippetGroup: (name: string, color?: string | null) =>
+    invoke<SnippetGroup>("create_snippet_group", { name, color }),
+  updateSnippetGroup: (id: number, name: string, color?: string | null) =>
+    invoke<SnippetGroup>("update_snippet_group_command", { id, name, color }),
+  deleteSnippetGroup: (id: number) => invoke<void>("delete_snippet_group_command", { id }),
+  createSnippet: (
+    title: string,
+    content: string,
+    tags: string[] = [],
+    groupId?: number | null,
+    shortcut?: string | null
+  ) => invoke<Snippet>("create_snippet", { title, content, tags, groupId, shortcut }),
+  updateSnippet: (
+    id: number,
+    title: string,
+    content: string,
+    tags: string[] = [],
+    groupId?: number | null,
+    shortcut?: string | null
+  ) => invoke<Snippet>("update_snippet_command", { id, title, content, tags, groupId, shortcut }),
+  duplicateSnippet: (id: number) => invoke<Snippet>("duplicate_snippet_command", { id }),
+  pinSnippet: (id: number, pinned: boolean) =>
+    invoke<Snippet>("pin_snippet_command", { id, pinned }),
   deleteSnippet: (id: number) => invoke<void>("delete_snippet_command", { id }),
-  copySnippetToClipboard: (id: number) => invoke<void>("copy_snippet_to_clipboard", { id }),
+  copySnippetToClipboard: (id: number) => invoke<Snippet>("copy_snippet_to_clipboard", { id }),
   showClipboardPicker: () => invoke<void>("show_clipboard_picker"),
   showSnippetPicker: () => invoke<void>("show_snippet_picker"),
   hideShelfPicker: () => invoke<void>("hide_shelf_picker"),

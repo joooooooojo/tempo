@@ -4,16 +4,19 @@ const macOS = isMacTarget;
 
 const sizeStyles = {
   md: {
-    slot: "h-11 w-11",
+    slot: "size-11",
+    padding: "p-1",
     fallbackText: "text-sm",
   },
   sm: {
-    slot: "h-7 w-7",
+    slot: "size-7",
+    padding: "p-1",
     fallbackText: "text-[11px]",
   },
   xs: {
-    slot: "h-3.5 w-3.5",
-    fallbackText: "text-[8px]",
+    slot: "size-[22px]",
+    padding: "p-0.5",
+    fallbackText: "text-[10px]",
   },
 } as const;
 
@@ -33,7 +36,7 @@ export function AppIcon({
   size = "md",
 }: AppIconProps) {
   const initial = name.trim().charAt(0).toUpperCase() || "?";
-  const { slot, fallbackText } = sizeStyles[size];
+  const { slot, padding, fallbackText } = sizeStyles[size];
 
   if (iconDataUrl) {
     if (macOS) {
@@ -50,8 +53,9 @@ export function AppIcon({
     return (
       <span
         className={cn(
-          "flex shrink-0 items-center justify-center rounded-lg bg-background/60 p-1 ring-1 ring-border/60",
+          "flex shrink-0 items-center justify-center rounded-lg bg-background/60 ring-1 ring-border/60",
           slot,
+          padding,
           className
         )}
       >

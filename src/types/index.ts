@@ -140,6 +140,22 @@ export interface Snippet {
   title: string;
   content: string;
   tags: string[];
+  group_id?: number | null;
+  group_name?: string | null;
+  shortcut?: string | null;
+  pinned: boolean;
+  use_count: number;
+  last_used_at?: string | null;
+  archived_at?: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SnippetGroup {
+  id: number;
+  name: string;
+  color: string;
   sort_order: number;
   created_at: string;
   updated_at: string;

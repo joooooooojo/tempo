@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Toaster, toast } from "sonner";
@@ -130,6 +130,7 @@ function MainApp() {
   return (
     <>
       <BrowserRouter>
+        <MainAppEventBridge />
         <Routes>
           <Route element={<AppLayout />}>
             <Route index element={<TodoPage />} />
@@ -155,6 +156,26 @@ function MainApp() {
       <Toaster position="top-center" richColors toastOptions={appToastOptions} />
     </>
   );
+}
+
+function MainAppEventBridge() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const unlistenCreate = listen("snippets:create-request", () => {
+      navigate("/snippets", { state: { createSnippet: true } });
+    });
+    const unlistenManage = listen("snippets:manage-request", () => {
+      navigate("/snippets");
+    });
+
+    return () => {
+      void unlistenCreate.then((fn) => fn());
+      void unlistenManage.then((fn) => fn());
+    };
+  }, [navigate]);
+
+  return null;
 }
 
 async function openEyeCareReminderWindow() {

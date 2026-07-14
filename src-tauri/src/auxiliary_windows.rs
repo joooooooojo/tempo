@@ -166,6 +166,7 @@ pub fn hide_shelf_picker_window(app: &AppHandle) -> tauri::Result<()> {
         }
     }
 
+    let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:hide", ());
     SHELF_VISIBLE_TAB.store(SHELF_TAB_NONE, Ordering::Relaxed);
     #[cfg(target_os = "windows")]
     SHELF_OUTSIDE_CLOSE_TOKEN.fetch_add(1, Ordering::Relaxed);
@@ -283,6 +284,7 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         return Ok(());
     }
 
+    let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:prepare", &payload);
     place_bottom_shelf_window(app, &window, CLIPBOARD_SHELF_WIDTH_RATIO)?;
     #[cfg(not(target_os = "macos"))]
     {

@@ -1302,6 +1302,10 @@ html.shelf-picker-window--windows #root {
   background: transparent;
 }
 
+.shelf-picker-page[data-ready="false"] .shelf-picker-panel {
+  visibility: hidden;
+}
+
 .shelf-picker-page--overlay {
   cursor: default;
 }

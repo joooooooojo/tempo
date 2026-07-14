@@ -1,5 +1,5 @@
 use chrono::{Duration, Local};
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, types::Value, Connection};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -27,6 +27,23 @@ pub struct Snippet {
     pub title: String,
     pub content: String,
     pub tags: Vec<String>,
+    pub group_id: Option<i64>,
+    pub group_name: Option<String>,
+    pub shortcut: Option<String>,
+    pub pinned: bool,
+    pub use_count: i64,
+    pub last_used_at: Option<String>,
+    pub archived_at: Option<String>,
+    pub sort_order: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnippetGroup {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
     pub sort_order: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -299,42 +316,157 @@ pub fn set_clipboard_entry_pinned(
     get_clipboard_entry(conn, id)
 }
 
-pub fn list_snippets(conn: &Connection, query: Option<&str>) -> Vec<Snippet> {
-    let like = query.map(|value| format!("%{value}%"));
-    if let Some(pattern) = like {
-        conn.prepare(
-            "SELECT id, title, content, tags, sort_order, created_at, updated_at
-             FROM snippets
-             WHERE title LIKE ?1 OR content LIKE ?1 OR tags LIKE ?1
-             ORDER BY sort_order ASC, updated_at DESC, id DESC",
-        )
-        .and_then(|mut stmt| {
-            stmt.query_map([pattern], map_snippet_row)
-                .and_then(|rows| rows.collect())
-        })
-        .unwrap_or_default()
-    } else {
-        conn.prepare(
-            "SELECT id, title, content, tags, sort_order, created_at, updated_at
-             FROM snippets
-             ORDER BY sort_order ASC, updated_at DESC, id DESC",
-        )
-        .and_then(|mut stmt| {
-            stmt.query_map([], map_snippet_row)
-                .and_then(|rows| rows.collect())
-        })
-        .unwrap_or_default()
+const SNIPPET_SELECT: &str = "
+    SELECT
+        s.id,
+        s.title,
+        s.content,
+        s.tags,
+        s.group_id,
+        g.name,
+        s.shortcut,
+        s.pinned,
+        s.use_count,
+        s.last_used_at,
+        s.archived_at,
+        s.sort_order,
+        s.created_at,
+        s.updated_at
+    FROM snippets s
+    LEFT JOIN snippet_groups g ON g.id = s.group_id
+";
+
+pub fn list_snippet_groups(conn: &Connection) -> Vec<SnippetGroup> {
+    conn.prepare(
+        "SELECT id, name, color, sort_order, created_at, updated_at
+         FROM snippet_groups
+         ORDER BY sort_order ASC, name COLLATE NOCASE ASC, id ASC",
+    )
+    .and_then(|mut stmt| {
+        stmt.query_map([], map_snippet_group_row)
+            .and_then(|rows| rows.collect())
+    })
+    .unwrap_or_default()
+}
+
+pub fn add_snippet_group(
+    conn: &Connection,
+    name: &str,
+    color: Option<&str>,
+) -> Result<SnippetGroup, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("分组名称不能为空".into());
     }
+    let color = color
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
+    let now = now_iso();
+    let sort_order = next_group_sort_order(conn);
+    conn.execute(
+        "INSERT INTO snippet_groups (name, color, sort_order, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![name, color, sort_order, now],
+    )
+    .map_err(map_snippet_db_error)?;
+    get_snippet_group(conn, conn.last_insert_rowid())
+        .ok_or_else(|| "分组保存失败".to_string())
+}
+
+pub fn update_snippet_group(
+    conn: &Connection,
+    id: i64,
+    name: &str,
+    color: Option<&str>,
+) -> Result<SnippetGroup, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("分组名称不能为空".into());
+    }
+    let color = color
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
+    let updated_at = now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE snippet_groups
+             SET name = ?1, color = ?2, updated_at = ?3
+             WHERE id = ?4",
+            params![name, color, updated_at, id],
+        )
+        .map_err(map_snippet_db_error)?;
+    if changed == 0 {
+        return Err("分组不存在".into());
+    }
+    get_snippet_group(conn, id).ok_or_else(|| "分组不存在".to_string())
+}
+
+pub fn delete_snippet_group(conn: &Connection, id: i64) -> bool {
+    let _ = conn.execute("UPDATE snippets SET group_id = NULL WHERE group_id = ?1", [id]);
+    conn.execute("DELETE FROM snippet_groups WHERE id = ?1", [id])
+        .map(|count| count > 0)
+        .unwrap_or(false)
+}
+
+pub fn list_snippets(
+    conn: &Connection,
+    query: Option<&str>,
+    group_id: Option<i64>,
+    sort: Option<&str>,
+) -> Vec<Snippet> {
+    let mut sql = String::from(SNIPPET_SELECT);
+    sql.push_str(" WHERE s.archived_at IS NULL");
+
+    let mut values = Vec::<Value>::new();
+    if let Some(query) = query.map(str::trim).filter(|value| !value.is_empty()) {
+        let pattern = format!("%{query}%");
+        sql.push_str(
+            " AND (
+                s.title LIKE ?
+                OR s.content LIKE ?
+                OR s.tags LIKE ?
+                OR s.shortcut LIKE ?
+                OR g.name LIKE ?
+             )",
+        );
+        for _ in 0..5 {
+            values.push(Value::Text(pattern.clone()));
+        }
+    }
+
+    if let Some(group_id) = group_id {
+        if group_id <= 0 {
+            sql.push_str(" AND s.group_id IS NULL");
+        } else {
+            sql.push_str(" AND s.group_id = ?");
+            values.push(Value::Integer(group_id));
+        }
+    }
+
+    sql.push_str(match sort.unwrap_or("smart") {
+        "title" => " ORDER BY s.pinned DESC, s.title COLLATE NOCASE ASC, s.id DESC",
+        "used" => {
+            " ORDER BY s.pinned DESC, s.use_count DESC, s.last_used_at DESC, s.updated_at DESC, s.id DESC"
+        }
+        "updated" => " ORDER BY s.pinned DESC, s.updated_at DESC, s.id DESC",
+        _ => {
+            " ORDER BY s.pinned DESC, s.sort_order ASC, s.last_used_at DESC, s.updated_at DESC, s.id DESC"
+        }
+    });
+
+    conn.prepare(&sql)
+        .and_then(|mut stmt| {
+            stmt.query_map(params_from_iter(values.iter()), map_snippet_row)
+                .and_then(|rows| rows.collect())
+        })
+        .unwrap_or_default()
 }
 
 pub fn get_snippet(conn: &Connection, id: i64) -> Option<Snippet> {
-    conn.query_row(
-        "SELECT id, title, content, tags, sort_order, created_at, updated_at
-         FROM snippets WHERE id = ?1",
-        [id],
-        map_snippet_row,
-    )
-    .ok()
+    let sql = format!("{SNIPPET_SELECT} WHERE s.id = ?1 AND s.archived_at IS NULL");
+    conn.query_row(&sql, [id], map_snippet_row).ok()
 }
 
 pub fn add_snippet(
@@ -342,21 +474,28 @@ pub fn add_snippet(
     title: &str,
     content: &str,
     tags: &[String],
-) -> Option<Snippet> {
+    group_id: Option<i64>,
+    shortcut: Option<&str>,
+) -> Result<Snippet, String> {
     let title = title.trim();
     let content = content.trim();
     if title.is_empty() || content.is_empty() {
-        return None;
+        return Err("标题和内容不能为空".into());
     }
     let now = now_iso();
-    let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".into());
+    let tags_json = serde_json::to_string(&normalize_tags(tags)).unwrap_or_else(|_| "[]".into());
+    let shortcut = normalize_shortcut(shortcut);
+    let sort_order = next_snippet_sort_order(conn);
     conn.execute(
-        "INSERT INTO snippets (title, content, tags, sort_order, created_at, updated_at)
-         VALUES (?1, ?2, ?3, 0, ?4, ?4)",
-        params![title, content, tags_json, now],
+        "INSERT INTO snippets (
+            title, content, tags, group_id, shortcut, pinned,
+            use_count, sort_order, created_at, updated_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, ?7, ?7)",
+        params![title, content, tags_json, group_id, shortcut, sort_order, now],
     )
-    .ok()?;
-    get_snippet(conn, conn.last_insert_rowid())
+    .map_err(map_snippet_db_error)?;
+    get_snippet(conn, conn.last_insert_rowid()).ok_or_else(|| "短语保存失败".to_string())
 }
 
 pub fn update_snippet(
@@ -365,20 +504,79 @@ pub fn update_snippet(
     title: &str,
     content: &str,
     tags: &[String],
-) -> Option<Snippet> {
+    group_id: Option<i64>,
+    shortcut: Option<&str>,
+) -> Result<Snippet, String> {
     let title = title.trim();
     let content = content.trim();
     if title.is_empty() || content.is_empty() {
-        return None;
+        return Err("标题和内容不能为空".into());
     }
-    let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".into());
+    let tags_json = serde_json::to_string(&normalize_tags(tags)).unwrap_or_else(|_| "[]".into());
+    let shortcut = normalize_shortcut(shortcut);
     let updated_at = now_iso();
-    conn.execute(
-        "UPDATE snippets SET title = ?1, content = ?2, tags = ?3, updated_at = ?4 WHERE id = ?5",
-        params![title, content, tags_json, updated_at, id],
+    let changed = conn
+        .execute(
+            "UPDATE snippets
+             SET title = ?1,
+                 content = ?2,
+                 tags = ?3,
+                 group_id = ?4,
+                 shortcut = ?5,
+                 updated_at = ?6
+             WHERE id = ?7 AND archived_at IS NULL",
+            params![title, content, tags_json, group_id, shortcut, updated_at, id],
+        )
+        .map_err(map_snippet_db_error)?;
+    if changed == 0 {
+        return Err("短语不存在".into());
+    }
+    get_snippet(conn, id).ok_or_else(|| "短语不存在".to_string())
+}
+
+pub fn duplicate_snippet(conn: &Connection, id: i64) -> Result<Snippet, String> {
+    let snippet = get_snippet(conn, id).ok_or_else(|| "短语不存在".to_string())?;
+    add_snippet(
+        conn,
+        &format!("{} 副本", snippet.title),
+        &snippet.content,
+        &snippet.tags,
+        snippet.group_id,
+        None,
     )
-    .ok()?;
-    get_snippet(conn, id)
+}
+
+pub fn set_snippet_pinned(conn: &Connection, id: i64, pinned: bool) -> Result<Snippet, String> {
+    let updated_at = now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE snippets
+             SET pinned = ?1, updated_at = ?2
+             WHERE id = ?3 AND archived_at IS NULL",
+            params![pinned as i32, updated_at, id],
+        )
+        .map_err(|error| error.to_string())?;
+    if changed == 0 {
+        return Err("短语不存在".into());
+    }
+    get_snippet(conn, id).ok_or_else(|| "短语不存在".to_string())
+}
+
+pub fn touch_snippet_usage(conn: &Connection, id: i64) -> Result<Snippet, String> {
+    let last_used_at = now_iso();
+    let changed = conn
+        .execute(
+            "UPDATE snippets
+             SET use_count = use_count + 1,
+                 last_used_at = ?1
+             WHERE id = ?2 AND archived_at IS NULL",
+            params![last_used_at, id],
+        )
+        .map_err(|error| error.to_string())?;
+    if changed == 0 {
+        return Err("短语不存在".into());
+    }
+    get_snippet(conn, id).ok_or_else(|| "短语不存在".to_string())
 }
 
 pub fn delete_snippet(conn: &Connection, id: i64) -> bool {
@@ -410,10 +608,89 @@ fn map_snippet_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snippet> {
         title: row.get(1)?,
         content: row.get(2)?,
         tags,
-        sort_order: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        group_id: row.get(4)?,
+        group_name: row.get(5)?,
+        shortcut: row.get(6)?,
+        pinned: row.get::<_, i32>(7)? != 0,
+        use_count: row.get(8)?,
+        last_used_at: row.get(9)?,
+        archived_at: row.get(10)?,
+        sort_order: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
+}
+
+fn map_snippet_group_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SnippetGroup> {
+    Ok(SnippetGroup {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        sort_order: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+fn get_snippet_group(conn: &Connection, id: i64) -> Option<SnippetGroup> {
+    conn.query_row(
+        "SELECT id, name, color, sort_order, created_at, updated_at
+         FROM snippet_groups WHERE id = ?1",
+        [id],
+        map_snippet_group_row,
+    )
+    .ok()
+}
+
+fn next_snippet_sort_order(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM snippets",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(1)
+}
+
+fn next_group_sort_order(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM snippet_groups",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(1)
+}
+
+fn normalize_tags(tags: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() || normalized.iter().any(|item| item == tag) {
+            continue;
+        }
+        normalized.push(tag.to_string());
+    }
+    normalized
+}
+
+fn normalize_shortcut(shortcut: Option<&str>) -> Option<String> {
+    shortcut
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn map_snippet_db_error(error: rusqlite::Error) -> String {
+    let message = error.to_string();
+    if message.contains("snippet_groups.name") {
+        "分组名称已存在".into()
+    } else if message.contains("idx_snippets_shortcut")
+        || message.contains("snippets.shortcut")
+        || message.contains("UNIQUE constraint failed")
+    {
+        "快捷词已存在".into()
+    } else {
+        message
+    }
 }
 
 fn now_iso() -> String {

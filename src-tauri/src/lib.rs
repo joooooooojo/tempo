@@ -34,7 +34,7 @@ const SHELF_ESCAPE_SHORTCUT: &str = "Escape";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol(commands::MARKDOWN_IMAGE_PROTOCOL, |ctx, request| {
@@ -58,9 +58,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init());
 
     #[cfg(target_os = "macos")]
-    {
-        builder = builder.plugin(tauri_nspanel::init());
-    }
+    let builder = builder.plugin(tauri_nspanel::init());
 
     builder
         .plugin(
@@ -239,8 +237,14 @@ pub fn run() {
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::copy_clipboard_entry,
             commands::snippets::get_snippets,
+            commands::snippets::get_snippet_groups,
+            commands::snippets::create_snippet_group,
+            commands::snippets::update_snippet_group_command,
+            commands::snippets::delete_snippet_group_command,
             commands::snippets::create_snippet,
             commands::snippets::update_snippet_command,
+            commands::snippets::duplicate_snippet_command,
+            commands::snippets::pin_snippet_command,
             commands::snippets::delete_snippet_command,
             commands::snippets::copy_snippet_to_clipboard,
             auxiliary_windows::show_clipboard_picker,

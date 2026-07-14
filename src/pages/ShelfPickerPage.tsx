@@ -8,7 +8,7 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { ClipboardList, MoreHorizontal, Plus, Search, TextQuote } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -34,6 +34,23 @@ function isShelfTab(value: unknown): value is ShelfTab {
   return value === "clipboard" || value === "snippets";
 }
 
+function initialShelfTab(): ShelfTab {
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get("tab");
+  if (isShelfTab(tab)) return tab;
+
+  return params.get("view") === "snippet-picker" ? "snippets" : "clipboard";
+}
+
+function initiallyReady() {
+  const params = new URLSearchParams(window.location.search);
+  return (
+    params.has("tab") ||
+    params.get("view") === "clipboard-picker" ||
+    params.get("view") === "snippet-picker"
+  );
+}
+
 function filterClipboard(entries: ClipboardEntry[], query: string) {
   const needle = query.trim().toLowerCase();
   if (!needle) return entries;
@@ -49,6 +66,8 @@ function filterSnippets(items: Snippet[], query: string) {
     (snippet) =>
       snippet.title.toLowerCase().includes(needle) ||
       snippet.content.toLowerCase().includes(needle) ||
+      (snippet.shortcut ?? "").toLowerCase().includes(needle) ||
+      (snippet.group_name ?? "").toLowerCase().includes(needle) ||
       snippet.tags.some((tag) => tag.toLowerCase().includes(needle))
   );
 }
@@ -114,7 +133,8 @@ function ShelfTrackViewport({ active, children, label, scrollerRef }: ShelfTrack
 }
 
 export function ShelfPickerPage() {
-  const [tab, setTab] = useState<ShelfTab>("clipboard");
+  const [tab, setTab] = useState<ShelfTab>(() => initialShelfTab());
+  const [contentReady, setContentReady] = useState(() => initiallyReady());
   const [clipboardCache, setClipboardCache] = useState<ClipboardEntry[]>([]);
   const [snippetsCache, setSnippetsCache] = useState<Snippet[]>([]);
   const [query, setQuery] = useState("");
@@ -210,15 +230,22 @@ export function ShelfPickerPage() {
     }
   }, []);
 
+  const prepareOpen = useCallback((nextTab: ShelfTab) => {
+    setTab(nextTab);
+    setQuery("");
+    setSearchOpen(true);
+    setClipboardIndex(0);
+    setSnippetsIndex(0);
+    setContentReady(true);
+  }, []);
+
   const resetAndOpen = useCallback(
     (nextTab: ShelfTab) => {
-      setTab(nextTab);
-      setQuery("");
-      setSearchOpen(true);
+      prepareOpen(nextTab);
       void loadClipboard(true);
       void loadSnippets(true);
     },
-    [loadClipboard, loadSnippets]
+    [loadClipboard, loadSnippets, prepareOpen]
   );
 
   useEffect(() => {
@@ -231,6 +258,10 @@ export function ShelfPickerPage() {
     const unlistenSnippets = listen("snippets-update", () => {
       void loadSnippets();
     });
+    const unlistenPrepare = listen<{ tab?: string }>("shelf-picker:prepare", (event) => {
+      const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
+      prepareOpen(nextTab);
+    });
     const unlistenOpen = listen<{ tab?: string }>("shelf-picker:open", (event) => {
       const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
       resetAndOpen(nextTab);
@@ -242,15 +273,21 @@ export function ShelfPickerPage() {
         return;
       }
       setTab(nextTab);
+      setContentReady(true);
+    });
+    const unlistenHide = listen("shelf-picker:hide", () => {
+      setContentReady(false);
     });
 
     return () => {
       void unlistenClipboard.then((fn) => fn());
       void unlistenSnippets.then((fn) => fn());
+      void unlistenPrepare.then((fn) => fn());
       void unlistenOpen.then((fn) => fn());
       void unlistenActivate.then((fn) => fn());
+      void unlistenHide.then((fn) => fn());
     };
-  }, [loadClipboard, loadSnippets, resetAndOpen]);
+  }, [hideShelf, loadClipboard, loadSnippets, prepareOpen, resetAndOpen]);
 
   const copyEntry = useCallback(async (entry: ClipboardEntry) => {
     debugShelf("copy clipboard entry requested", {
@@ -286,12 +323,21 @@ export function ShelfPickerPage() {
 
   const copySnippet = useCallback(async (snippet: Snippet) => {
     try {
-      await api.copySnippetToClipboard(snippet.id);
-      toast.success("已复制");
+      const updated = await api.copySnippetToClipboard(snippet.id);
+      setSnippetsCache((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item))
+      );
+      toast.success("已使用短语");
       await api.hideShelfPicker();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
     }
+  }, []);
+
+  const openSnippetsPage = useCallback(async (create = false) => {
+    await api.hideShelfPicker();
+    await api.showWindow();
+    await emit(create ? "snippets:create-request" : "snippets:manage-request", {});
   }, []);
 
   const itemCount = tab === "clipboard" ? entries.length : snippets.length;
@@ -376,7 +422,10 @@ export function ShelfPickerPage() {
   ]);
 
   return (
-    <div className="shelf-picker-page shelf-picker-page--full">
+    <div
+      className="shelf-picker-page shelf-picker-page--full"
+      data-ready={contentReady ? "true" : "false"}
+    >
       <div className="shelf-picker-panel">
         <div className="shelf-picker-toolbar">
           <div
@@ -429,11 +478,22 @@ export function ShelfPickerPage() {
 
           <div className="shelf-picker-toolbar-actions">
             {tab === "snippets" && (
-              <button type="button" className="shelf-picker-icon-btn" title="新建" disabled>
+              <button
+                type="button"
+                className="shelf-picker-icon-btn"
+                title="新建短语"
+                onClick={() => void openSnippetsPage(true)}
+              >
                 <Plus className="h-4 w-4" />
               </button>
             )}
-            <button type="button" className="shelf-picker-icon-btn" title="更多" disabled>
+            <button
+              type="button"
+              className="shelf-picker-icon-btn"
+              title={tab === "snippets" ? "管理短语" : "更多"}
+              disabled={tab !== "snippets"}
+              onClick={() => void openSnippetsPage(false)}
+            >
               <MoreHorizontal className="h-4 w-4" />
             </button>
           </div>
@@ -493,16 +553,19 @@ export function ShelfPickerPage() {
                   selected={index === snippetsIndex}
                   headerLabel="短语"
                   headerTone="snippet"
-                  timeLabel={shelfTimeLabel(snippet.updated_at)}
+                  timeLabel={shelfTimeLabel(snippet.last_used_at ?? snippet.updated_at)}
                   sourceApp={snippet.title}
                   content={snippet.content}
                   footer={
-                    snippet.tags.length > 0
-                      ? snippet.tags.join(" · ")
-                      : shelfCharCount(snippet.content)
+                    snippet.shortcut
+                      ? `${snippet.shortcut} · ${snippet.use_count} 次`
+                      : snippet.tags.length > 0
+                        ? snippet.tags.join(" · ")
+                        : shelfCharCount(snippet.content)
                   }
                   onClick={() => setSnippetsIndex(index)}
                   onDoubleClick={() => void copySnippet(snippet)}
+                  title="双击使用短语"
                 />
               ))
             )}
