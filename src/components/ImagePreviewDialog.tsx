@@ -15,13 +15,26 @@ export interface ImagePreviewSource {
 export function ImagePreviewDialog({
   image,
   onOpenChange,
+  nested = false,
 }: {
   image: ImagePreviewSource | null;
   onOpenChange: (open: boolean) => void;
+  /** Opened above another dialog — no mask, elevated shadow. */
+  nested?: boolean;
 }) {
   return (
-    <Dialog open={Boolean(image)} onOpenChange={onOpenChange}>
-      <DialogContent className="!flex !h-[85vh] !max-h-[85vh] !w-[85vw] !max-w-[85vw] flex-col gap-3 overflow-hidden p-3">
+    <Dialog
+      open={Boolean(image)}
+      onOpenChange={onOpenChange}
+      modal={nested ? "trap-focus" : true}
+    >
+      <DialogContent
+        showOverlay={!nested}
+        className={cn(
+          "!flex !h-[85vh] !max-h-[85vh] !w-[85vw] !max-w-[85vw] flex-col gap-3 overflow-hidden p-3",
+          nested && "todo-create-dialog"
+        )}
+      >
         <DialogHeader className="shrink-0 px-1 pr-8">
           <DialogTitle className="truncate text-[15px]">图片预览</DialogTitle>
         </DialogHeader>

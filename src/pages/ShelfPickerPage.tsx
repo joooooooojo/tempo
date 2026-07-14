@@ -556,6 +556,7 @@ export function ShelfPickerPage() {
                   timeLabel={shelfTimeLabel(snippet.last_used_at ?? snippet.updated_at)}
                   sourceApp={snippet.title}
                   content={snippet.content}
+                  language={snippet.language}
                   footer={
                     snippet.shortcut
                       ? `${snippet.shortcut} · ${snippet.use_count} 次`

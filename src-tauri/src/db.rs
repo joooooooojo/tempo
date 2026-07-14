@@ -152,6 +152,9 @@ pub struct Settings {
     pub clipboard_paste_mode: String,
     pub clipboard_plain_text_only: bool,
     pub clipboard_history_retention: String,
+    pub shortcut_quick_todo: String,
+    pub shortcut_clipboard_picker: String,
+    pub shortcut_snippet_picker: String,
     pub storage_dir: String,
 }
 
@@ -180,6 +183,9 @@ impl Default for Settings {
             clipboard_paste_mode: "clipboard".into(),
             clipboard_plain_text_only: true,
             clipboard_history_retention: "days".into(),
+            shortcut_quick_todo: "F2".into(),
+            shortcut_clipboard_picker: "F4".into(),
+            shortcut_snippet_picker: "F5".into(),
             storage_dir: String::new(),
         }
     }
@@ -711,6 +717,10 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
         "add snippet archived_at column",
     );
     log_optional_migration(
+        conn.execute("ALTER TABLE snippets ADD COLUMN language TEXT", []),
+        "add snippet language column",
+    );
+    log_optional_migration(
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_snippets_usage
          ON snippets(pinned DESC, sort_order ASC, last_used_at DESC, updated_at DESC)",
@@ -866,6 +876,18 @@ pub fn load_settings(conn: &Connection) -> Settings {
             "clipboard_history_retention",
             "days",
         )),
+        shortcut_quick_todo: normalize_shortcut_setting(
+            &get_setting(conn, "shortcut_quick_todo", "F2"),
+            "F2",
+        ),
+        shortcut_clipboard_picker: normalize_shortcut_setting(
+            &get_setting(conn, "shortcut_clipboard_picker", "F4"),
+            "F4",
+        ),
+        shortcut_snippet_picker: normalize_shortcut_setting(
+            &get_setting(conn, "shortcut_snippet_picker", "F5"),
+            "F5",
+        ),
         storage_dir: String::new(),
     }
 }
@@ -953,6 +975,17 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         "clipboard_history_retention",
         &settings.clipboard_history_retention,
     );
+    set_setting(conn, "shortcut_quick_todo", &settings.shortcut_quick_todo);
+    set_setting(
+        conn,
+        "shortcut_clipboard_picker",
+        &settings.shortcut_clipboard_picker,
+    );
+    set_setting(
+        conn,
+        "shortcut_snippet_picker",
+        &settings.shortcut_snippet_picker,
+    );
 }
 
 pub fn normalize_clipboard_paste_mode(value: &str) -> String {
@@ -960,6 +993,14 @@ pub fn normalize_clipboard_paste_mode(value: &str) -> String {
         "active_app" => "active_app".into(),
         _ => "clipboard".into(),
     }
+}
+
+pub fn normalize_shortcut_setting(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return fallback.to_string();
+    }
+    trimmed.to_string()
 }
 
 pub fn normalize_clipboard_history_retention(value: &str) -> String {

@@ -10,6 +10,7 @@ import {
   Pencil,
   Pin,
   Search,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -43,6 +44,9 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { cn, formatRelativeTime, previewLines } from "@/lib/utils";
+import { CodeEditor } from "@/components/CodeEditor";
+import { CodeHighlight, SNIPPET_LANGUAGE_OPTIONS } from "@/components/CodeHighlight";
+import { TextWithLinks } from "@/components/TextWithLinks";
 import type { Snippet, SnippetGroup } from "@/types";
 
 type GroupFilter = "all" | "ungrouped" | `${number}`;
@@ -55,6 +59,7 @@ type EditorState = {
   tags: string;
   groupId: string;
   shortcut: string;
+  language: string;
 };
 
 const emptyEditor: EditorState = {
@@ -63,6 +68,7 @@ const emptyEditor: EditorState = {
   tags: "",
   groupId: "none",
   shortcut: "",
+  language: "plain",
 };
 
 const SORT_OPTIONS: Array<{ value: SortMode; label: string }> = [
@@ -82,6 +88,8 @@ export function SnippetsPage() {
   const [sort, setSort] = useState<SortMode>("smart");
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [detailSnippet, setDetailSnippet] = useState<Snippet | null>(null);
+  const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   const [editor, setEditor] = useState<EditorState>(emptyEditor);
   const [saving, setSaving] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -103,6 +111,10 @@ export function SnippetsPage() {
         ]);
         setGroups(nextGroups);
         setSnippets(nextSnippets);
+        setDetailSnippet((current) => {
+          if (!current) return null;
+          return nextSnippets.find((item) => item.id === current.id) ?? current;
+        });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "加载短语失败");
       } finally {
@@ -127,10 +139,11 @@ export function SnippetsPage() {
   const openCreate = useCallback(() => {
     setEditor({
       ...emptyEditor,
-      groupId: groupFilter !== "all" && groupFilter !== "ungrouped" ? groupFilter : "none",
+      groupId: "none",
     });
+    setMoreSettingsOpen(false);
     setEditorOpen(true);
-  }, [groupFilter]);
+  }, []);
 
   useEffect(() => {
     const state = location.state as { createSnippet?: boolean } | null;
@@ -147,7 +160,9 @@ export function SnippetsPage() {
       tags: snippet.tags.join(", "),
       groupId: snippet.group_id ? String(snippet.group_id) : "none",
       shortcut: snippet.shortcut ?? "",
+      language: snippet.language || "plain",
     });
+    setMoreSettingsOpen(false);
     setEditorOpen(true);
   };
 
@@ -157,6 +172,7 @@ export function SnippetsPage() {
     const tags = splitTags(editor.tags);
     const nextGroupId = editor.groupId === "none" ? null : Number(editor.groupId);
     const shortcut = editor.shortcut.trim() || null;
+    const language = editor.language === "plain" ? null : editor.language;
 
     if (!title || !content) {
       toast.error("请填写标题和内容");
@@ -166,9 +182,9 @@ export function SnippetsPage() {
     setSaving(true);
     try {
       if (editor.id) {
-        await api.updateSnippet(editor.id, title, content, tags, nextGroupId, shortcut);
+        await api.updateSnippet(editor.id, title, content, tags, nextGroupId, shortcut, language);
       } else {
-        await api.createSnippet(title, content, tags, nextGroupId, shortcut);
+        await api.createSnippet(title, content, tags, nextGroupId, shortcut, language);
       }
       setEditorOpen(false);
       toast.success("已保存");
@@ -188,9 +204,8 @@ export function SnippetsPage() {
     }
     setCreatingGroup(true);
     try {
-      const group = await api.createSnippetGroup(name);
+      await api.createSnippetGroup(name);
       setNewGroupName("");
-      setGroupFilter(String(group.id) as GroupFilter);
       toast.success("分组已创建");
       void load(false);
     } catch (error) {
@@ -356,6 +371,7 @@ export function SnippetsPage() {
                 snippet={snippet}
                 actionMenuOpen={actionMenuId === snippet.id}
                 onActionMenuOpenChange={(open) => setActionMenuId(open ? snippet.id : null)}
+                onOpenDetail={() => setDetailSnippet(snippet)}
                 onUse={() => void useSnippet(snippet)}
                 onTogglePinned={() => {
                   setActionMenuId(null);
@@ -375,13 +391,124 @@ export function SnippetsPage() {
         </Table>
       </DataTable>
 
-      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
-        <DialogContent className="flex flex-col !h-[80vh] !max-h-[calc(100vh-2rem)] !w-[80vw] !max-w-[calc(100vw-2rem)]">
-          <DialogHeader>
+      <Dialog
+        open={Boolean(detailSnippet)}
+        onOpenChange={(open) => {
+          if (!open) setDetailSnippet(null);
+        }}
+      >
+        <DialogContent
+          className="todo-create-dialog !flex max-h-[min(720px,calc(100vh-2rem))] w-[calc(100vw-2rem)] max-w-[720px] flex-col gap-0 overflow-hidden rounded-xl border-border/80 p-0 sm:max-w-[720px]"
+        >
+          {detailSnippet && (
+            <>
+              <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-4 pr-12">
+                <div className="flex min-w-0 items-start gap-3 pr-2">
+                  <div className="min-w-0 flex-1">
+                    <DialogTitle className="truncate text-[18px] font-bold">
+                      {detailSnippet.title}
+                    </DialogTitle>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>{detailSnippet.group_name || "未分组"}</span>
+                      {detailSnippet.shortcut && (
+                        <span className="rounded-md bg-foreground/6 px-1.5 py-0.5 font-mono text-[11px]">
+                          {detailSnippet.shortcut}
+                        </span>
+                      )}
+                      {detailSnippet.language && detailSnippet.language !== "plain" && (
+                        <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                          {SNIPPET_LANGUAGE_OPTIONS.find(
+                            (option) => option.value === detailSnippet.language
+                          )?.label || detailSnippet.language}
+                        </span>
+                      )}
+                      <span>使用 {detailSnippet.use_count} 次</span>
+                      {detailSnippet.pinned && (
+                        <span className="inline-flex items-center gap-1 text-primary">
+                          <Pin className="h-3 w-3 fill-current" />
+                          已置顶
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                {detailSnippet.tags.length > 0 && (
+                  <div className="mb-4 flex flex-wrap gap-1.5">
+                    {detailSnippet.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded-md bg-foreground/6 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {detailSnippet.language && detailSnippet.language !== "plain" ? (
+                  <CodeHighlight
+                    code={detailSnippet.content}
+                    language={detailSnippet.language}
+                    className="m-0"
+                  />
+                ) : (
+                  <div className="whitespace-pre-wrap break-words text-[13px] leading-6 text-foreground/90">
+                    <TextWithLinks text={detailSnippet.content} />
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="mx-0 mb-0 flex w-full shrink-0 flex-row items-center gap-3 rounded-none border-t border-border/60 bg-foreground/[0.018] px-6 py-4 sm:space-x-0">
+                <Button
+                  className="h-9"
+                  variant="outline"
+                  onClick={() => setDetailSnippet(null)}
+                >
+                  关闭
+                </Button>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    className="h-9"
+                    variant="outline"
+                    onClick={() => {
+                      const snippet = detailSnippet;
+                      setDetailSnippet(null);
+                      openEdit(snippet);
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    编辑
+                  </Button>
+                  <Button
+                    className="h-9"
+                    onClick={() => void useSnippet(detailSnippet)}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    使用
+                  </Button>
+                </div>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editorOpen}
+        onOpenChange={(open) => {
+          setEditorOpen(open);
+          if (!open) setMoreSettingsOpen(false);
+        }}
+        modal={moreSettingsOpen ? "trap-focus" : true}
+      >
+        <DialogContent className="flex flex-col !h-[80vh] !max-h-[calc(100vh-2rem)] !w-[80vw] !max-w-[calc(100vw-2rem)] gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-4 pr-12">
             <DialogTitle>{editor.id ? "编辑短语" : "新建短语"}</DialogTitle>
           </DialogHeader>
-          <div className="flex flex-1 px-1 overflow-hidden flex-col gap-4">
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 py-4">
+            <div className="grid shrink-0 gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="snippet-title">标题</Label>
                 <Input
@@ -394,85 +521,68 @@ export function SnippetsPage() {
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="snippet-shortcut">快捷词</Label>
-                <Input
-                  id="snippet-shortcut"
-                  value={editor.shortcut}
-                  onChange={(event) =>
-                    setEditor((state) => ({ ...state, shortcut: event.target.value }))
-                  }
-                  placeholder="/hello"
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
-              <div className="flex flex-col gap-2">
-                <Label>分组</Label>
+                <Label>代码语言</Label>
                 <Select
-                  items={[
-                    { value: "none", label: "未分组" },
-                    ...groups.map((group) => ({ value: String(group.id), label: group.name })),
-                  ]}
-                  value={editor.groupId}
+                  items={SNIPPET_LANGUAGE_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  }))}
+                  value={editor.language}
                   onValueChange={(value) =>
-                    value && setEditor((state) => ({ ...state, groupId: value }))
+                    value && setEditor((state) => ({ ...state, language: value }))
                   }
                 >
-                  <SelectTrigger className="h-9 w-full">
+                  <SelectTrigger className="h-9 w-full bg-transparent shadow-none">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    overlayLayer
+                    searchable
+                    searchPlaceholder="搜索语言..."
+                  >
                     <SelectGroup>
-                      <SelectItem value="none">未分组</SelectItem>
-                      {groups.map((group) => (
-                        <SelectItem key={group.id} value={String(group.id)}>
-                          {group.name}
+                      {SNIPPET_LANGUAGE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
                         </SelectItem>
                       ))}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="snippet-tags">标签</Label>
-                <Input
-                  id="snippet-tags"
-                  value={editor.tags}
-                  onChange={(event) =>
-                    setEditor((state) => ({ ...state, tags: event.target.value }))
-                  }
-                  placeholder="逗号分隔，例如：客服, 售后"
-                />
-              </div>
             </div>
 
-            <div className="flex flex-col gap-2 flex-1 relative">
-              <div className="absolute inset-0 flex flex-col gap-2 pb-1">
-                <Label htmlFor="snippet-content">内容</Label>
-                <textarea
-                    id="snippet-content"
-                    rows={10}
-                    value={editor.content}
-                    onChange={(event) =>
-                        setEditor((state) => ({ ...state, content: event.target.value }))
-                    }
-                    placeholder="输入要快速复用的完整文字..."
-                    className={cn(
-                        "flex w-full flex-1 rounded-lg border border-input bg-background px-3 py-2 text-sm",
-                        "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    )}
-                />
-              </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
+              <Label htmlFor="snippet-content">内容</Label>
+              <CodeEditor
+                id="snippet-content"
+                value={editor.content}
+                language={editor.language}
+                placeholder="输入要快速复用的完整文字..."
+                onChange={(content) => setEditor((state) => ({ ...state, content }))}
+              />
             </div>
           </div>
-          <DialogFooter>
-            <Button className="h-9" variant="outline" onClick={() => setEditorOpen(false)}>
-              取消
-            </Button>
-            <Button className="h-9" disabled={saving} onClick={() => void saveEditor()}>
-              保存
-            </Button>
+          <DialogFooter className="mx-0 mb-0 flex w-full shrink-0 flex-row items-center gap-3 rounded-none border-t border-border/60 bg-foreground/[0.018] px-6 py-4 sm:space-x-0">
+            <SnippetMoreSettings
+              open={moreSettingsOpen}
+              onOpenChange={setMoreSettingsOpen}
+              groups={groups}
+              groupId={editor.groupId}
+              tags={editor.tags}
+              shortcut={editor.shortcut}
+              onGroupIdChange={(groupId) => setEditor((state) => ({ ...state, groupId }))}
+              onTagsChange={(tags) => setEditor((state) => ({ ...state, tags }))}
+              onShortcutChange={(shortcut) => setEditor((state) => ({ ...state, shortcut }))}
+            />
+            <div className="ml-auto flex items-center gap-2">
+              <Button className="h-9" variant="outline" onClick={() => setEditorOpen(false)}>
+                取消
+              </Button>
+              <Button className="h-9" disabled={saving} onClick={() => void saveEditor()}>
+                保存
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -538,6 +648,7 @@ function SnippetRow({
   snippet,
   actionMenuOpen,
   onActionMenuOpenChange,
+  onOpenDetail,
   onUse,
   onEdit,
   onTogglePinned,
@@ -546,6 +657,7 @@ function SnippetRow({
   snippet: Snippet;
   actionMenuOpen: boolean;
   onActionMenuOpenChange: (open: boolean) => void;
+  onOpenDetail: () => void;
   onUse: () => void;
   onEdit: () => void;
   onTogglePinned: () => void;
@@ -553,10 +665,19 @@ function SnippetRow({
 }) {
   return (
     <TableRow
+      role="button"
+      tabIndex={0}
       className={cn(
-        "h-[58px] border-b border-border/45 text-[12px] transition-colors last:border-b-0 hover:bg-foreground/[0.025]",
+        "h-[58px] cursor-pointer border-b border-border/45 text-[12px] transition-colors last:border-b-0 hover:bg-foreground/[0.025]",
         snippet.pinned && "bg-primary/[0.035]"
       )}
+      onClick={onOpenDetail}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDetail();
+        }
+      }}
     >
       <TableCell className="px-3 py-2 align-middle">
         <div className="flex min-w-0 flex-col gap-1">
@@ -574,9 +695,18 @@ function SnippetRow({
         </div>
       </TableCell>
       <TableCell className="max-w-0 px-3 py-2 align-middle">
-        <pre className="m-0 block max-w-full truncate font-sans text-[12px] leading-[17px] text-foreground/88">
-          {previewLines(snippet.content, 1)}
-        </pre>
+        {snippet.language ? (
+          <CodeHighlight
+            code={snippet.content}
+            language={snippet.language}
+            maxLines={2}
+            className="m-0 max-h-12 overflow-hidden rounded-md p-2 text-[11px] leading-[15px]"
+          />
+        ) : (
+          <div className="m-0 block max-w-full truncate text-[12px] leading-[17px] text-foreground/88">
+            <TextWithLinks text={previewLines(snippet.content, 1)} />
+          </div>
+        )}
       </TableCell>
       <TableCell className="px-3 py-2 align-middle">
         <span className="truncate text-muted-foreground">
@@ -608,9 +738,20 @@ function SnippetRow({
           </span>
         </div>
       </TableCell>
-      <TableCell className="px-2 py-2 align-middle">
+      <TableCell
+        className="px-2 py-2 align-middle"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
         <div className="flex gap-1">
-          <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" title="使用" aria-label="使用短语" onClick={onUse}>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 text-primary"
+            title="使用"
+            aria-label="使用短语"
+            onClick={onUse}
+          >
             <Copy className="h-3.5 w-3.5" />
           </Button>
           <SnippetRowActionMenu
@@ -688,6 +829,121 @@ function SnippetRowActionMenu({
         </button>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function SnippetMoreSettings({
+  open,
+  onOpenChange,
+  groups,
+  groupId,
+  tags,
+  shortcut,
+  onGroupIdChange,
+  onTagsChange,
+  onShortcutChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  groups: SnippetGroup[];
+  groupId: string;
+  tags: string;
+  shortcut: string;
+  onGroupIdChange: (value: string) => void;
+  onTagsChange: (value: string) => void;
+  onShortcutChange: (value: string) => void;
+}) {
+  const hasActive =
+    groupId !== "none" || Boolean(tags.trim()) || Boolean(shortcut.trim());
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={cn(
+          "relative h-9 gap-1.5 px-3 text-muted-foreground hover:text-foreground",
+          hasActive && "text-foreground"
+        )}
+        onClick={() => onOpenChange(true)}
+      >
+        <SlidersHorizontal className="h-4 w-4 shrink-0" />
+        <span>更多配置</span>
+        {hasActive && (
+          <span
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary"
+            aria-hidden
+          />
+        )}
+      </Button>
+
+      <Dialog open={open} onOpenChange={onOpenChange} modal="trap-focus">
+        <DialogContent
+          showOverlay={false}
+          className="todo-create-dialog max-h-[min(520px,85vh)] max-w-[440px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
+            <DialogTitle className="text-[18px] font-bold">更多配置</DialogTitle>
+          </DialogHeader>
+
+          <div className="no-scrollbar max-h-[min(380px,60vh)] space-y-5 overflow-y-auto px-5 py-5">
+            <div className="space-y-2">
+              <Label>分组</Label>
+              <Select
+                items={[
+                  { value: "none", label: "未分组" },
+                  ...groups.map((group) => ({ value: String(group.id), label: group.name })),
+                ]}
+                value={groupId}
+                onValueChange={(value) => value && onGroupIdChange(value)}
+              >
+                <SelectTrigger className="h-9 w-full bg-transparent shadow-none">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent overlayLayer>
+                  <SelectGroup>
+                    <SelectItem value="none">未分组</SelectItem>
+                    {groups.map((group) => (
+                      <SelectItem key={group.id} value={String(group.id)}>
+                        {group.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="snippet-more-shortcut">快捷词</Label>
+              <Input
+                id="snippet-more-shortcut"
+                value={shortcut}
+                onChange={(event) => onShortcutChange(event.target.value)}
+                placeholder="/hello"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="snippet-more-tags">标签</Label>
+              <Input
+                id="snippet-more-tags"
+                value={tags}
+                onChange={(event) => onTagsChange(event.target.value)}
+                placeholder="逗号分隔，例如：客服, 售后"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mx-0 mb-0 rounded-none border-t border-border/60 bg-foreground/[0.018] px-5 py-3 sm:justify-end">
+            <Button type="button" className="h-9 min-w-20" onClick={() => onOpenChange(false)}>
+              完成
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

@@ -154,6 +154,52 @@ pub fn update_settings(
         })
         .unwrap_or(false);
 
+    let mut shortcuts_changed = false;
+    if let Some(v) = settings
+        .get("shortcut_quick_todo")
+        .and_then(|v| v.as_str())
+    {
+        if current.shortcut_quick_todo != v {
+            current.shortcut_quick_todo = v.into();
+            shortcuts_changed = true;
+        }
+    }
+    if let Some(v) = settings
+        .get("shortcut_clipboard_picker")
+        .and_then(|v| v.as_str())
+    {
+        if current.shortcut_clipboard_picker != v {
+            current.shortcut_clipboard_picker = v.into();
+            shortcuts_changed = true;
+        }
+    }
+    if let Some(v) = settings
+        .get("shortcut_snippet_picker")
+        .and_then(|v| v.as_str())
+    {
+        if current.shortcut_snippet_picker != v {
+            current.shortcut_snippet_picker = v.into();
+            shortcuts_changed = true;
+        }
+    }
+
+    if shortcuts_changed {
+        let (quick, clipboard, snippet) = crate::validate_shortcut_bindings(
+            &current.shortcut_quick_todo,
+            &current.shortcut_clipboard_picker,
+            &current.shortcut_snippet_picker,
+        )?;
+        current.shortcut_quick_todo = quick;
+        current.shortcut_clipboard_picker = clipboard;
+        current.shortcut_snippet_picker = snippet;
+        crate::apply_global_shortcuts(
+            &app,
+            &current.shortcut_quick_todo,
+            &current.shortcut_clipboard_picker,
+            &current.shortcut_snippet_picker,
+        )?;
+    }
+
     let conn = state.db.lock();
     crate::db::save_settings(&conn, &current);
     if retention_changed {

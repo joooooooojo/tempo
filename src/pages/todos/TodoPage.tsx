@@ -5,8 +5,10 @@ import { toast } from "sonner";
 import {
   CheckCircle2,
   Circle,
+  CalendarDays,
   Download,
   ImagePlus,
+  List,
   Pin,
   Search,
   Timer,
@@ -16,6 +18,7 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImagePreviewDialog, type ImagePreviewSource } from "@/components/ImagePreviewDialog";
 import { MarkdownPreview } from "@/components/todos/MarkdownPreview";
 import { TodoCreateDialog } from "@/components/todos/TodoCreateDialog";
@@ -33,6 +36,7 @@ import { recurrenceLabel, subtaskProgress, todoReminderLabel } from "@/lib/todoM
 import { cn, formatDurationShort } from "@/lib/utils";
 import type { TodoImage, TodoItem, TodoNote, TodoRecurrence, TodoSubtask, TodoFocusSummary } from "@/types";
 import { TodoPagination } from "./TodoPagination";
+import { TodoCalendarView } from "./TodoCalendarView";
 import {
   HighlightText,
   NoteComposer,
@@ -104,6 +108,7 @@ export function TodoPage() {
   const shouldKeepUnderlyingDialog = () =>
     Boolean(previewImage) || closingPreviewRef.current;
   const [filter, setFilter] = useState<TodoFilter>("active");
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
   const [actionMenuId, setActionMenuId] = useState<number | null>(null);
@@ -171,7 +176,7 @@ export function TodoPage() {
   }, [filter, searchQuery, todos]);
 
   const totalPages = Math.max(1, Math.ceil(visibleTodos.length / TODO_PAGE_SIZE));
-  const showPagination = visibleTodos.length > TODO_PAGE_SIZE;
+  const showPagination = viewMode === "list" && visibleTodos.length > TODO_PAGE_SIZE;
   const paginatedTodos = useMemo(() => {
     const start = (page - 1) * TODO_PAGE_SIZE;
     return visibleTodos.slice(start, start + TODO_PAGE_SIZE);
@@ -701,29 +706,10 @@ export function TodoPage() {
   };
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col gap-5">
-      <div className="todo-stats-row grid shrink-0 grid-cols-4 gap-3">
-        <TodoStat label="未完成" value={activeCount} />
-        <TodoStat label="即将截止" value={dueSoonCount} tone={dueSoonCount > 0 ? "warning" : "default"} />
-        <TodoStat label="已完成" value={completedCount} />
-        <Card>
-          <CardContent className="p-3.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              完成率
-            </p>
-            <div className="mt-2 flex items-center gap-3">
-              <p className="stat-value w-12 text-xl font-bold text-primary">{completionRate}%</p>
-              <div className="progress-track h-1.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-foreground/8">
-                <div
-                  className="progress-fill h-full rounded-sm bg-gradient-to-r from-emerald-300 to-teal-400 transition-all duration-500"
-                  style={{ width: `${completionRate}%` }}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
+    <div className={cn(
+      "relative mx-auto flex h-full min-h-0 w-full flex-col",
+      viewMode === "calendar" ? "max-w-none gap-0" : "max-w-3xl gap-5"
+    )}>
       <TodoCreateDialog
         open={createOpen}
         todoTitle={title}
@@ -911,10 +897,46 @@ export function TodoPage() {
 
       <ImagePreviewDialog
         image={previewImage}
+        nested={Boolean(detailTodo)}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) closePreviewImage();
         }}
       />
+
+      {viewMode === "calendar" ? (
+        <div className="min-h-0 flex-1 overflow-hidden pb-14">
+          {loading ? (
+            <TodoEmptyState text="加载中..." />
+          ) : (
+            <TodoCalendarView
+              todos={visibleTodos}
+              onOpenDetail={(todo) => openDetail(todo.id)}
+            />
+          )}
+        </div>
+      ) : (
+        <>
+      <div className="todo-stats-row grid shrink-0 grid-cols-4 gap-3">
+        <TodoStat label="未完成" value={activeCount} />
+        <TodoStat label="即将截止" value={dueSoonCount} tone={dueSoonCount > 0 ? "warning" : "default"} />
+        <TodoStat label="已完成" value={completedCount} />
+        <Card>
+          <CardContent className="p-3.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              完成率
+            </p>
+            <div className="mt-2 flex items-center gap-3">
+              <p className="stat-value w-12 text-xl font-bold text-primary">{completionRate}%</p>
+              <div className="progress-track h-1.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-foreground/8">
+                <div
+                  className="progress-fill h-full rounded-sm bg-gradient-to-r from-emerald-300 to-teal-400 transition-all duration-500"
+                  style={{ width: `${completionRate}%` }}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -990,7 +1012,7 @@ export function TodoPage() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 pb-14">
         <Card className="flex h-fit max-h-full w-full flex-col overflow-hidden">
           <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto p-0">
           {loading ? (
@@ -1225,6 +1247,29 @@ export function TodoPage() {
           />
         )}
         </Card>
+      </div>
+        </>
+      )}
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
+        <Tabs
+          value={viewMode}
+          onValueChange={(value) => {
+            if (value === "list" || value === "calendar") setViewMode(value);
+          }}
+          className="pointer-events-auto"
+        >
+          <TabsList className="h-8 border border-border/60 bg-background/90 shadow-md shadow-emerald-950/8 backdrop-blur-md dark:bg-background/85">
+            <TabsTrigger value="list" className="gap-1 px-2.5 text-[12px]">
+              <List className="size-3.5" />
+              列表
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="gap-1 px-2.5 text-[12px]">
+              <CalendarDays className="size-3.5" />
+              日历
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
     </div>
   );

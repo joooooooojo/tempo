@@ -27,15 +27,29 @@ extern crate objc;
 
 use db::{db_path, init_db, AppState, PomodoroRuntime, TrackerState};
 use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-const QUICK_TODO_SHORTCUT: &str = "F2";
-const CLIPBOARD_PICKER_SHORTCUT: &str = "F4";
-const SNIPPET_PICKER_SHORTCUT: &str = "F5";
+const ACTION_QUICK_TODO: &str = "quick_todo";
+const ACTION_CLIPBOARD_PICKER: &str = "clipboard_picker";
+const ACTION_SNIPPET_PICKER: &str = "snippet_picker";
+const ACTION_SHELF_ESCAPE: &str = "shelf_escape";
+const DEFAULT_QUICK_TODO_SHORTCUT: &str = "F2";
+const DEFAULT_CLIPBOARD_PICKER_SHORTCUT: &str = "F4";
+const DEFAULT_SNIPPET_PICKER_SHORTCUT: &str = "F5";
 const SHELF_ESCAPE_SHORTCUT: &str = "Escape";
+
+#[derive(Default)]
+struct ShortcutActionMap {
+    /// Normalized shortcut string -> action id
+    by_shortcut: HashMap<String, &'static str>,
+    /// Currently registered raw shortcut strings (for unregister)
+    registered: Vec<String>,
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -79,17 +93,25 @@ pub fn run() {
                     let app = app.clone();
                     let app_for_main = app.clone();
                     if let Err(error) = app.run_on_main_thread(move || {
-                        let result = match dispatch_id.as_str() {
-                            QUICK_TODO_SHORTCUT => {
+                        let action = app_for_main
+                            .try_state::<Mutex<ShortcutActionMap>>()
+                            .and_then(|map| {
+                                map.lock()
+                                    .by_shortcut
+                                    .get(&normalize_shortcut_key(&dispatch_id))
+                                    .copied()
+                            });
+                        let result = match action {
+                            Some(ACTION_QUICK_TODO) => {
                                 auxiliary_windows::show_quick_todo(&app_for_main)
                             }
-                            CLIPBOARD_PICKER_SHORTCUT => {
+                            Some(ACTION_CLIPBOARD_PICKER) => {
                                 auxiliary_windows::show_clipboard_picker_window(&app_for_main)
                             }
-                            SNIPPET_PICKER_SHORTCUT => {
+                            Some(ACTION_SNIPPET_PICKER) => {
                                 auxiliary_windows::show_snippet_picker_window(&app_for_main)
                             }
-                            SHELF_ESCAPE_SHORTCUT => {
+                            Some(ACTION_SHELF_ESCAPE) => {
                                 if auxiliary_windows::is_shelf_picker_visible(&app_for_main) {
                                     auxiliary_windows::hide_shelf_picker_window(&app_for_main)
                                 } else {
@@ -170,10 +192,47 @@ pub fn run() {
             commands::start_tracker(app.handle().clone(), state.clone());
             clipboard_watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
             app.manage(state.clone());
+            app.manage(Mutex::new(ShortcutActionMap::default()));
             commands::check_pending_recurrences(app.handle(), &state);
 
             tray_menu::setup_tray(app)?;
-            register_global_shortcuts(app.handle());
+            {
+                let settings = {
+                    let conn = state.db.lock();
+                    db::load_settings(&conn)
+                };
+                if let Err(error) = apply_global_shortcuts(
+                    app.handle(),
+                    &settings.shortcut_quick_todo,
+                    &settings.shortcut_clipboard_picker,
+                    &settings.shortcut_snippet_picker,
+                ) {
+                    tracing::warn!(
+                        error = %error,
+                        "failed to register saved shortcuts; falling back to defaults"
+                    );
+                    if let Err(fallback_error) = apply_global_shortcuts(
+                        app.handle(),
+                        DEFAULT_QUICK_TODO_SHORTCUT,
+                        DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
+                        DEFAULT_SNIPPET_PICKER_SHORTCUT,
+                    ) {
+                        tracing::warn!(
+                            error = %fallback_error,
+                            "failed to register default global shortcuts"
+                        );
+                        logging::debug_if_err(
+                            app.emit(
+                                "toast",
+                                serde_json::json!({
+                                    "message": format!("快捷键注册失败: {fallback_error}")
+                                }),
+                            ),
+                            "emit shortcut registration failure toast",
+                        );
+                    }
+                }
+            }
             auxiliary_windows::precache_auxiliary_windows(app.handle())?;
 
             if let Some(state) = app.try_state::<AppState>() {
@@ -325,28 +384,112 @@ pub fn run() {
     }
 }
 
-fn register_global_shortcuts(app: &tauri::AppHandle) {
-    for shortcut in [
-        QUICK_TODO_SHORTCUT,
-        CLIPBOARD_PICKER_SHORTCUT,
-        SNIPPET_PICKER_SHORTCUT,
-        SHELF_ESCAPE_SHORTCUT,
-    ] {
-        if let Err(error) = app.global_shortcut().register(shortcut) {
-            tracing::warn!(
-                shortcut = %shortcut,
-                error = %error,
-                "failed to register global shortcut"
-            );
-            logging::debug_if_err(
-                app.emit(
-                    "toast",
-                    serde_json::json!({
-                        "message": format!("{shortcut} shortcut unavailable: {error}")
-                    }),
-                ),
-                "emit shortcut registration failure toast",
-            );
-        }
+fn normalize_shortcut_key(value: &str) -> String {
+    match Shortcut::from_str(value.trim()) {
+        Ok(shortcut) => shortcut.to_string(),
+        Err(_) => value.trim().to_string(),
     }
+}
+
+fn validate_shortcut_binding(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("快捷键不能为空".into());
+    }
+    if trimmed.eq_ignore_ascii_case(SHELF_ESCAPE_SHORTCUT) {
+        return Err("Esc 已用于关闭货架，请选择其他快捷键".into());
+    }
+    let shortcut = Shortcut::from_str(trimmed).map_err(|error| format!("无效快捷键: {error}"))?;
+    Ok(shortcut.to_string())
+}
+
+/// Apply and register the three configurable shortcuts (+ fixed Esc).
+pub fn apply_global_shortcuts(
+    app: &tauri::AppHandle,
+    quick_todo: &str,
+    clipboard_picker: &str,
+    snippet_picker: &str,
+) -> Result<(), String> {
+    let quick_raw = quick_todo.trim();
+    let clipboard_raw = clipboard_picker.trim();
+    let snippet_raw = snippet_picker.trim();
+
+    let quick_norm = validate_shortcut_binding(quick_raw)?;
+    let clipboard_norm = validate_shortcut_binding(clipboard_raw)?;
+    let snippet_norm = validate_shortcut_binding(snippet_raw)?;
+
+    if quick_norm == clipboard_norm || quick_norm == snippet_norm || clipboard_norm == snippet_norm {
+        return Err("快捷键不能重复".into());
+    }
+
+    let map_state = app
+        .try_state::<Mutex<ShortcutActionMap>>()
+        .ok_or_else(|| "快捷键状态未初始化".to_string())?;
+
+    let (previous_registered, previous_map) = {
+        let map = map_state.lock();
+        (map.registered.clone(), map.by_shortcut.clone())
+    };
+
+    {
+        let mut map = map_state.lock();
+        for old in map.registered.drain(..) {
+            if let Err(error) = app.global_shortcut().unregister(old.as_str()) {
+                tracing::debug!(shortcut = %old, error = %error, "failed to unregister shortcut");
+            }
+        }
+        map.by_shortcut.clear();
+    }
+
+    let escape_norm = normalize_shortcut_key(SHELF_ESCAPE_SHORTCUT);
+    let bindings: Vec<(&str, String, &'static str)> = vec![
+        (quick_raw, quick_norm, ACTION_QUICK_TODO),
+        (clipboard_raw, clipboard_norm, ACTION_CLIPBOARD_PICKER),
+        (snippet_raw, snippet_norm, ACTION_SNIPPET_PICKER),
+        (SHELF_ESCAPE_SHORTCUT, escape_norm, ACTION_SHELF_ESCAPE),
+    ];
+
+    let mut registered: Vec<String> = Vec::new();
+    let mut by_shortcut: HashMap<String, &'static str> = HashMap::new();
+
+    for (raw, normalized, action) in &bindings {
+        if let Err(error) = app.global_shortcut().register(*raw) {
+            for done in &registered {
+                let _ = app.global_shortcut().unregister(done.as_str());
+            }
+            for old in &previous_registered {
+                let _ = app.global_shortcut().register(old.as_str());
+            }
+            let mut map = map_state.lock();
+            map.registered = previous_registered;
+            map.by_shortcut = previous_map;
+            return Err(format!("注册快捷键 {raw} 失败: {error}"));
+        }
+        registered.push((*raw).to_string());
+        by_shortcut.insert(normalized.clone(), *action);
+    }
+
+    let mut map = map_state.lock();
+    map.registered = registered;
+    map.by_shortcut = by_shortcut;
+    Ok(())
+}
+
+/// Validate bindings before saving settings. Returns trimmed raw strings to persist.
+pub fn validate_shortcut_bindings(
+    quick_todo: &str,
+    clipboard_picker: &str,
+    snippet_picker: &str,
+) -> Result<(String, String, String), String> {
+    let quick = validate_shortcut_binding(quick_todo)?;
+    let clipboard = validate_shortcut_binding(clipboard_picker)?;
+    let snippet = validate_shortcut_binding(snippet_picker)?;
+    if quick == clipboard || quick == snippet || clipboard == snippet {
+        return Err("快捷键不能重复".into());
+    }
+    Ok((
+        quick_todo.trim().to_string(),
+        clipboard_picker.trim().to_string(),
+        snippet_picker.trim().to_string(),
+    ))
 }

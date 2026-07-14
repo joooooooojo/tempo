@@ -51,7 +51,7 @@ fn deleting_snippet_group_unassigns_snippets() {
         let conn = init_db(&path).expect("init db");
         let group = add_snippet_group(&conn, "Work", None).expect("create group");
         let snippet =
-            add_snippet(&conn, "Title", "Body", &[], Some(group.id), None).expect("create snippet");
+            add_snippet(&conn, "Title", "Body", &[], Some(group.id), None, None).expect("create snippet");
 
         assert!(delete_snippet_group(&conn, group.id));
 

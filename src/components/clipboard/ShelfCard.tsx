@@ -1,5 +1,6 @@
 import type { MouseEvent } from "react";
 import { AppIcon } from "@/components/AppIcon";
+import { CodeHighlight } from "@/components/CodeHighlight";
 import { cn, formatRelativeTime, isWindowsTarget, previewLines } from "@/lib/utils";
 
 type ShelfCardProps = {
@@ -10,6 +11,7 @@ type ShelfCardProps = {
   sourceApp?: string | null;
   sourceAppIcon?: string | null;
   content: string;
+  language?: string | null;
   imageSrc?: string | null;
   footer: string;
   title?: string;
@@ -31,6 +33,7 @@ export function ShelfCard({
   sourceApp,
   sourceAppIcon,
   content,
+  language,
   imageSrc,
   footer,
   title,
@@ -89,6 +92,13 @@ export function ShelfCard({
               style={isWindowsTarget ? { pointerEvents: "none", userSelect: "none" } : undefined}
               className="shelf-card__image"
               onDragStart={isWindowsTarget ? (event) => event.preventDefault() : undefined}
+            />
+          ) : language ? (
+            <CodeHighlight
+              code={content}
+              language={language}
+              maxLines={4}
+              className="shelf-card__preview m-0 max-h-full overflow-hidden rounded-none bg-transparent p-0 text-[11px]"
             />
           ) : (
             <p className="shelf-card__preview">{previewLines(content)}</p>

@@ -30,6 +30,7 @@ pub struct Snippet {
     pub group_id: Option<i64>,
     pub group_name: Option<String>,
     pub shortcut: Option<String>,
+    pub language: Option<String>,
     pub pinned: bool,
     pub use_count: i64,
     pub last_used_at: Option<String>,
@@ -418,6 +419,7 @@ const SNIPPET_SELECT: &str = "
         s.group_id,
         g.name,
         s.shortcut,
+        s.language,
         s.pinned,
         s.use_count,
         s.last_used_at,
@@ -605,6 +607,7 @@ pub fn add_snippet(
     tags: &[String],
     group_id: Option<i64>,
     shortcut: Option<&str>,
+    language: Option<&str>,
 ) -> Result<Snippet, String> {
     let title = title.trim();
     let content = content.trim();
@@ -614,14 +617,24 @@ pub fn add_snippet(
     let now = now_iso();
     let tags_json = serde_json::to_string(&normalize_tags(tags)).unwrap_or_else(|_| "[]".into());
     let shortcut = normalize_shortcut(shortcut);
+    let language = normalize_language(language);
     let sort_order = next_snippet_sort_order(conn);
     conn.execute(
         "INSERT INTO snippets (
-            title, content, tags, group_id, shortcut, pinned,
+            title, content, tags, group_id, shortcut, language, pinned,
             use_count, sort_order, created_at, updated_at
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, ?7, ?7)",
-        params![title, content, tags_json, group_id, shortcut, sort_order, now],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, ?7, ?8, ?8)",
+        params![
+            title,
+            content,
+            tags_json,
+            group_id,
+            shortcut,
+            language,
+            sort_order,
+            now
+        ],
     )
     .map_err(map_snippet_db_error)?;
     get_snippet(conn, conn.last_insert_rowid()).ok_or_else(|| "短语保存失败".to_string())
@@ -635,6 +648,7 @@ pub fn update_snippet(
     tags: &[String],
     group_id: Option<i64>,
     shortcut: Option<&str>,
+    language: Option<&str>,
 ) -> Result<Snippet, String> {
     let title = title.trim();
     let content = content.trim();
@@ -643,6 +657,7 @@ pub fn update_snippet(
     }
     let tags_json = serde_json::to_string(&normalize_tags(tags)).unwrap_or_else(|_| "[]".into());
     let shortcut = normalize_shortcut(shortcut);
+    let language = normalize_language(language);
     let updated_at = now_iso();
     let changed = conn
         .execute(
@@ -652,9 +667,19 @@ pub fn update_snippet(
                  tags = ?3,
                  group_id = ?4,
                  shortcut = ?5,
-                 updated_at = ?6
-             WHERE id = ?7 AND archived_at IS NULL",
-            params![title, content, tags_json, group_id, shortcut, updated_at, id],
+                 language = ?6,
+                 updated_at = ?7
+             WHERE id = ?8 AND archived_at IS NULL",
+            params![
+                title,
+                content,
+                tags_json,
+                group_id,
+                shortcut,
+                language,
+                updated_at,
+                id
+            ],
         )
         .map_err(map_snippet_db_error)?;
     if changed == 0 {
@@ -672,6 +697,7 @@ pub fn duplicate_snippet(conn: &Connection, id: i64) -> Result<Snippet, String> 
         &snippet.tags,
         snippet.group_id,
         None,
+        snippet.language.as_deref(),
     )
 }
 
@@ -759,13 +785,14 @@ fn map_snippet_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snippet> {
         group_id: row.get(4)?,
         group_name: row.get(5)?,
         shortcut: row.get(6)?,
-        pinned: row.get::<_, i32>(7)? != 0,
-        use_count: row.get(8)?,
-        last_used_at: row.get(9)?,
-        archived_at: row.get(10)?,
-        sort_order: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        language: row.get(7)?,
+        pinned: row.get::<_, i32>(8)? != 0,
+        use_count: row.get(9)?,
+        last_used_at: row.get(10)?,
+        archived_at: row.get(11)?,
+        sort_order: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 
@@ -837,6 +864,13 @@ fn normalize_shortcut(shortcut: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn normalize_language(language: Option<&str>) -> Option<String> {
+    language
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("plain"))
+        .map(|value| value.to_ascii_lowercase())
 }
 
 fn map_snippet_db_error(error: rusqlite::Error) -> String {

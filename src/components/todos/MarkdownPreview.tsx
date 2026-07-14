@@ -1,4 +1,6 @@
 import { Fragment, type ReactNode } from "react";
+import { LinkActionPopover, isSafeLinkHref } from "@/components/LinkActionPopover";
+import { CodeHighlight } from "@/components/CodeHighlight";
 import { cn } from "@/lib/utils";
 
 type MarkdownBlock =
@@ -223,10 +225,12 @@ function renderBlock(block: MarkdownBlock, index: number, onImagePreview?: (src:
 
   if (block.type === "code") {
     return (
-      <pre key={index}>
-        {block.language && <div className="github-markdown-code-lang">{block.language}</div>}
-        <code>{block.code}</code>
-      </pre>
+      <div key={index} className="my-2">
+        {block.language && (
+          <div className="github-markdown-code-lang mb-1">{block.language}</div>
+        )}
+        <CodeHighlight code={block.code} language={block.language} className="my-0" />
+      </div>
     );
   }
 
@@ -351,9 +355,50 @@ function renderTextWithBreaks(text: string, keyPrefix: number) {
   return parts.map((part, index) => (
     <Fragment key={`${keyPrefix}-${index}`}>
       {index > 0 && <br />}
-      {part}
+      {renderBareUrls(part, `${keyPrefix}-${index}`)}
     </Fragment>
   ));
+}
+
+const bareUrlPattern = /https?:\/\/[^\s<>"'`]+|mailto:[^\s<>"'`]+/gi;
+
+function trimUrlPunctuation(url: string) {
+  return url.replace(/[),.;:!?，。；！？】）》」』]+$/g, "");
+}
+
+function renderBareUrls(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  const pattern = new RegExp(bareUrlPattern.source, bareUrlPattern.flags);
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    const raw = match[0];
+    const href = trimUrlPunctuation(raw);
+    const start = match.index;
+    if (start > lastIndex) {
+      nodes.push(text.slice(lastIndex, start));
+    }
+    if (isSafeLinkHref(href)) {
+      nodes.push(
+        <LinkActionPopover key={`${keyPrefix}-url-${start}`} href={href}>
+          {href}
+        </LinkActionPopover>
+      );
+      if (href.length < raw.length) {
+        nodes.push(raw.slice(href.length));
+      }
+    } else {
+      nodes.push(raw);
+    }
+    lastIndex = start + raw.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [text];
 }
 
 function renderImage(src: string, alt: string, key: number, onImagePreview?: (src: string, alt: string) => void) {
@@ -392,9 +437,9 @@ function renderLink(href: string, label: string, key: number) {
   if (!isSafeLinkHref(href)) return <span key={key}>{label}</span>;
 
   return (
-    <a key={key} href={href} target="_blank" rel="noreferrer">
+    <LinkActionPopover key={key} href={href}>
       {label}
-    </a>
+    </LinkActionPopover>
   );
 }
 
@@ -403,11 +448,6 @@ function isSafeImageSrc(src: string) {
   if (src.startsWith("blob:")) return true;
   if (isTauriAssetUrl(src)) return true;
   return isHttpUrl(src);
-}
-
-function isSafeLinkHref(href: string) {
-  if (/^mailto:/i.test(href)) return true;
-  return isHttpUrl(href);
 }
 
 function isHttpUrl(value: string) {

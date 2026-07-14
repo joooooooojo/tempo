@@ -21,6 +21,11 @@ import {
   type PreparedUpdate,
   type UpdateProgress,
 } from "@/lib/update";
+import {
+  DEFAULT_SHORTCUTS,
+  formatShortcutLabel,
+  shortcutFromKeyboardEvent,
+} from "@/lib/shortcut";
 import type { Settings } from "@/types";
 
 const CLIPBOARD_RETENTION_OPTIONS = [
@@ -101,12 +106,19 @@ export function SettingsPage() {
 
   const update = async (patch: Partial<Settings>) => {
     if (!settings) return;
+    const previous = settings;
     setSettings({ ...settings, ...patch });
-    await api.updateSettings(patch);
-    if (patch.theme !== undefined) {
-      await emitThemeChange(patch.theme);
+    try {
+      await api.updateSettings(patch);
+      if (patch.theme !== undefined) {
+        await emitThemeChange(patch.theme);
+      }
+      toast.success("已保存");
+    } catch (error) {
+      setSettings(previous);
+      toast.error(error instanceof Error ? error.message : String(error));
+      throw error;
     }
-    toast.success("已保存");
   };
 
   const changeStorageDir = async () => {
@@ -246,6 +258,54 @@ export function SettingsPage() {
               {migratingStorage ? "迁移中" : "更换"}
             </Button>
           </CardContent>
+        </Card>
+      </Section>
+
+      <Section title="快捷键">
+        <Card>
+          <ShortcutRow
+            label="快速添加待办"
+            desc="全局唤起快速待办输入"
+            value={settings.shortcut_quick_todo}
+            otherValues={[settings.shortcut_clipboard_picker, settings.shortcut_snippet_picker]}
+            onChange={(value) => update({ shortcut_quick_todo: value })}
+            onReset={() => update({ shortcut_quick_todo: DEFAULT_SHORTCUTS.shortcut_quick_todo })}
+          />
+          <ShortcutRow
+            label="剪贴板货架"
+            desc="全局打开剪贴板历史"
+            value={settings.shortcut_clipboard_picker}
+            otherValues={[settings.shortcut_quick_todo, settings.shortcut_snippet_picker]}
+            onChange={(value) => update({ shortcut_clipboard_picker: value })}
+            onReset={() =>
+              update({ shortcut_clipboard_picker: DEFAULT_SHORTCUTS.shortcut_clipboard_picker })
+            }
+          />
+          <ShortcutRow
+            label="快捷短语货架"
+            desc="全局打开快捷短语"
+            value={settings.shortcut_snippet_picker}
+            otherValues={[settings.shortcut_quick_todo, settings.shortcut_clipboard_picker]}
+            onChange={(value) => update({ shortcut_snippet_picker: value })}
+            onReset={() =>
+              update({ shortcut_snippet_picker: DEFAULT_SHORTCUTS.shortcut_snippet_picker })
+            }
+          />
+          <div className="border-t border-border/50 px-4 py-3">
+            <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                    void update({
+                      shortcut_quick_todo: DEFAULT_SHORTCUTS.shortcut_quick_todo,
+                      shortcut_clipboard_picker: DEFAULT_SHORTCUTS.shortcut_clipboard_picker,
+                      shortcut_snippet_picker: DEFAULT_SHORTCUTS.shortcut_snippet_picker,
+                    })
+                }
+            >
+              恢复默认
+            </Button>
+          </div>
         </Card>
       </Section>
 
@@ -447,6 +507,77 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
         {desc && <p className="text-[11px] text-muted-foreground">{desc}</p>}
       </div>
       {children}
+    </div>
+  );
+}
+
+function ShortcutRow({
+  label,
+  desc,
+  value,
+  otherValues,
+  onChange,
+  onReset,
+}: {
+  label: string;
+  desc?: string;
+  value: string;
+  otherValues: string[];
+  onChange: (value: string) => Promise<void>;
+  onReset: () => Promise<void>;
+}) {
+  const [recording, setRecording] = useState(false);
+
+  useEffect(() => {
+    if (!recording) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setRecording(false);
+        return;
+      }
+
+      const next = shortcutFromKeyboardEvent(event);
+      if (!next) return;
+
+      const normalized = next.toLowerCase();
+      if (otherValues.some((item) => item.trim().toLowerCase() === normalized)) {
+        toast.error("与其他快捷键冲突");
+        setRecording(false);
+        return;
+      }
+
+      setRecording(false);
+      void onChange(next).catch(() => undefined);
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [recording, otherValues, onChange]);
+
+  return (
+    <div className="list-row">
+      <div>
+        <p className="text-[14px] font-medium">{label}</p>
+        {desc && <p className="text-[11px] text-muted-foreground">{desc}</p>}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant={recording ? "default" : "outline"}
+          size="sm"
+          className="min-w-28 font-mono text-[12px]"
+          onClick={() => setRecording((prev) => !prev)}
+        >
+          {recording ? "按下快捷键…" : formatShortcutLabel(value)}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => void onReset()}>
+          默认
+        </Button>
+      </div>
     </div>
   );
 }

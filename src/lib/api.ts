@@ -157,16 +157,27 @@ export const api = {
     content: string,
     tags: string[] = [],
     groupId?: number | null,
-    shortcut?: string | null
-  ) => invoke<Snippet>("create_snippet", { title, content, tags, groupId, shortcut }),
+    shortcut?: string | null,
+    language?: string | null
+  ) => invoke<Snippet>("create_snippet", { title, content, tags, groupId, shortcut, language }),
   updateSnippet: (
     id: number,
     title: string,
     content: string,
     tags: string[] = [],
     groupId?: number | null,
-    shortcut?: string | null
-  ) => invoke<Snippet>("update_snippet_command", { id, title, content, tags, groupId, shortcut }),
+    shortcut?: string | null,
+    language?: string | null
+  ) =>
+    invoke<Snippet>("update_snippet_command", {
+      id,
+      title,
+      content,
+      tags,
+      groupId,
+      shortcut,
+      language,
+    }),
   duplicateSnippet: (id: number) => invoke<Snippet>("duplicate_snippet_command", { id }),
   pinSnippet: (id: number, pinned: boolean) =>
     invoke<Snippet>("pin_snippet_command", { id, pinned }),

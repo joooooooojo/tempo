@@ -75,6 +75,7 @@ pub fn create_snippet(
     tags: Vec<String>,
     group_id: Option<i64>,
     shortcut: Option<String>,
+    language: Option<String>,
 ) -> Result<Snippet, String> {
     let conn = state.db.lock();
     let snippet = add_snippet(
@@ -84,6 +85,7 @@ pub fn create_snippet(
         &tags,
         normalize_group_id(group_id),
         shortcut.as_deref(),
+        language.as_deref(),
     )?;
     emit_snippets_update(&app);
     Ok(snippet)
@@ -99,6 +101,7 @@ pub fn update_snippet_command(
     tags: Vec<String>,
     group_id: Option<i64>,
     shortcut: Option<String>,
+    language: Option<String>,
 ) -> Result<Snippet, String> {
     let conn = state.db.lock();
     let snippet = update_snippet(
@@ -109,6 +112,7 @@ pub fn update_snippet_command(
         &tags,
         normalize_group_id(group_id),
         shortcut.as_deref(),
+        language.as_deref(),
     )?;
     emit_snippets_update(&app);
     Ok(snippet)

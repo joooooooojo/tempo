@@ -362,19 +362,21 @@ function FloatingInput({
   onChange: ChangeEventHandler<HTMLInputElement>;
 }) {
   const [focused, setFocused] = useState(false);
-  const [autofillBlocked, setAutofillBlocked] = useState(true);
+  // autoFocus fields must start editable — toggling readOnly on first key breaks IME.
+  const [autofillBlocked, setAutofillBlocked] = useState(!autoFocus);
   const inputRef = useRef<HTMLInputElement>(null);
   const floated = focused || value.length > 0;
 
   const releaseAutofillBlock = () => {
-    if (!autofillBlocked) return;
-    setAutofillBlocked(false);
+    setAutofillBlocked((blocked) => (blocked ? false : blocked));
   };
 
   useEffect(() => {
-    if (value) return;
+    // Only re-arm the autofill shield when the field is empty AND blurred.
+    // Re-applying readOnly while focused breaks IME on the first keystroke.
+    if (value || focused || autoFocus) return;
     setAutofillBlocked(true);
-  }, [value]);
+  }, [value, focused, autoFocus]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -383,6 +385,7 @@ function FloatingInput({
       const input = inputRef.current;
       if (!input) return;
 
+      setAutofillBlocked(false);
       const end = input.value.length;
       input.focus();
       input.setSelectionRange(end, end);
@@ -411,7 +414,6 @@ function FloatingInput({
         )}
         onChange={onChange}
         onMouseDown={releaseAutofillBlock}
-        onKeyDown={releaseAutofillBlock}
         onFocus={() => {
           releaseAutofillBlock();
           setFocused(true);
@@ -448,14 +450,18 @@ function FloatingTextarea({
   onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
 }) {
   const [focused, setFocused] = useState(false);
-  const [autofillBlocked, setAutofillBlocked] = useState(true);
+  const [autofillBlocked, setAutofillBlocked] = useState(!autoFocus);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const floated = focused || value.length > 0;
 
   const releaseAutofillBlock = () => {
-    if (!autofillBlocked) return;
-    setAutofillBlocked(false);
+    setAutofillBlocked((blocked) => (blocked ? false : blocked));
   };
+
+  useEffect(() => {
+    if (value || focused || autoFocus) return;
+    setAutofillBlocked(true);
+  }, [value, focused, autoFocus]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -464,6 +470,7 @@ function FloatingTextarea({
       const textarea = textareaRef.current;
       if (!textarea) return;
 
+      setAutofillBlocked(false);
       const end = textarea.value.length;
       textarea.focus();
       textarea.setSelectionRange(end, end);
@@ -492,7 +499,6 @@ function FloatingTextarea({
         onChange={onChange}
         onPaste={onPaste}
         onMouseDown={releaseAutofillBlock}
-        onKeyDown={releaseAutofillBlock}
         onFocus={() => {
           releaseAutofillBlock();
           setFocused(true);
@@ -569,9 +575,10 @@ function MoreSettingsDialog({
         {hasActive && <span className="todo-more-settings-dot" aria-hidden />}
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={setOpen} modal="trap-focus">
         <DialogContent
-          className="todo-create-dialog z-[60] max-h-[min(520px,85vh)] max-w-[440px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
+          showOverlay={false}
+          className="todo-create-dialog max-h-[min(520px,85vh)] max-w-[440px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
           <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
@@ -621,7 +628,7 @@ function MoreSettingsDialog({
                   remind1d={remind1d}
                   remind1h={remind1h}
                   remindCustomHours={remindCustomHours}
-                  popoverSide="bottom"
+                  popoverSide="top"
                   onChange={onDueAtChange}
                   onRemind1dChange={onRemind1dChange}
                   onRemind1hChange={onRemind1hChange}
@@ -830,177 +837,179 @@ function DueDateField({
           collisionPadding={16}
           overlayLayer
           onOpenAutoFocus={(event) => event.preventDefault()}
-          className="w-fit max-w-[calc(100vw-2.5rem)] overflow-hidden p-0"
+          className="flex w-fit max-h-[min(var(--available-height),calc(100dvh-2rem))] max-w-[calc(100vw-2.5rem)] flex-col gap-0 overflow-hidden p-0"
         >
-          <div className="grid grid-cols-[max-content_132px] gap-3 p-3">
-            <Calendar
-              className="p-0"
-              mode="single"
-              locale={zhCN}
-              formatters={{
-                formatCaption: (month) =>
-                  `${month.getFullYear()}年${month.getMonth() + 1}月`,
-                formatWeekdayName: (weekday) =>
-                  ["日", "一", "二", "三", "四", "五", "六"][weekday.getDay()],
-              }}
-              month={visibleMonth}
-              selected={selectedDate}
-              disabled={isDueDateDisabled}
-              onMonthChange={setVisibleMonth}
-              onSelect={(date) => {
-                if (date) commit(date, DEFAULT_DUE_HOUR, DEFAULT_DUE_MINUTE);
-              }}
-            />
-            <div className="rounded-lg border border-border/60 bg-foreground/[0.025] p-2.5">
-              <div>
-                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  小时
-                </p>
-                <div className="grid grid-cols-4 gap-1">
-                  {hourOptions.map((option) => {
-                    const disabled = isBaseDateDisabled || isDueHourDisabled(baseDate, option);
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        disabled={disabled}
-                        className={cn(
-                          "h-7 rounded-md text-[12px] font-semibold transition-colors",
-                          option === hour
-                            ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
-                            : "bg-foreground/5 text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
-                          disabled && "cursor-default bg-foreground/5 text-muted-foreground/35 shadow-none hover:bg-foreground/5 hover:text-muted-foreground/35"
-                        )}
-                        onClick={() => commit(baseDate, option, firstSelectableMinute(baseDate, option, minute) ?? minute)}
-                      >
-                        {option}
-                      </button>
-                    );
-                  })}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="grid grid-cols-[max-content_132px] gap-3 p-3">
+              <Calendar
+                className="p-0"
+                mode="single"
+                locale={zhCN}
+                formatters={{
+                  formatCaption: (month) =>
+                    `${month.getFullYear()}年${month.getMonth() + 1}月`,
+                  formatWeekdayName: (weekday) =>
+                    ["日", "一", "二", "三", "四", "五", "六"][weekday.getDay()],
+                }}
+                month={visibleMonth}
+                selected={selectedDate}
+                disabled={isDueDateDisabled}
+                onMonthChange={setVisibleMonth}
+                onSelect={(date) => {
+                  if (date) commit(date, DEFAULT_DUE_HOUR, DEFAULT_DUE_MINUTE);
+                }}
+              />
+              <div className="rounded-lg border border-border/60 bg-foreground/[0.025] p-2.5">
+                <div>
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    小时
+                  </p>
+                  <div className="grid grid-cols-4 gap-1">
+                    {hourOptions.map((option) => {
+                      const disabled = isBaseDateDisabled || isDueHourDisabled(baseDate, option);
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          disabled={disabled}
+                          className={cn(
+                            "h-7 rounded-md text-[12px] font-semibold transition-colors",
+                            option === hour
+                              ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+                              : "bg-foreground/5 text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
+                            disabled && "cursor-default bg-foreground/5 text-muted-foreground/35 shadow-none hover:bg-foreground/5 hover:text-muted-foreground/35"
+                          )}
+                          onClick={() => commit(baseDate, option, firstSelectableMinute(baseDate, option, minute) ?? minute)}
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3">
-                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  分钟
-                </p>
-                <div className="grid grid-cols-2 gap-1">
-                  {minuteOptions.map((option) => {
-                    const disabled = isBaseDateDisabled || isDueTimeDisabled(baseDate, hour, option);
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        disabled={disabled}
-                        className={cn(
-                          "h-7 rounded-md text-[12px] font-semibold transition-colors",
-                          option === minute
-                            ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
-                            : "bg-foreground/5 text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
-                          disabled && "cursor-default bg-foreground/5 text-muted-foreground/35 shadow-none hover:bg-foreground/5 hover:text-muted-foreground/35"
-                        )}
-                        onClick={() =>
-                          hasReminderOptions
-                            ? commit(baseDate, hour, option)
-                            : commitAndClose(baseDate, hour, option)
-                        }
-                      >
-                        {option}
-                      </button>
-                    );
-                  })}
+                <div className="mt-3">
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    分钟
+                  </p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {minuteOptions.map((option) => {
+                      const disabled = isBaseDateDisabled || isDueTimeDisabled(baseDate, hour, option);
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          disabled={disabled}
+                          className={cn(
+                            "h-7 rounded-md text-[12px] font-semibold transition-colors",
+                            option === minute
+                              ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+                              : "bg-foreground/5 text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
+                            disabled && "cursor-default bg-foreground/5 text-muted-foreground/35 shadow-none hover:bg-foreground/5 hover:text-muted-foreground/35"
+                          )}
+                          onClick={() =>
+                            hasReminderOptions
+                              ? commit(baseDate, hour, option)
+                              : commitAndClose(baseDate, hour, option)
+                          }
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-          {hasReminderOptions && (
-            <div className="border-t border-border/60 px-3 py-3">
-              <span className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                提醒
-              </span>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 py-1">
-                <label className="flex items-center gap-1.5 text-[12px] text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={remind1d}
-                    className="accent-primary"
-                    onChange={(event) => {
-                      if (event.target.checked) {
-                        clearOtherReminders("1d");
-                        onRemind1dChange?.(true);
-                        return;
-                      }
-                      onRemind1dChange?.(false);
-                    }}
-                  />
-                  提前 1 天
-                </label>
-                <label className="flex items-center gap-1.5 text-[12px] text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={remind1h}
-                    className="accent-primary"
-                    onChange={(event) => {
-                      if (event.target.checked) {
-                        clearOtherReminders("1h");
-                        onRemind1hChange?.(true);
-                        return;
-                      }
-                      onRemind1hChange?.(false);
-                    }}
-                  />
-                  提前 1 小时
-                </label>
-                <label className="flex items-center gap-1.5 text-[12px] text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={customReminderEnabled}
-                    className="accent-primary"
-                    onChange={(event) => {
-                      const enabled = event.target.checked;
-                      if (enabled) {
-                        clearOtherReminders("custom");
-                        setCustomReminderEnabled(true);
-                        return;
-                      }
-                      setCustomReminderEnabled(false);
-                      setCustomReminderDraft("");
-                      onRemindCustomHoursChange?.(null);
-                    }}
-                  />
-                  <span className="flex items-center gap-1">
+            {hasReminderOptions && (
+              <div className="border-t border-border/60 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    提醒
+                  </span>
+                  <label className="flex items-center gap-1.5 text-[12px] text-foreground">
                     <input
-                      type="text"
-                      inputMode="numeric"
-                      disabled={!customReminderEnabled}
-                      placeholder="自定义"
-                      value={customReminderDraft}
-                      className="h-6 w-14 border-0 border-b border-border/80 bg-transparent px-0 text-center text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:border-transparent disabled:opacity-40"
-                      onFocus={() => {
-                        if (!customReminderEnabled) {
-                          clearOtherReminders("custom");
-                          setCustomReminderEnabled(true);
-                        }
-                      }}
+                      type="checkbox"
+                      checked={remind1d}
+                      className="accent-primary"
                       onChange={(event) => {
-                        const next = event.target.value.replace(/[^\d]/g, "");
-                        setCustomReminderDraft(next);
-                        clearOtherReminders("custom");
-                        setCustomReminderEnabled(true);
-                        if (!next) {
-                          onRemindCustomHoursChange?.(null);
+                        if (event.target.checked) {
+                          clearOtherReminders("1d");
+                          onRemind1dChange?.(true);
                           return;
                         }
-                        commitCustomReminderHours(next);
+                        onRemind1dChange?.(false);
                       }}
-                      onBlur={() => commitCustomReminderHours(customReminderDraft)}
                     />
-                    <span className="text-muted-foreground">小时</span>
-                  </span>
-                </label>
+                    提前 1 天
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[12px] text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={remind1h}
+                      className="accent-primary"
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          clearOtherReminders("1h");
+                          onRemind1hChange?.(true);
+                          return;
+                        }
+                        onRemind1hChange?.(false);
+                      }}
+                    />
+                    提前 1 小时
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[12px] text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={customReminderEnabled}
+                      className="accent-primary"
+                      onChange={(event) => {
+                        const enabled = event.target.checked;
+                        if (enabled) {
+                          clearOtherReminders("custom");
+                          setCustomReminderEnabled(true);
+                          return;
+                        }
+                        setCustomReminderEnabled(false);
+                        setCustomReminderDraft("");
+                        onRemindCustomHoursChange?.(null);
+                      }}
+                    />
+                    <span className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        disabled={!customReminderEnabled}
+                        placeholder="自定义"
+                        value={customReminderDraft}
+                        className="h-6 w-14 border-0 border-b border-border/80 bg-transparent px-0 text-center text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary disabled:cursor-not-allowed disabled:border-transparent disabled:opacity-40"
+                        onFocus={() => {
+                          if (!customReminderEnabled) {
+                            clearOtherReminders("custom");
+                            setCustomReminderEnabled(true);
+                          }
+                        }}
+                        onChange={(event) => {
+                          const next = event.target.value.replace(/[^\d]/g, "");
+                          setCustomReminderDraft(next);
+                          clearOtherReminders("custom");
+                          setCustomReminderEnabled(true);
+                          if (!next) {
+                            onRemindCustomHoursChange?.(null);
+                            return;
+                          }
+                          commitCustomReminderHours(next);
+                        }}
+                        onBlur={() => commitCustomReminderHours(customReminderDraft)}
+                      />
+                      <span className="text-muted-foreground">小时</span>
+                    </span>
+                  </label>
+                </div>
               </div>
-            </div>
-          )}
-          <div className="border-t border-border/60 p-3">
+            )}
+          </div>
+          <div className="shrink-0 border-t border-border/60 bg-popover p-2.5">
             <div className="flex items-center justify-between gap-2">
               <Button
                 type="button"

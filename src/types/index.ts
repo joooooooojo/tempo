@@ -113,6 +113,9 @@ export interface Settings {
   clipboard_paste_mode: "clipboard" | "active_app";
   clipboard_plain_text_only: boolean;
   clipboard_history_retention: "days" | "weeks" | "months" | "years" | "permanent";
+  shortcut_quick_todo: string;
+  shortcut_clipboard_picker: string;
+  shortcut_snippet_picker: string;
   storage_dir: string;
 }
 
@@ -143,6 +146,7 @@ export interface Snippet {
   group_id?: number | null;
   group_name?: string | null;
   shortcut?: string | null;
+  language?: string | null;
   pinned: boolean;
   use_count: number;
   last_used_at?: string | null;

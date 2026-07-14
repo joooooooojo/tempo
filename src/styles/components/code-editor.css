@@ -1,0 +1,50 @@
+/* Static highlight preview */
+.code-editor__hljs.hljs,
+.code-highlight .hljs {
+  background: transparent !important;
+  padding: 0 !important;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+}
+
+.code-editor .hljs,
+.code-highlight .hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/*
+ * Contenteditable + highlight.js:
+ * Do NOT set line-height on token spans. In WebKit, inheriting a tall
+ * line-height onto inline spans makes some tokens (esp. .hljs-number)
+ * sit above adjacent text nodes / other spans.
+ */
+.code-editor__input {
+  /* macOS: SF Mono via system mono stack — no custom webfonts */
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 14px;
+  line-height: 20px;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+.code-editor__plain,
+.code-editor__placeholder {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.code-editor__input span {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  line-height: normal !important;
+  vertical-align: baseline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent !important;
+}
