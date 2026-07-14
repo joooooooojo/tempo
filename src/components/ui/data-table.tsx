@@ -43,6 +43,7 @@ function DataTable({
         <>
           <ScrollArea
             className="relative min-h-0 flex-1 overflow-hidden"
+            scrollbars="both"
             aria-label={scrollAreaLabel}
           >
             <div className={cn("min-w-full", scrollContentClassName)}>{children}</div>

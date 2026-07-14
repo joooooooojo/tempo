@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -57,6 +58,16 @@ export function PomodoroPage() {
   const activeTodos = useMemo(
     () => todos.filter((todo) => !todo.completed),
     [todos]
+  );
+  const todoSelectItems = useMemo(
+    () => [
+      { value: "none", label: "不绑定待办" },
+      ...activeTodos.map((todo) => ({
+        value: String(todo.id),
+        label: todo.title,
+      })),
+    ],
+    [activeTodos]
   );
 
   useEffect(() => {
@@ -264,17 +275,22 @@ export function PomodoroPage() {
                     <Label className="text-[12px] font-semibold text-muted-foreground">
                       绑定待办
                     </Label>
-                    <Select value={selectedTodoValue} onValueChange={handleSelectTodo}>
-                      <SelectTrigger className="h-9 w-full border-0 bg-foreground/[0.04] text-[13px] shadow-none">
+                    <Select
+                      items={todoSelectItems}
+                      value={selectedTodoValue}
+                      onValueChange={handleSelectTodo}
+                    >
+                      <SelectTrigger className="h-9 w-full text-[13px]">
                         <SelectValue placeholder="选择要专注的待办" />
                       </SelectTrigger>
                       <SelectContent searchable searchPlaceholder="搜索待办">
-                        <SelectItem value="none">不绑定待办</SelectItem>
-                        {activeTodos.map((todo) => (
-                          <SelectItem key={todo.id} value={String(todo.id)}>
-                            {todo.title}
-                          </SelectItem>
-                        ))}
+                        <SelectGroup>
+                          {todoSelectItems.map((todo) => (
+                            <SelectItem key={todo.value} value={todo.value}>
+                              {todo.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
                       </SelectContent>
                     </Select>
                   </div>

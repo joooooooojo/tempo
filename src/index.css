@@ -380,6 +380,12 @@ html.pomodoro-float-window #root {
   position: relative;
 }
 
+html.pomodoro-float-window--windows,
+html.pomodoro-float-window--windows body,
+html.pomodoro-float-window--windows #root {
+  background: hsl(var(--background)) !important;
+}
+
 .pomodoro-float-page {
   position: absolute;
   inset: 0;
@@ -528,6 +534,12 @@ html.pomodoro-float-window #root {
 }
 
 html.pomodoro-float-window--mac .pomodoro-float-panel {
+  border-radius: 0;
+  background: hsl(var(--background));
+  backdrop-filter: none;
+}
+
+html.pomodoro-float-window--windows .pomodoro-float-panel {
   border-radius: 0;
   background: hsl(var(--background));
   backdrop-filter: none;

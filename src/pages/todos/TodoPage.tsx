@@ -16,6 +16,7 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ImagePreviewDialog, type ImagePreviewSource } from "@/components/ImagePreviewDialog";
 import { MarkdownPreview } from "@/components/todos/MarkdownPreview";
 import { TodoCreateDialog } from "@/components/todos/TodoCreateDialog";
 import { TodoSubtaskList } from "@/components/todos/TodoSubtasks";
@@ -24,9 +25,9 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api";
 import { recurrenceLabel, subtaskProgress, todoReminderLabel } from "@/lib/todoMeta";
 import { cn, formatDurationShort } from "@/lib/utils";
@@ -34,7 +35,6 @@ import type { TodoImage, TodoItem, TodoNote, TodoRecurrence, TodoSubtask, TodoFo
 import { TodoPagination } from "./TodoPagination";
 import {
   HighlightText,
-  ImagePreviewViewport,
   NoteComposer,
   TodoEmptyState,
   TodoExpandableSection,
@@ -70,11 +70,6 @@ import {
   type TodoFilter,
 } from "./todoPageUtils";
 
-interface PreviewImage {
-  data_url: string;
-  label: string;
-}
-
 const filters: Array<{ value: TodoFilter; label: string }> = [
   { value: "active", label: "未完成" },
   { value: "completed", label: "已完成" },
@@ -95,7 +90,7 @@ export function TodoPage() {
   const [noteDrafts, setNoteDrafts] = useState<Record<number, NoteDraft>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
-  const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
+  const [previewImage, setPreviewImage] = useState<ImagePreviewSource | null>(null);
   const closingPreviewRef = useRef(false);
 
   const closePreviewImage = () => {
@@ -775,7 +770,7 @@ export function TodoPage() {
               <TodoImages
                 images={editingTodo.images}
                 onDelete={deleteImage}
-                onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: editingTodo.title })}
+                onPreview={(image) => setPreviewImage({ src: image.data_url, alt: editingTodo.title })}
               />
             ) : null}
             {editingTodo && (
@@ -815,13 +810,13 @@ export function TodoPage() {
       >
         <DialogContent
           showCloseButton={false}
-          className="todo-create-dialog max-w-[680px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
+          className="todo-create-dialog !flex !h-[66.666vh] !max-h-[calc(100vh-2rem)] !w-[66.666vw] !max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden rounded-xl border-border/80 p-0"
         >
           {detailTodo && (
             <>
-              <div className="flex items-center gap-2 border-b border-border/60 px-5 py-3">
+              <div className="flex shrink-0 items-center gap-3 border-b border-border/60 px-7 py-4">
                 <DialogTitle
-                  className="m-0 flex h-8 min-w-0 flex-1 items-center overflow-hidden p-0 text-left text-[18px] font-bold leading-none"
+                  className="m-0 flex h-9 min-w-0 flex-1 items-center overflow-hidden p-0 text-left text-[20px] font-bold leading-none"
                   title={detailTodo.title}
                 >
                   <span className="block w-full truncate leading-none">
@@ -832,7 +827,7 @@ export function TodoPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-8 shrink-0 gap-1 border-emerald-500/30 bg-emerald-500/8 px-2.5 text-[12px] text-emerald-700 shadow-none transition-[background,border-color,box-shadow,color] hover:border-emerald-500/60 hover:bg-emerald-500/28 hover:text-emerald-900 hover:shadow-[0_0_0_3px_rgba(16,185,129,0.18)] dark:border-emerald-400/30 dark:bg-emerald-500/12 dark:text-emerald-300 dark:hover:border-emerald-300/55 dark:hover:bg-emerald-500/35 dark:hover:text-emerald-100 dark:hover:shadow-[0_0_0_3px_rgba(52,211,153,0.2)]"
+                    className="h-9 shrink-0 gap-1.5 border-emerald-500/30 bg-emerald-500/8 px-3 text-[13px] text-emerald-700 shadow-none transition-[background,border-color,box-shadow,color] hover:border-emerald-500/60 hover:bg-emerald-500/28 hover:text-emerald-900 hover:shadow-[0_0_0_3px_rgba(16,185,129,0.18)] dark:border-emerald-400/30 dark:bg-emerald-500/12 dark:text-emerald-300 dark:hover:border-emerald-300/55 dark:hover:bg-emerald-500/35 dark:hover:text-emerald-100 dark:hover:shadow-[0_0_0_3px_rgba(52,211,153,0.2)]"
                     onClick={() => {
                       setDetailId(null);
                       void startFocusForTodo(detailTodo);
@@ -845,7 +840,7 @@ export function TodoPage() {
                 <DialogClose asChild>
                   <button
                     type="button"
-                    className="group relative inline-flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground opacity-55 transition-opacity hover:opacity-100 focus:outline-none"
+                    className="group relative inline-flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground opacity-55 transition-opacity hover:opacity-100 focus:outline-none"
                     aria-label="关闭"
                   >
                     <span
@@ -856,77 +851,70 @@ export function TodoPage() {
                   </button>
                 </DialogClose>
               </div>
-              <div className="max-h-[68vh] overflow-y-auto px-5 py-4">
-                <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                  <span>
-                    {detailTodo.completed && detailTodo.completed_at
-                      ? `完成于 ${formatTodoDate(detailTodo.completed_at)}`
-                      : `创建于 ${formatTodoDate(detailTodo.created_at)}`}
-                  </span>
-                  {detailTodo.due_at && (
-                    <span className={cn("rounded-md px-1.5 py-0.5 font-medium", dueBadgeClass(detailTodo))}>
-                      截止 {formatTodoDate(detailTodo.due_at)}
+              <ScrollArea className="min-h-0 flex-1" aria-label="待办详情">
+                <div className="px-7 py-5">
+                  <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>
+                      {detailTodo.completed && detailTodo.completed_at
+                        ? `完成于 ${formatTodoDate(detailTodo.completed_at)}`
+                        : `创建于 ${formatTodoDate(detailTodo.created_at)}`}
                     </span>
-                  )}
-                  {detailTodo.recurrence !== "none" && (
-                    <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
-                      {recurrenceLabel(detailTodo.recurrence)}
-                    </span>
-                  )}
-                  {todoReminderLabel(detailTodo) && (
-                    <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">
-                      {todoReminderLabel(detailTodo)}
-                    </span>
-                  )}
-                </div>
-
-                {detailTodo.tags.length > 0 && (
-                  <div className="mb-4">
-                    <TodoTagList tags={detailTodo.tags} />
+                    {detailTodo.due_at && (
+                      <span className={cn("rounded-md px-1.5 py-0.5 font-medium", dueBadgeClass(detailTodo))}>
+                        截止 {formatTodoDate(detailTodo.due_at)}
+                      </span>
+                    )}
+                    {detailTodo.recurrence !== "none" && (
+                      <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                        {recurrenceLabel(detailTodo.recurrence)}
+                      </span>
+                    )}
+                    {todoReminderLabel(detailTodo) && (
+                      <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">
+                        {todoReminderLabel(detailTodo)}
+                      </span>
+                    )}
                   </div>
-                )}
 
-                {detailFocusSummary && detailFocusSummary.sessions_all > 0 && (
-                  <TodoFocusStats summary={detailFocusSummary} />
-                )}
+                  {detailTodo.tags.length > 0 && (
+                    <div className="mb-4">
+                      <TodoTagList tags={detailTodo.tags} />
+                    </div>
+                  )}
 
-                <MarkdownPreview
-                  value={detailTodo.content}
-                  onImagePreview={(src, alt) => setPreviewImage({ data_url: src, label: alt })}
-                />
+                  {detailFocusSummary && detailFocusSummary.sessions_all > 0 && (
+                    <TodoFocusStats summary={detailFocusSummary} />
+                  )}
 
-                <TodoSubtaskList subtasks={detailTodo.subtasks} readOnly />
+                  <MarkdownPreview
+                    value={detailTodo.content}
+                    onImagePreview={(src, alt) => setPreviewImage({ src, alt })}
+                  />
 
-                <TodoImages
-                  images={detailTodo.images}
-                  onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: detailTodo.title })}
-                />
-                <TodoNotes
-                  notes={detailTodo.notes}
-                  searchQuery={searchQuery}
-                  onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: detailTodo.title })}
-                />
-              </div>
+                  <TodoSubtaskList subtasks={detailTodo.subtasks} readOnly />
+
+                  <TodoImages
+                    images={detailTodo.images}
+                    onPreview={(image) => setPreviewImage({ src: image.data_url, alt: detailTodo.title })}
+                  />
+                  <TodoNotes
+                    notes={detailTodo.notes}
+                    searchQuery={searchQuery}
+                    onPreview={(image) => setPreviewImage({ src: image.data_url, alt: detailTodo.title })}
+                  />
+                </div>
+              </ScrollArea>
             </>
           )}
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={Boolean(previewImage)}
+      <ImagePreviewDialog
+        image={previewImage}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) closePreviewImage();
         }}
-      >
-        <DialogContent className="flex h-[90vh] w-[90vw] max-w-[90vw] flex-col gap-3 overflow-hidden p-3">
-          <DialogHeader className="shrink-0 px-1 pr-8">
-            <DialogTitle className="truncate text-[15px]">图片预览</DialogTitle>
-          </DialogHeader>
-          {previewImage && (
-            <ImagePreviewViewport src={previewImage.data_url} alt={previewImage.label} />
-          )}
-        </DialogContent>
-      </Dialog>
+      />
 
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -1196,13 +1184,13 @@ export function TodoPage() {
                         )}
                         <TodoImages
                           images={todo.images}
-                          onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
+                          onPreview={(image) => setPreviewImage({ src: image.data_url, alt: todo.title })}
                         />
                         <TodoNotes
                           notes={todo.notes}
                           searchQuery={searchQuery}
                           onDelete={deleteNote}
-                          onPreview={(image) => setPreviewImage({ data_url: image.data_url, label: todo.title })}
+                          onPreview={(image) => setPreviewImage({ src: image.data_url, alt: todo.title })}
                         />
                         <NoteComposer
                           draft={noteDraft}

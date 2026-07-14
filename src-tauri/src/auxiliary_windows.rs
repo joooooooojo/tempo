@@ -929,7 +929,13 @@ pub fn polish_pomodoro_float_window(window: &WebviewWindow) {
         polish_macos_pomodoro_float_window(window);
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window.set_shadow(true);
+        apply_windows_shelf_appearance(window);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = window.set_shadow(false);
     }
@@ -951,7 +957,7 @@ pub fn build_pomodoro_float_window(
     .decorations(false)
     .transparent(true)
     .background_color(Color(0, 0, 0, 0))
-    .shadow(cfg!(target_os = "macos"))
+    .shadow(cfg!(any(target_os = "macos", target_os = "windows")))
     .always_on_top(true)
     .skip_taskbar(true)
     .visible_on_all_workspaces(true)

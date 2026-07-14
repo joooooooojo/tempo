@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { zhCN } from "date-fns/locale";
 import { CalendarClock, Repeat, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -107,7 +108,10 @@ export function TodoCreateDialog({
 }: TodoCreateDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="todo-create-dialog !flex max-h-[520px] max-w-[520px] flex-col gap-0 overflow-visible rounded-xl border-border/80 p-0">
+      <DialogContent
+        showCloseButton={false}
+        className="todo-create-dialog !flex max-h-[min(680px,calc(100vh-2rem))] w-[calc(100vw-2rem)] max-w-[680px] flex-col gap-0 overflow-hidden rounded-xl border-border/80 p-0 sm:max-w-[680px]"
+      >
         <TodoCreateFormPanel
           heading={heading}
           todoTitle={todoTitle}
@@ -125,14 +129,15 @@ export function TodoCreateDialog({
           contentPlaceholder={contentPlaceholder}
           submitLabel={submitLabel}
           bodyExtra={bodyExtra}
-          titleElement={<DialogTitle className="text-[18px] font-bold">{heading}</DialogTitle>}
+          titleElement={<DialogTitle className="text-[20px] font-bold">{heading}</DialogTitle>}
           cancelElement={
             <DialogClose asChild>
-              <Button type="button" variant="outline" className="h-9 min-w-20">
+              <Button type="button" variant="outline" className="h-10 min-w-24">
                 取消
               </Button>
             </DialogClose>
           }
+          onCancel={() => onOpenChange(false)}
           onTitleChange={onTitleChange}
           onContentChange={onContentChange}
           onDueAtChange={onDueAtChange}
@@ -205,8 +210,8 @@ export function TodoCreateFormPanel({
       <DialogHeader
         data-tauri-drag-region={isWindowLayout ? "" : undefined}
         className={cn(
-          "relative shrink-0 border-b border-border/60 px-5 py-4 pr-12",
-          isWindowLayout && "select-none"
+          "relative shrink-0 border-b border-border/60",
+          isWindowLayout ? "px-5 py-4 pr-12 select-none" : "px-7 py-5 pr-14"
         )}
       >
         {titleElement ?? (
@@ -221,19 +226,22 @@ export function TodoCreateFormPanel({
           <button
             data-no-drag
             type="button"
-            className="absolute right-4 top-4 rounded-md p-1 opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 focus:outline-none dark:hover:bg-white/10"
+            className={cn(
+              "absolute top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 focus:outline-none dark:hover:bg-white/10",
+              isWindowLayout ? "right-3 size-8" : "right-5 size-9"
+            )}
             aria-label="关闭"
             onClick={onCancel}
           >
-            <X className="h-4 w-4" />
+            <X className="block h-4 w-4 shrink-0" />
           </button>
         )}
       </DialogHeader>
       <form className="flex min-h-0 flex-1 flex-col overflow-hidden" autoComplete="off" onSubmit={onSubmit}>
         <div
           className={cn(
-            "no-scrollbar min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-5",
-            isWindowLayout ? "flex flex-col gap-3.5" : "space-y-4"
+            "no-scrollbar min-h-0 flex-1 overflow-y-auto",
+            isWindowLayout ? "flex flex-col gap-3.5 px-5 pb-4 pt-5" : "flex flex-col gap-4 px-7 py-5"
           )}
         >
           <div className={cn(isWindowLayout && "shrink-0")}>
@@ -253,7 +261,7 @@ export function TodoCreateFormPanel({
               id="new-todo-content"
               value={todoContent}
               placeholder={contentPlaceholder}
-              className={cn(isWindowLayout ? "h-full min-h-32" : "min-h-40")}
+              className={cn(isWindowLayout ? "h-full min-h-32" : "min-h-44")}
               onChange={(event) => onContentChange(event.target.value)}
               onPaste={handleContentPaste}
             />
@@ -265,7 +273,7 @@ export function TodoCreateFormPanel({
           {bodyExtra}
         </div>
 
-        <DialogFooter className="shrink-0 flex w-full flex-row items-center gap-2 border-t border-border/60 bg-foreground/[0.018] px-5 py-4 sm:space-x-0">
+        <DialogFooter className="mx-0 mb-0 flex w-full shrink-0 flex-row items-center gap-3 rounded-none border-t border-border/60 bg-foreground/[0.018] px-7 py-4 sm:space-x-0">
           <MoreSettingsDialog
             tags={tags}
             tagSuggestions={tagSuggestions}
@@ -281,13 +289,13 @@ export function TodoCreateFormPanel({
             onRemind1hChange={onRemind1hChange}
             onRemindCustomHoursChange={onRemindCustomHoursChange}
           />
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-3">
             {cancelElement ?? (
-              <Button type="button" variant="outline" className="h-9 min-w-20" onClick={onCancel}>
+              <Button type="button" variant="outline" className="h-10 min-w-24" onClick={onCancel}>
                 取消
               </Button>
             )}
-            <Button type="submit" className="h-9 min-w-24" disabled={saving || !todoTitle.trim()}>
+            <Button type="submit" className="h-10 min-w-28" disabled={saving || !todoTitle.trim()}>
               {submitLabel}
             </Button>
           </div>
@@ -548,10 +556,10 @@ function MoreSettingsDialog({
     <>
       <Button
         type="button"
-        variant="ghost"
+        variant="outline"
         size="sm"
         className={cn(
-          "relative h-9 gap-1.5 px-2.5 text-muted-foreground hover:text-foreground",
+          "relative h-10 gap-1.5 px-3 text-muted-foreground hover:text-foreground",
           hasActive && "text-foreground"
         )}
         onClick={() => setOpen(true)}
@@ -623,7 +631,7 @@ function MoreSettingsDialog({
             )}
           </div>
 
-          <DialogFooter className="border-t border-border/60 bg-foreground/[0.018] px-5 py-3 sm:justify-end">
+          <DialogFooter className="mx-0 mb-0 rounded-none border-t border-border/60 bg-foreground/[0.018] px-5 py-3 sm:justify-end">
             <Button type="button" className="h-9 min-w-20" onClick={() => setOpen(false)}>
               完成
             </Button>
@@ -822,12 +830,19 @@ function DueDateField({
           collisionPadding={16}
           overlayLayer
           onOpenAutoFocus={(event) => event.preventDefault()}
-          className="w-[min(480px,calc(100vw-2.5rem))] overflow-hidden p-0"
+          className="w-fit max-w-[calc(100vw-2.5rem)] overflow-hidden p-0"
         >
-          <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-3 p-3">
+          <div className="grid grid-cols-[max-content_132px] gap-3 p-3">
             <Calendar
               className="p-0"
               mode="single"
+              locale={zhCN}
+              formatters={{
+                formatCaption: (month) =>
+                  `${month.getFullYear()}年${month.getMonth() + 1}月`,
+                formatWeekdayName: (weekday) =>
+                  ["日", "一", "二", "三", "四", "五", "六"][weekday.getDay()],
+              }}
               month={visibleMonth}
               selected={selectedDate}
               disabled={isDueDateDisabled}

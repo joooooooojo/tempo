@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppIcon } from "@/components/AppIcon";
+import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import {
   clipboardKindLabel,
   clipboardSourceLabel,
@@ -19,14 +20,6 @@ import {
 } from "@/components/clipboard/ShelfCard";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -196,9 +189,6 @@ export function ClipboardPage() {
             className="h-9 border-0 pl-9 glass-subtle"
           />
         </div>
-        <span className="shrink-0 rounded-md bg-background/55 px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground ring-1 ring-border/50">
-          共 {total} 条
-        </span>
       </div>
 
       <DataTable
@@ -223,13 +213,13 @@ export function ClipboardPage() {
         }
         scrollAreaLabel="剪贴板历史"
       >
-        <Table className="w-full min-w-[914px] table-fixed border-collapse text-left">
+        <Table className="w-full  table-fixed border-collapse text-left">
           <colgroup>
-            <col className="w-[82px]" />
-            <col className="w-[300px]" />
-            <col className="w-[170px]" />
-            <col className="w-[116px]" />
-            <col className="w-[106px]" />
+            <col />
+            <col />
+            <col />
+            <col />
+            <col />
             <col className="w-[140px]" />
           </colgroup>
           <TableHeader className="sticky top-0 z-10 bg-background/90 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/75">
@@ -239,7 +229,7 @@ export function ClipboardPage() {
               <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">来源</TableHead>
               <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">时间</TableHead>
               <TableHead className="h-auto whitespace-nowrap px-3 py-2 text-muted-foreground">详情</TableHead>
-              <TableHead className="h-auto whitespace-nowrap px-2 py-2 text-right text-muted-foreground">操作</TableHead>
+              <TableHead className="h-auto whitespace-nowrap px-2 py-2 text-muted-foreground">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -258,8 +248,11 @@ export function ClipboardPage() {
       </DataTable>
 
       <ImagePreviewDialog
-        entry={previewEntry}
-        onCopy={(entry) => void copyEntry(entry)}
+        image={
+          previewEntry
+            ? { src: previewEntry.content, alt: clipboardSourceLabel(previewEntry) }
+            : null
+        }
         onOpenChange={(open) => {
           if (!open) setPreviewEntry(null);
         }}
@@ -318,7 +311,7 @@ function ClipboardTableRow({
           >
             <span className="relative flex h-10 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded bg-background/72 ring-1 ring-border/60">
               <img src={entry.content} alt="" loading="lazy" className="h-full w-full object-contain" />
-              <span className="absolute left-0.5 top-0.5 rounded bg-background/80 p-0.5 opacity-0 ring-1 ring-border/60 transition group-hover:opacity-100">
+              <span className="absolute right-0.5 top-0.5 rounded bg-background/80 p-0.5 opacity-0 ring-1 ring-border/60 transition group-hover:opacity-100">
                 <Maximize2 className="h-2.5 w-2.5" />
               </span>
             </span>
@@ -352,7 +345,7 @@ function ClipboardTableRow({
       <TableCell className="whitespace-nowrap px-3 py-2 align-middle text-muted-foreground">{detailLabel}</TableCell>
 
       <TableCell className="px-2 py-2 align-middle">
-        <div className="flex justify-end gap-0.5">
+        <div className="flex gap-1">
           <Button
             size="icon"
             variant="ghost"
@@ -434,53 +427,5 @@ function TablePagination({
         </Button>
       </div>
     </div>
-  );
-}
-
-function ImagePreviewDialog({
-  entry,
-  onCopy,
-  onOpenChange,
-}: {
-  entry: ClipboardEntry | null;
-  onCopy: (entry: ClipboardEntry) => void;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const open = Boolean(entry);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[86vw] p-4">
-        <DialogHeader className="pr-8">
-          <DialogTitle>图片预览</DialogTitle>
-          {entry && (
-            <DialogDescription>
-              {clipboardSourceLabel(entry)} · {shelfImageSize(entry.image_width, entry.image_height)} ·{" "}
-              {formatRelativeTime(entry.created_at)}
-            </DialogDescription>
-          )}
-        </DialogHeader>
-
-        {entry && (
-          <div className="flex max-h-[72vh] items-center justify-center overflow-auto rounded-lg bg-background/75 p-2 ring-1 ring-border/60">
-            <img src={entry.content} alt="" className="max-h-[68vh] max-w-full object-contain" />
-          </div>
-        )}
-
-        {entry && (
-          <DialogFooter>
-            <Button
-              size="sm"
-              onClick={() => {
-                onCopy(entry);
-              }}
-            >
-              <Copy className="h-3.5 w-3.5" />
-              复制
-            </Button>
-          </DialogFooter>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }

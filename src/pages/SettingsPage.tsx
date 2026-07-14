@@ -10,7 +10,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
 import { emitThemeChange } from "@/lib/theme";
@@ -32,6 +32,12 @@ const CLIPBOARD_RETENTION_OPTIONS = [
   value: Settings["clipboard_history_retention"];
   label: string;
 }>;
+
+const THEME_OPTIONS: Array<{ value: Settings["theme"]; label: string }> = [
+  { value: "system", label: "跟随系统" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
+];
 
 function clipboardRetentionIndex(value: Settings["clipboard_history_retention"]) {
   const index = CLIPBOARD_RETENTION_OPTIONS.findIndex((option) => option.value === value);
@@ -166,7 +172,7 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <Section title="通用">
-        <Card className="overflow-hidden">
+        <Card>
           <Row label="开机自启" desc="默认关闭">
             <Switch checked={settings.autostart} onCheckedChange={(v) => update({ autostart: v })} />
           </Row>
@@ -174,14 +180,22 @@ export function SettingsPage() {
             <Switch checked={settings.sound_enabled} onCheckedChange={(v) => update({ sound_enabled: v })} />
           </Row>
           <Row label="外观">
-            <Select value={settings.theme} onValueChange={(v) => v && update({ theme: v as Settings["theme"] })}>
-              <SelectTrigger className="h-8 w-28 border-0 bg-transparent text-[13px] shadow-none">
+            <Select
+              items={THEME_OPTIONS}
+              value={settings.theme}
+              onValueChange={(v) => v && update({ theme: v as Settings["theme"] })}
+            >
+              <SelectTrigger className="h-9 w-32 text-[13px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="system">跟随系统</SelectItem>
-                <SelectItem value="light">浅色</SelectItem>
-                <SelectItem value="dark">深色</SelectItem>
+                <SelectGroup>
+                  {THEME_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           </Row>
@@ -215,7 +229,7 @@ export function SettingsPage() {
       </Section>
 
       <Section title="护眼提醒">
-        <Card className="overflow-hidden">
+        <Card>
           <Row label="启用">
             <Switch checked={settings.eye_care_enabled} onCheckedChange={(v) => update({ eye_care_enabled: v })} />
           </Row>
@@ -238,7 +252,7 @@ export function SettingsPage() {
       </Section>
 
       <Section title="夜间提醒">
-        <Card className="overflow-hidden">
+        <Card>
           <Row label="启用">
             <Switch checked={settings.night_reminder_enabled} onCheckedChange={(v) => update({ night_reminder_enabled: v })} />
           </Row>
@@ -262,7 +276,7 @@ export function SettingsPage() {
       </Section>
 
       <Section title="剪贴板">
-        <Card className="overflow-hidden">
+        <Card>
           <Row label="记录剪贴板" desc="自动保存复制过的文字与截图">
             <Switch
               checked={settings.clipboard_monitor_enabled}
@@ -391,16 +405,6 @@ export function SettingsPage() {
         </Card>
       </Section>
 
-      <Section title="数据">
-        <Card>
-          <CardContent className="flex gap-2 p-4">
-            <Button variant="outline" size="sm" className="flex-1" onClick={async () => { await api.resetToday(); toast.success("已重置"); }}>重置今日</Button>
-            <Button variant="destructive" size="sm" className="flex-1" onClick={async () => {
-              if (confirm("确定清空全部历史？")) { await api.resetAll(); toast.success("已清空"); }
-            }}>清空全部</Button>
-          </CardContent>
-        </Card>
-      </Section>
     </div>
   );
 }

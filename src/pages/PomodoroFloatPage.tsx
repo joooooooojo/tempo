@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Pause, Play, SkipForward, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
-import { cn, formatClock, isMacTarget } from "@/lib/utils";
+import { cn, formatClock, isMacTarget, isWindowsTarget } from "@/lib/utils";
 import type { PomodoroState, Settings } from "@/types";
 
 const RING_RADIUS = 13;
@@ -50,8 +50,13 @@ export function PomodoroFloatPage() {
 
     const previousBodyOverflow = document.body.style.overflow;
     const root = document.documentElement;
+    const platformClass = isMacTarget
+      ? "pomodoro-float-window--mac"
+      : isWindowsTarget
+        ? "pomodoro-float-window--windows"
+        : "pomodoro-float-window--css-shadow";
     root.classList.add("pomodoro-float-window");
-    root.classList.add(isMacTarget ? "pomodoro-float-window--mac" : "pomodoro-float-window--css-shadow");
+    root.classList.add(platformClass);
     document.body.classList.add("pomodoro-float-window");
     document.body.style.overflow = "hidden";
     void applyThemeFromSettings();
@@ -61,7 +66,12 @@ export function PomodoroFloatPage() {
     });
 
     return () => {
-      root.classList.remove("pomodoro-float-window", "pomodoro-float-window--mac", "pomodoro-float-window--css-shadow");
+      root.classList.remove(
+        "pomodoro-float-window",
+        "pomodoro-float-window--mac",
+        "pomodoro-float-window--windows",
+        "pomodoro-float-window--css-shadow"
+      );
       document.body.classList.remove("pomodoro-float-window");
       document.body.style.overflow = previousBodyOverflow;
       unsubscribeTheme();
