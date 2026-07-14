@@ -77,16 +77,27 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          $ErrorActionPreference = "Stop"
           $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
           $tag = $env:GITHUB_REF_NAME
           if (-not $tag.StartsWith("v")) {
             $tag = "v$version"
           }
 
+          # Private key is multiline; pass it only via env (not -k) so <FILE> is not eaten.
           $zip = (& .\scripts\create-staged-windows-package.ps1 -Version $version | Select-Object -Last 1).Trim()
-          pnpm exec tauri signer sign -k "$env:TAURI_SIGNING_PRIVATE_KEY" -p "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$zip" |
-            Set-Content -NoNewline -Encoding UTF8 "$zip.sig"
-          gh release upload $tag "$zip" "$zip.sig" --clobber
+          if (-not (Test-Path -LiteralPath $zip)) {
+            throw "Staged zip not found: $zip"
+          }
+
+          $sig = "$zip.sig"
+          $signature = pnpm exec tauri signer sign $zip
+          if ([string]::IsNullOrWhiteSpace($signature)) {
+            throw "tauri signer produced empty signature for $zip"
+          }
+          Set-Content -LiteralPath $sig -Value $signature.Trim() -NoNewline -Encoding utf8
+
+          gh release upload $tag $zip $sig --clobber
 
   publish-updater-json:
     needs: publish
