@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { emit } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Update } from "@tauri-apps/plugin-updater";
 import { FolderOpen, RefreshCw, RotateCcw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -17,7 +16,9 @@ import { emitThemeChange } from "@/lib/theme";
 import {
   checkAndDownloadUpdate,
   getAppVersion,
+  getPreparedUpdate,
   installAndRelaunch,
+  type PreparedUpdate,
   type UpdateProgress,
 } from "@/lib/update";
 import type { Settings } from "@/types";
@@ -72,7 +73,7 @@ export function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
-  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<PreparedUpdate | null>(null);
   const [pendingVersion, setPendingVersion] = useState("");
 
   const load = async () => {
@@ -83,6 +84,19 @@ export function SettingsPage() {
   useEffect(() => {
     load().catch(console.error);
     getAppVersion().then(setAppVersion).catch(console.error);
+    getPreparedUpdate()
+      .then((update) => {
+        if (!update) return;
+        setPendingUpdate(update);
+        setPendingVersion(update.version);
+        setUpdateProgress({
+          phase: "ready",
+          downloaded: 0,
+          total: 0,
+          version: update.version,
+        });
+      })
+      .catch(console.error);
   }, []);
 
   const update = async (patch: Partial<Settings>) => {
@@ -140,7 +154,7 @@ export function SettingsPage() {
         total: 0,
         version: result.version,
       });
-      toast.success(`v${result.version} 已下载，点击「重启更新」完成安装`);
+      toast.success(`v${result.version} 已在后台准备完成，点击「重启切换」使用新版本`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       setUpdateProgress(null);
@@ -153,6 +167,13 @@ export function SettingsPage() {
     if (!pendingUpdate || applyingUpdate) return;
 
     setApplyingUpdate(true);
+    setUpdateProgress({
+      phase: "installing",
+      downloaded: 0,
+      total: 0,
+      version: pendingVersion || pendingUpdate.version,
+    });
+    toast.info("正在切换到已准备好的新版本，Tempo 会重新打开。", { duration: 8000 });
     try {
       await installAndRelaunch(pendingUpdate, setUpdateProgress);
     } catch (error) {
@@ -371,7 +392,7 @@ export function SettingsPage() {
                   onClick={() => void handleRestartUpdate()}
                 >
                   <RotateCcw className={`h-3.5 w-3.5 ${applyingUpdate ? "animate-spin" : ""}`} />
-                  {applyingUpdate ? "安装中" : "重启更新"}
+                  {applyingUpdate ? "切换中" : "重启切换"}
                 </Button>
               ) : (
                 <Button
@@ -399,7 +420,7 @@ export function SettingsPage() {
               </div>
             )}
             {updateProgress?.phase === "installing" && (
-              <p className="text-[12px] text-muted-foreground">正在静默安装并重启...</p>
+              <p className="text-[12px] text-muted-foreground">正在启动已准备好的新版本...</p>
             )}
           </CardContent>
         </Card>

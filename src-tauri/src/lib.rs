@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod platform;
 mod pomodoro;
+mod staged_update;
 
 mod app_icons;
 mod asset_protocol;
@@ -136,6 +137,11 @@ pub fn run() {
                 Err(error) => eprintln!("failed to initialize runtime logging: {error}"),
             }
 
+            staged_update::forward_to_staged_version_if_needed(app.handle()).map_err(|error| {
+                tracing::error!(error = %error, "failed to forward to staged version");
+                Box::<dyn std::error::Error>::from(std::io::Error::other(error))
+            })?;
+
             db::prepare_storage_dir(app.handle()).map_err(|error| {
                 tracing::error!(error = %error, "failed to prepare storage directory");
                 Box::<dyn std::error::Error>::from(std::io::Error::other(error))
@@ -191,6 +197,11 @@ pub fn run() {
                     "set macos activation policy",
                 );
             }
+
+            logging::warn_if_err(
+                staged_update::confirm_current_staged_launch(app.handle()),
+                "confirm staged update launch",
+            );
 
             if let Some(window) = app.get_webview_window("main") {
                 logging::debug_if_err(window.set_maximizable(true), "set main window maximizable");
@@ -263,6 +274,10 @@ pub fn run() {
             commands::window::debug_log,
             commands::window::hide_to_tray_command,
             commands::window::show_window,
+            staged_update::staged_update_status,
+            staged_update::staged_check_update,
+            staged_update::staged_download_update,
+            staged_update::staged_restart_to_update,
             commands::pomodoro_cmds::get_pomodoro_state,
             commands::pomodoro_cmds::set_pomodoro_todo,
             commands::pomodoro_cmds::start_pomodoro,

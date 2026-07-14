@@ -69,6 +69,25 @@ jobs:
           uploadUpdaterJson: false
           args: ${{ matrix.args }}
 
+      - name: Create and upload Windows staged update package
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
+          $tag = $env:GITHUB_REF_NAME
+          if (-not $tag.StartsWith("v")) {
+            $tag = "v$version"
+          }
+
+          $zip = (& .\scripts\create-staged-windows-package.ps1 -Version $version | Select-Object -Last 1).Trim()
+          pnpm exec tauri signer sign -k "$env:TAURI_SIGNING_PRIVATE_KEY" -p "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$zip" |
+            Set-Content -NoNewline -Encoding UTF8 "$zip.sig"
+          gh release upload $tag "$zip" "$zip.sig" --clobber
+
   publish-updater-json:
     needs: publish
     runs-on: ubuntu-latest
@@ -77,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Generate and upload latest.json
+      - name: Generate and upload updater manifests
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -91,19 +110,22 @@ jobs:
           export RELEASE_NOTES="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).body || ''")"
 
           node ./scripts/generate-latest-json.mjs
+          node ./scripts/generate-staged-latest-json.mjs
 
           RELEASE_JSON="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
           RELEASE_ID="$(node -p "JSON.parse(process.argv[1]).id" "$RELEASE_JSON")"
-          EXISTING_ID="$(node -p "const a=JSON.parse(process.argv[1]).assets.find(x=>x.name==='latest.json'); a?a.id:''" "$RELEASE_JSON")"
-          if [[ -n "${EXISTING_ID}" ]]; then
-            curl -fsSL -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${EXISTING_ID}"
-          fi
+          for ASSET_NAME in latest.json staged-latest.json; do
+            EXISTING_ID="$(node -p "const a=JSON.parse(process.argv[1]).assets.find(x=>x.name===process.argv[2]); a?a.id:''" "$RELEASE_JSON" "$ASSET_NAME")"
+            if [[ -n "${EXISTING_ID}" ]]; then
+              curl -fsSL -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${EXISTING_ID}"
+            fi
 
-          curl -fsSL \
-            -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Content-Type: application/octet-stream" \
-            -H "Accept: application/vnd.github+json" \
-            --data-binary @latest.json \
-            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=latest.json"
+            curl -fsSL \
+              -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              -H "Accept: application/vnd.github+json" \
+              --data-binary @"$ASSET_NAME" \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${ASSET_NAME}"
+          done
