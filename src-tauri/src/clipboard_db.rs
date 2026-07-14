@@ -1,5 +1,5 @@
 use chrono::{Duration, Local};
-use rusqlite::{params, params_from_iter, types::Value, Connection};
+use rusqlite::{params, params_from_iter, types::Value, Connection, Error as SqliteError};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -67,8 +67,28 @@ pub fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> 
         let mut encoder = png::Encoder::new(&mut bytes, width, height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().ok()?;
-        writer.write_image_data(rgba).ok()?;
+        let mut writer = match encoder.write_header() {
+            Ok(writer) => writer,
+            Err(error) => {
+                tracing::debug!(
+                    width = width,
+                    height = height,
+                    error = %error,
+                    "failed to prepare clipboard image png encoder"
+                );
+                return None;
+            }
+        };
+        if let Err(error) = writer.write_image_data(rgba) {
+            tracing::debug!(
+                width = width,
+                height = height,
+                bytes = rgba.len(),
+                error = %error,
+                "failed to encode clipboard image png"
+            );
+            return None;
+        }
     }
     Some(bytes)
 }
@@ -140,20 +160,26 @@ fn upsert_clipboard_entry(
         [content_hash],
         |row| row.get::<_, i64>(0),
     ) {
-        conn.execute(
+        if let Err(error) = conn.execute(
             "UPDATE clipboard_history
              SET created_at = ?1,
                  source_app = COALESCE(?2, source_app),
                  source_process = COALESCE(?3, source_process)
              WHERE id = ?4",
             params![now_iso(), source_app, source_process, existing],
-        )
-        .ok();
+        ) {
+            tracing::warn!(
+                entry_id = existing,
+                kind = %kind,
+                error = %error,
+                "failed to refresh existing clipboard entry"
+            );
+        }
         return get_clipboard_entry(conn, existing);
     }
 
     let created_at = now_iso();
-    conn.execute(
+    if let Err(error) = conn.execute(
         "INSERT INTO clipboard_history (
             content, content_hash, kind, source_app, source_process,
             image_width, image_height, pinned, created_at
@@ -168,8 +194,16 @@ fn upsert_clipboard_entry(
             image_height,
             created_at
         ],
-    )
-    .ok()?;
+    ) {
+        tracing::warn!(
+            kind = %kind,
+            image_width = image_width,
+            image_height = image_height,
+            error = %error,
+            "failed to insert clipboard entry"
+        );
+        return None;
+    }
 
     let id = conn.last_insert_rowid();
     trim_clipboard_history(conn, max_entries);
@@ -177,7 +211,7 @@ fn upsert_clipboard_entry(
 }
 
 fn trim_clipboard_history(conn: &Connection, max_entries: u32) {
-    let _ = conn.execute(
+    if let Err(error) = conn.execute(
         "DELETE FROM clipboard_history
          WHERE pinned = 0
            AND id NOT IN (
@@ -186,44 +220,68 @@ fn trim_clipboard_history(conn: &Connection, max_entries: u32) {
              LIMIT ?1
            )",
         params![max_entries],
-    );
+    ) {
+        tracing::warn!(
+            max_entries = max_entries,
+            error = %error,
+            "failed to trim clipboard history"
+        );
+    }
 }
 
 pub fn get_clipboard_entry(conn: &Connection, id: i64) -> Option<ClipboardEntry> {
-    conn.query_row(
-        "SELECT id, content, kind, source_app, source_process, image_width, image_height, pinned, created_at
+    optional_db_row(
+        conn.query_row(
+            "SELECT id, content, kind, source_app, source_process, image_width, image_height, pinned, created_at
          FROM clipboard_history WHERE id = ?1",
-        [id],
-        map_clipboard_row,
+            [id],
+            map_clipboard_row,
+        ),
+        "load clipboard entry",
     )
-    .ok()
 }
 
 pub fn touch_clipboard_entry(conn: &Connection, id: i64) -> bool {
-    conn.execute(
+    match conn.execute(
         "UPDATE clipboard_history SET created_at = ?1 WHERE id = ?2",
         params![now_iso(), id],
-    )
-    .map(|count| count > 0)
-    .unwrap_or(false)
+    ) {
+        Ok(count) => count > 0,
+        Err(error) => {
+            tracing::warn!(
+                entry_id = id,
+                error = %error,
+                "failed to touch clipboard entry"
+            );
+            false
+        }
+    }
 }
 
 pub fn count_clipboard_entries(conn: &Connection, query: Option<&str>) -> u32 {
     let like = query.map(|value| format!("%{value}%"));
-    if let Some(pattern) = like {
+    let result = if let Some(pattern) = like {
         conn.query_row(
             "SELECT COUNT(*) FROM clipboard_history WHERE kind = 'text' AND content LIKE ?1",
             [pattern],
             |row| row.get::<_, i64>(0),
         )
-        .map(|count| count as u32)
-        .unwrap_or(0)
     } else {
         conn.query_row("SELECT COUNT(*) FROM clipboard_history", [], |row| {
             row.get::<_, i64>(0)
         })
-        .map(|count| count as u32)
-        .unwrap_or(0)
+    };
+
+    match result {
+        Ok(count) => count.max(0) as u32,
+        Err(error) => {
+            tracing::warn!(
+                filtered = query.is_some(),
+                error = %error,
+                "failed to count clipboard entries"
+            );
+            0
+        }
     }
 }
 
@@ -246,45 +304,64 @@ pub fn list_clipboard_entries(
     sql.push_str(" OFFSET ");
     sql.push_str(&offset.to_string());
 
-    if let Some(pattern) = like {
-        conn.prepare(&sql)
-            .and_then(|mut stmt| {
-                stmt.query_map([pattern], map_clipboard_row)
-                    .and_then(|rows| rows.collect())
-            })
-            .unwrap_or_default()
+    let result = if let Some(pattern) = like {
+        conn.prepare(&sql).and_then(|mut stmt| {
+            stmt.query_map([pattern], map_clipboard_row)
+                .and_then(|rows| rows.collect())
+        })
     } else {
-        conn.prepare(&sql)
-            .and_then(|mut stmt| {
-                stmt.query_map([], map_clipboard_row)
-                    .and_then(|rows| rows.collect())
-            })
-            .unwrap_or_default()
+        conn.prepare(&sql).and_then(|mut stmt| {
+            stmt.query_map([], map_clipboard_row)
+                .and_then(|rows| rows.collect())
+        })
+    };
+
+    match result {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(
+                filtered = query.is_some(),
+                limit = limit,
+                offset = offset,
+                error = %error,
+                "failed to list clipboard entries"
+            );
+            Vec::new()
+        }
     }
 }
 
 pub fn delete_clipboard_entry(conn: &Connection, id: i64) -> Result<Option<String>, ()> {
-    let image_content = conn
-        .query_row(
+    let image_content = optional_db_row(
+        conn.query_row(
             "SELECT content FROM clipboard_history WHERE id = ?1 AND kind = 'image'",
             [id],
             |row| row.get::<_, String>(0),
-        )
-        .ok();
-    if conn
-        .execute("DELETE FROM clipboard_history WHERE id = ?1", [id])
-        .map(|count| count > 0)
-        .unwrap_or(false)
-    {
-        Ok(image_content)
-    } else {
-        Err(())
+        ),
+        "load clipboard image content for delete",
+    );
+    match conn.execute("DELETE FROM clipboard_history WHERE id = ?1", [id]) {
+        Ok(count) if count > 0 => Ok(image_content),
+        Ok(_) => Err(()),
+        Err(error) => {
+            tracing::warn!(
+                entry_id = id,
+                error = %error,
+                "failed to delete clipboard entry"
+            );
+            Err(())
+        }
     }
 }
 
 pub fn clear_clipboard_history(conn: &Connection) -> u32 {
-    conn.execute("DELETE FROM clipboard_history WHERE pinned = 0", [])
-        .unwrap_or(0) as u32
+    match conn.execute("DELETE FROM clipboard_history WHERE pinned = 0", []) {
+        Ok(count) => count as u32,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to clear clipboard history");
+            0
+        }
+    }
 }
 
 pub fn purge_clipboard_history_by_retention(conn: &Connection, retention: &str) -> u32 {
@@ -295,12 +372,21 @@ pub fn purge_clipboard_history_by_retention(conn: &Connection, retention: &str) 
         "years" => Local::now() - Duration::days(365),
         _ => return 0,
     };
-    conn.execute(
+    match conn.execute(
         "DELETE FROM clipboard_history
          WHERE pinned = 0 AND created_at < ?1",
         [cutoff.to_rfc3339()],
-    )
-    .unwrap_or(0) as u32
+    ) {
+        Ok(count) => count as u32,
+        Err(error) => {
+            tracing::warn!(
+                retention = %retention,
+                error = %error,
+                "failed to purge clipboard history by retention"
+            );
+            0
+        }
+    }
 }
 
 pub fn set_clipboard_entry_pinned(
@@ -308,11 +394,18 @@ pub fn set_clipboard_entry_pinned(
     id: i64,
     pinned: bool,
 ) -> Option<ClipboardEntry> {
-    conn.execute(
+    if let Err(error) = conn.execute(
         "UPDATE clipboard_history SET pinned = ?1 WHERE id = ?2",
         params![pinned as i32, id],
-    )
-    .ok()?;
+    ) {
+        tracing::warn!(
+            entry_id = id,
+            pinned = pinned,
+            error = %error,
+            "failed to set clipboard entry pinned state"
+        );
+        return None;
+    }
     get_clipboard_entry(conn, id)
 }
 
@@ -337,16 +430,26 @@ const SNIPPET_SELECT: &str = "
 ";
 
 pub fn list_snippet_groups(conn: &Connection) -> Vec<SnippetGroup> {
-    conn.prepare(
+    match conn.prepare(
         "SELECT id, name, color, sort_order, created_at, updated_at
          FROM snippet_groups
          ORDER BY sort_order ASC, name COLLATE NOCASE ASC, id ASC",
-    )
-    .and_then(|mut stmt| {
-        stmt.query_map([], map_snippet_group_row)
+    ) {
+        Ok(mut stmt) => match stmt
+            .query_map([], map_snippet_group_row)
             .and_then(|rows| rows.collect())
-    })
-    .unwrap_or_default()
+        {
+            Ok(groups) => groups,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to list snippet groups");
+                Vec::new()
+            }
+        },
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to prepare snippet groups query");
+            Vec::new()
+        }
+    }
 }
 
 pub fn add_snippet_group(
@@ -370,8 +473,7 @@ pub fn add_snippet_group(
         params![name, color, sort_order, now],
     )
     .map_err(map_snippet_db_error)?;
-    get_snippet_group(conn, conn.last_insert_rowid())
-        .ok_or_else(|| "分组保存失败".to_string())
+    get_snippet_group(conn, conn.last_insert_rowid()).ok_or_else(|| "分组保存失败".to_string())
 }
 
 pub fn update_snippet_group(
@@ -404,10 +506,27 @@ pub fn update_snippet_group(
 }
 
 pub fn delete_snippet_group(conn: &Connection, id: i64) -> bool {
-    let _ = conn.execute("UPDATE snippets SET group_id = NULL WHERE group_id = ?1", [id]);
-    conn.execute("DELETE FROM snippet_groups WHERE id = ?1", [id])
-        .map(|count| count > 0)
-        .unwrap_or(false)
+    if let Err(error) = conn.execute(
+        "UPDATE snippets SET group_id = NULL WHERE group_id = ?1",
+        [id],
+    ) {
+        tracing::warn!(
+            group_id = id,
+            error = %error,
+            "failed to unassign snippets before deleting group"
+        );
+    }
+    match conn.execute("DELETE FROM snippet_groups WHERE id = ?1", [id]) {
+        Ok(count) => count > 0,
+        Err(error) => {
+            tracing::warn!(
+                group_id = id,
+                error = %error,
+                "failed to delete snippet group"
+            );
+            false
+        }
+    }
 }
 
 pub fn list_snippets(
@@ -456,17 +575,27 @@ pub fn list_snippets(
         }
     });
 
-    conn.prepare(&sql)
-        .and_then(|mut stmt| {
-            stmt.query_map(params_from_iter(values.iter()), map_snippet_row)
-                .and_then(|rows| rows.collect())
-        })
-        .unwrap_or_default()
+    match conn.prepare(&sql).and_then(|mut stmt| {
+        stmt.query_map(params_from_iter(values.iter()), map_snippet_row)
+            .and_then(|rows| rows.collect())
+    }) {
+        Ok(snippets) => snippets,
+        Err(error) => {
+            tracing::warn!(
+                filtered = query.is_some(),
+                group_id = group_id,
+                sort = %sort.unwrap_or("smart"),
+                error = %error,
+                "failed to list snippets"
+            );
+            Vec::new()
+        }
+    }
 }
 
 pub fn get_snippet(conn: &Connection, id: i64) -> Option<Snippet> {
     let sql = format!("{SNIPPET_SELECT} WHERE s.id = ?1 AND s.archived_at IS NULL");
-    conn.query_row(&sql, [id], map_snippet_row).ok()
+    optional_db_row(conn.query_row(&sql, [id], map_snippet_row), "load snippet")
 }
 
 pub fn add_snippet(
@@ -580,9 +709,17 @@ pub fn touch_snippet_usage(conn: &Connection, id: i64) -> Result<Snippet, String
 }
 
 pub fn delete_snippet(conn: &Connection, id: i64) -> bool {
-    conn.execute("DELETE FROM snippets WHERE id = ?1", [id])
-        .map(|count| count > 0)
-        .unwrap_or(false)
+    match conn.execute("DELETE FROM snippets WHERE id = ?1", [id]) {
+        Ok(count) => count > 0,
+        Err(error) => {
+            tracing::warn!(
+                snippet_id = id,
+                error = %error,
+                "failed to delete snippet"
+            );
+            false
+        }
+    }
 }
 
 fn map_clipboard_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
@@ -601,10 +738,21 @@ fn map_clipboard_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry
 }
 
 fn map_snippet_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snippet> {
+    let id = row.get(0)?;
     let tags_raw: String = row.get(3)?;
-    let tags = serde_json::from_str(&tags_raw).unwrap_or_default();
+    let tags = match serde_json::from_str(&tags_raw) {
+        Ok(tags) => tags,
+        Err(error) => {
+            tracing::debug!(
+                snippet_id = id,
+                error = %error,
+                "failed to parse snippet tags"
+            );
+            Vec::new()
+        }
+    };
     Ok(Snippet {
-        id: row.get(0)?,
+        id,
         title: row.get(1)?,
         content: row.get(2)?,
         tags,
@@ -633,31 +781,43 @@ fn map_snippet_group_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SnippetGro
 }
 
 fn get_snippet_group(conn: &Connection, id: i64) -> Option<SnippetGroup> {
-    conn.query_row(
-        "SELECT id, name, color, sort_order, created_at, updated_at
+    optional_db_row(
+        conn.query_row(
+            "SELECT id, name, color, sort_order, created_at, updated_at
          FROM snippet_groups WHERE id = ?1",
-        [id],
-        map_snippet_group_row,
+            [id],
+            map_snippet_group_row,
+        ),
+        "load snippet group",
     )
-    .ok()
 }
 
 fn next_snippet_sort_order(conn: &Connection) -> i64 {
-    conn.query_row(
+    match conn.query_row(
         "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM snippets",
         [],
         |row| row.get::<_, i64>(0),
-    )
-    .unwrap_or(1)
+    ) {
+        Ok(sort_order) => sort_order,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to load next snippet sort order");
+            1
+        }
+    }
 }
 
 fn next_group_sort_order(conn: &Connection) -> i64 {
-    conn.query_row(
+    match conn.query_row(
         "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM snippet_groups",
         [],
         |row| row.get::<_, i64>(0),
-    )
-    .unwrap_or(1)
+    ) {
+        Ok(sort_order) => sort_order,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to load next snippet group sort order");
+            1
+        }
+    }
 }
 
 fn normalize_tags(tags: &[String]) -> Vec<String> {
@@ -695,4 +855,19 @@ fn map_snippet_db_error(error: rusqlite::Error) -> String {
 
 fn now_iso() -> String {
     Local::now().to_rfc3339()
+}
+
+fn optional_db_row<T>(result: rusqlite::Result<T>, operation: &'static str) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(SqliteError::QueryReturnedNoRows) => None,
+        Err(error) => {
+            tracing::warn!(
+                operation = %operation,
+                error = %error,
+                "database lookup failed"
+            );
+            None
+        }
+    }
 }

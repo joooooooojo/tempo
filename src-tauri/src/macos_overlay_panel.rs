@@ -96,7 +96,7 @@ pub fn hide_overlay(app: &AppHandle, label: &str) {
     }
 
     if let Some(window) = app.get_webview_window(label) {
-        let _ = window.hide();
+        crate::logging::debug_if_err(window.hide(), "hide macos overlay fallback window");
     }
 }
 
@@ -163,7 +163,10 @@ pub fn install_shelf_outside_click_monitor(app: &AppHandle, label: &'static str)
 
     let local_block = ConcreteBlock::new(move |event: *mut Object| -> *mut Object {
         if should_close_shelf_for_current_mouse_location(&app_for_local, label, generation) {
-            let _ = crate::auxiliary_windows::hide_shelf_picker_window(&app_for_local);
+            crate::logging::debug_if_err(
+                crate::auxiliary_windows::hide_shelf_picker_window(&app_for_local),
+                "hide shelf picker from local macos monitor",
+            );
         }
         event
     })
@@ -171,7 +174,10 @@ pub fn install_shelf_outside_click_monitor(app: &AppHandle, label: &'static str)
 
     let global_block = ConcreteBlock::new(move |_event: *mut Object| {
         if should_close_shelf_for_current_mouse_location(&app_for_global, label, generation) {
-            let _ = crate::auxiliary_windows::hide_shelf_picker_window(&app_for_global);
+            crate::logging::debug_if_err(
+                crate::auxiliary_windows::hide_shelf_picker_window(&app_for_global),
+                "hide shelf picker from global macos monitor",
+            );
         }
     })
     .copy();
@@ -218,10 +224,16 @@ pub fn install_shelf_outside_click_monitor(app: &AppHandle, label: &'static str)
 pub fn remove_shelf_outside_click_monitor() {
     SHELF_OUTSIDE_CLICK_MONITOR_GENERATION.fetch_add(1, Ordering::Relaxed);
 
-    let tokens = shelf_outside_click_monitors()
-        .lock()
-        .ok()
-        .and_then(|mut monitors| monitors.take());
+    let tokens = match shelf_outside_click_monitors().lock() {
+        Ok(mut monitors) => monitors.take(),
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                "failed to lock shelf outside click monitor tokens for removal"
+            );
+            None
+        }
+    };
 
     if let Some(tokens) = tokens {
         unsafe {
@@ -242,7 +254,13 @@ fn should_close_shelf_for_current_mouse_location(
 
     let visible = app
         .get_webview_window(label)
-        .and_then(|window| window.is_visible().ok())
+        .map(|window| match window.is_visible() {
+            Ok(visible) => visible,
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to read macos shelf visibility");
+                false
+            }
+        })
         .unwrap_or(false);
     if !visible {
         return false;
@@ -259,22 +277,25 @@ fn current_mouse_location_is_inside_window(app: &AppHandle, label: &str) -> bool
     let inside = Arc::new(AtomicBool::new(false));
     let inside_for_webview = Arc::clone(&inside);
 
-    let _ = window.with_webview(move |webview| unsafe {
-        use objc::{msg_send, sel, sel_impl};
+    crate::logging::debug_if_err(
+        window.with_webview(move |webview| unsafe {
+            use objc::{msg_send, sel, sel_impl};
 
-        let ns_window = webview.ns_window().cast::<Object>();
-        if ns_window.is_null() {
-            return;
-        }
+            let ns_window = webview.ns_window().cast::<Object>();
+            if ns_window.is_null() {
+                return;
+            }
 
-        let Some(event_class) = Class::get("NSEvent") else {
-            return;
-        };
+            let Some(event_class) = Class::get("NSEvent") else {
+                return;
+            };
 
-        let frame: CocoaRect = msg_send![ns_window, frame];
-        let point: CocoaPoint = msg_send![event_class, mouseLocation];
-        inside_for_webview.store(cocoa_point_in_rect(point, frame), Ordering::Relaxed);
-    });
+            let frame: CocoaRect = msg_send![ns_window, frame];
+            let point: CocoaPoint = msg_send![event_class, mouseLocation];
+            inside_for_webview.store(cocoa_point_in_rect(point, frame), Ordering::Relaxed);
+        }),
+        "check macos shelf mouse location",
+    );
 
     inside.load(Ordering::Relaxed)
 }

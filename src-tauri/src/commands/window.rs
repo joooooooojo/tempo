@@ -13,7 +13,7 @@ pub fn hide_to_tray(app: &AppHandle) {
 
     #[cfg(not(target_os = "macos"))]
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        crate::logging::debug_if_err(window.hide(), "hide main window to tray");
     }
 }
 
@@ -36,7 +36,7 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
     }
 
     if let Some(splash) = app.get_webview_window("splashscreen") {
-        let _ = splash.close();
+        crate::logging::debug_if_err(splash.close(), "close splashscreen window");
     }
 
     Ok(())
@@ -44,9 +44,10 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn debug_log(scope: String, message: String) {
-    #[cfg(debug_assertions)]
-    eprintln!("[tempo-debug][{scope}] {message}");
-
-    #[cfg(not(debug_assertions))]
-    let _ = (scope, message);
+    tracing::debug!(
+        target: "tempo::frontend",
+        scope = %crate::logging::sanitize_log_value(&scope),
+        message_chars = message.chars().count(),
+        "frontend debug log"
+    );
 }

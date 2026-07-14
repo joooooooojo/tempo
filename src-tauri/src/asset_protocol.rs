@@ -38,7 +38,14 @@ pub fn asset_protocol_response(
 
     let asset_dir = match asset_dir(app, subdir) {
         Ok(dir) => dir,
-        Err(_) => return empty_response(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(error) => {
+            tracing::warn!(
+                subdir = %subdir,
+                error = %error,
+                "failed to resolve asset protocol directory"
+            );
+            return empty_response(StatusCode::INTERNAL_SERVER_ERROR);
+        }
     };
     let path = asset_dir.join(&file_name);
     let canonical_path = match path.canonicalize() {
@@ -70,7 +77,10 @@ pub fn asset_protocol_response(
             .header(CONTENT_LENGTH, bytes.len())
             .body(bytes)
             .unwrap(),
-        Err(_) => empty_response(StatusCode::NOT_FOUND),
+        Err(error) => {
+            tracing::debug!(subdir = %subdir, error = %error, "failed to read asset protocol file");
+            empty_response(StatusCode::NOT_FOUND)
+        }
     }
 }
 

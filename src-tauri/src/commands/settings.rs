@@ -19,7 +19,10 @@ pub fn get_settings(app: AppHandle, state: tauri::State<AppState>) -> Settings {
     settings.storage_dir = current_storage_dir(&app)
         .or_else(|_| default_storage_dir(&app))
         .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .unwrap_or_else(|error| {
+            tracing::debug!(error = %error, "failed to resolve settings storage directory");
+            String::new()
+        });
     settings
 }
 
@@ -104,7 +107,10 @@ pub fn update_settings(
     {
         current.pomodoro_float_enabled = v;
         if !v {
-            let _ = crate::auxiliary_windows::hide_pomodoro_float_window(&app);
+            crate::logging::debug_if_err(
+                crate::auxiliary_windows::hide_pomodoro_float_window(&app),
+                "hide pomodoro float after disabling setting",
+            );
         }
     }
     if let Some(v) = settings
@@ -194,14 +200,14 @@ pub fn set_storage_dir(
     let target_clipboard_images_dir = target_dir.join("clipboard-images");
 
     let mut conn_guard = state.db.lock();
-    conn_guard
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-        .ok();
+    if let Err(error) = conn_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        tracing::warn!(error = %error, "failed to checkpoint database before storage migration");
+    }
     vacuum_database_into(&conn_guard, &target_db)?;
     copy_dir_contents(&current_markdown_dir, &target_markdown_dir)?;
     copy_dir_contents(&current_clipboard_images_dir, &target_clipboard_images_dir)?;
 
-    let next_conn = crate::db::init_db(&target_db);
+    let next_conn = crate::db::init_db(&target_db)?;
     rewrite_markdown_storage_urls(&next_conn, &current_markdown_dir, &target_markdown_dir)?;
     save_storage_dir(&app, &target_dir)?;
     *conn_guard = next_conn;
@@ -223,7 +229,10 @@ fn settings_with_storage_dir(app: &AppHandle, state: &AppState) -> Settings {
     settings.storage_dir = current_storage_dir(app)
         .or_else(|_| default_storage_dir(app))
         .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .unwrap_or_else(|error| {
+            tracing::debug!(error = %error, "failed to resolve settings storage directory");
+            String::new()
+        });
     settings
 }
 
@@ -361,11 +370,29 @@ fn cleanup_old_storage_files(
         return;
     }
 
-    let _ = std::fs::remove_file(old_db);
-    let _ = std::fs::remove_file(old_dir.join("screen_time.db-wal"));
-    let _ = std::fs::remove_file(old_dir.join("screen_time.db-shm"));
-    let _ = std::fs::remove_dir_all(old_markdown_dir);
-    let _ = std::fs::remove_dir_all(old_clipboard_images_dir);
+    remove_old_storage_file(old_db, "old database file");
+    remove_old_storage_file(&old_dir.join("screen_time.db-wal"), "old database wal file");
+    remove_old_storage_file(&old_dir.join("screen_time.db-shm"), "old database shm file");
+    remove_old_storage_dir(old_markdown_dir, "old markdown image directory");
+    remove_old_storage_dir(old_clipboard_images_dir, "old clipboard image directory");
+}
+
+fn remove_old_storage_file(path: &Path, label: &'static str) {
+    if !path.exists() {
+        return;
+    }
+    if let Err(error) = std::fs::remove_file(path) {
+        tracing::warn!(label = %label, error = %error, "failed to remove old storage file");
+    }
+}
+
+fn remove_old_storage_dir(path: &Path, label: &'static str) {
+    if !path.exists() {
+        return;
+    }
+    if let Err(error) = std::fs::remove_dir_all(path) {
+        tracing::warn!(label = %label, error = %error, "failed to remove old storage directory");
+    }
 }
 #[tauri::command]
 pub fn reset_today(state: tauri::State<AppState>) {
@@ -375,20 +402,29 @@ pub fn reset_today(state: tauri::State<AppState>) {
 pub fn do_reset_today(state: &AppState) {
     let conn = state.db.lock();
     let today = today_str();
-    conn.execute("DELETE FROM screen_time_daily WHERE date = ?1", [&today])
-        .ok();
-    conn.execute("DELETE FROM screen_time_hourly WHERE date = ?1", [&today])
-        .ok();
-    conn.execute("DELETE FROM app_usage WHERE date = ?1", [&today])
-        .ok();
+    if let Err(error) = conn.execute("DELETE FROM screen_time_daily WHERE date = ?1", [&today]) {
+        tracing::warn!(error = %error, "failed to reset today's daily screen time");
+    }
+    if let Err(error) = conn.execute("DELETE FROM screen_time_hourly WHERE date = ?1", [&today]) {
+        tracing::warn!(error = %error, "failed to reset today's hourly screen time");
+    }
+    if let Err(error) = conn.execute("DELETE FROM app_usage WHERE date = ?1", [&today]) {
+        tracing::warn!(error = %error, "failed to reset today's app usage");
+    }
 }
 
 #[tauri::command]
 pub fn reset_all(state: tauri::State<AppState>) {
     let conn = state.db.lock();
-    conn.execute("DELETE FROM screen_time_daily", []).ok();
-    conn.execute("DELETE FROM screen_time_hourly", []).ok();
-    conn.execute("DELETE FROM app_usage", []).ok();
+    if let Err(error) = conn.execute("DELETE FROM screen_time_daily", []) {
+        tracing::warn!(error = %error, "failed to reset all daily screen time");
+    }
+    if let Err(error) = conn.execute("DELETE FROM screen_time_hourly", []) {
+        tracing::warn!(error = %error, "failed to reset all hourly screen time");
+    }
+    if let Err(error) = conn.execute("DELETE FROM app_usage", []) {
+        tracing::warn!(error = %error, "failed to reset all app usage");
+    }
 }
 #[tauri::command]
 pub fn complete_onboarding(state: tauri::State<AppState>) {

@@ -33,7 +33,7 @@ pub fn create_snippet_group(
 ) -> Result<SnippetGroup, String> {
     let conn = state.db.lock();
     let group = add_snippet_group(&conn, &name, color.as_deref())?;
-    let _ = app.emit("snippets-update", ());
+    emit_snippets_update(&app);
     Ok(group)
 }
 
@@ -47,7 +47,7 @@ pub fn update_snippet_group_command(
 ) -> Result<SnippetGroup, String> {
     let conn = state.db.lock();
     let group = update_snippet_group(&conn, id, &name, color.as_deref())?;
-    let _ = app.emit("snippets-update", ());
+    emit_snippets_update(&app);
     Ok(group)
 }
 
@@ -59,7 +59,7 @@ pub fn delete_snippet_group_command(
 ) -> Result<(), String> {
     let conn = state.db.lock();
     if delete_snippet_group(&conn, id) {
-        let _ = app.emit("snippets-update", ());
+        emit_snippets_update(&app);
         Ok(())
     } else {
         Err("分组不存在".into())
@@ -85,7 +85,7 @@ pub fn create_snippet(
         normalize_group_id(group_id),
         shortcut.as_deref(),
     )?;
-    let _ = app.emit("snippets-update", ());
+    emit_snippets_update(&app);
     Ok(snippet)
 }
 
@@ -110,7 +110,7 @@ pub fn update_snippet_command(
         normalize_group_id(group_id),
         shortcut.as_deref(),
     )?;
-    let _ = app.emit("snippets-update", ());
+    emit_snippets_update(&app);
     Ok(snippet)
 }
 
@@ -122,7 +122,7 @@ pub fn duplicate_snippet_command(
 ) -> Result<Snippet, String> {
     let conn = state.db.lock();
     let snippet = duplicate_snippet(&conn, id)?;
-    let _ = app.emit("snippets-update", ());
+    emit_snippets_update(&app);
     Ok(snippet)
 }
 
@@ -135,7 +135,7 @@ pub fn pin_snippet_command(
 ) -> Result<Snippet, String> {
     let conn = state.db.lock();
     let snippet = set_snippet_pinned(&conn, id, pinned)?;
-    let _ = app.emit("snippets-update", ());
+    emit_snippets_update(&app);
     Ok(snippet)
 }
 
@@ -147,7 +147,7 @@ pub fn delete_snippet_command(
 ) -> Result<(), String> {
     let conn = state.db.lock();
     if delete_snippet(&conn, id) {
-        let _ = app.emit("snippets-update", ());
+        emit_snippets_update(&app);
         Ok(())
     } else {
         Err("短语不存在".into())
@@ -169,8 +169,12 @@ pub fn copy_snippet_to_clipboard(
 
     let conn = state.db.lock();
     let snippet = touch_snippet_usage(&conn, id)?;
-    let _ = app.emit("snippets-update", ());
+    emit_snippets_update(&app);
     Ok(snippet)
+}
+
+fn emit_snippets_update(app: &tauri::AppHandle) {
+    crate::logging::debug_if_err(app.emit("snippets-update", ()), "emit snippets update");
 }
 
 fn normalize_group_id(group_id: Option<i64>) -> Option<i64> {

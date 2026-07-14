@@ -3,7 +3,7 @@ use crate::db::{
     WeeklyReport, MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS,
 };
 use chrono::Local;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Error as SqliteError};
 
 pub(crate) const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
 
@@ -23,13 +23,22 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
         let conn = state.db.lock();
         let mut hourly = Vec::new();
         for h in 0..24 {
-            let secs: i64 = conn
-                .query_row(
-                    "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
-                    params![date, h],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
+            let secs: i64 = match conn.query_row(
+                "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
+                params![date, h],
+                |r| r.get(0),
+            ) {
+                Ok(seconds) => seconds,
+                Err(SqliteError::QueryReturnedNoRows) => 0,
+                Err(error) => {
+                    tracing::warn!(
+                        hour = h,
+                        error = %error,
+                        "failed to load hourly screen time for daily report"
+                    );
+                    0
+                }
+            };
             hourly.push(HourlyData {
                 hour: h,
                 seconds: secs.clamp(0, MAX_HOURLY_SECONDS),
@@ -124,7 +133,10 @@ fn weekly_top_apps(conn: &Connection, start_date: &str, end_date: &str) -> Vec<A
          ORDER BY SUM(seconds) DESC, app_name ASC",
     ) {
         Ok(stmt) => stmt,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to prepare weekly top apps query");
+            return Vec::new();
+        }
     };
 
     let rows = match stmt.query_map(params![start_date, end_date], |r| {
@@ -137,12 +149,23 @@ fn weekly_top_apps(conn: &Connection, start_date: &str, end_date: &str) -> Vec<A
         })
     }) {
         Ok(rows) => rows,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to query weekly top apps");
+            return Vec::new();
+        }
     };
 
-    rows.filter_map(|row| row.ok())
-        .filter(|app| !crate::db::is_system_host_usage(&app.app_name, &app.process_name))
-        .collect()
+    let mut apps = Vec::new();
+    for row in rows {
+        match row {
+            Ok(app) if !crate::db::is_system_host_usage(&app.app_name, &app.process_name) => {
+                apps.push(app);
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "failed to read weekly top app row"),
+        }
+    }
+    apps
 }
 pub(crate) fn format_duration(seconds: i64) -> String {
     let h = seconds / 3600;

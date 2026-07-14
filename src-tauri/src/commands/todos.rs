@@ -52,7 +52,10 @@ pub fn check_pending_recurrences(app: &AppHandle, state: &AppState) {
         process_pending_recurrences(&conn)
     } {
         Ok(items) => items,
-        Err(_) => return,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to process pending todo recurrences");
+            return;
+        }
     };
 
     for todo in spawned {

@@ -1,6 +1,6 @@
 use chrono::Local;
 use parking_lot::Mutex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Error as SqliteError};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -352,7 +352,10 @@ fn storage_dir_has_data(path: &Path) -> bool {
 
     std::fs::read_dir(path)
         .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
+        .unwrap_or_else(|error| {
+            tracing::debug!(error = %error, "failed to inspect storage directory");
+            false
+        })
 }
 
 fn copy_storage_dir(source: &Path, target: &Path) -> Result<(), String> {
@@ -417,17 +420,20 @@ pub fn save_storage_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
 }
 
 pub fn db_path(app: &AppHandle) -> PathBuf {
-    current_storage_dir(app)
-        .or_else(|_| default_storage_dir(app))
-        .expect("storage dir")
-        .join("screen_time.db")
+    match current_storage_dir(app).or_else(|_| default_storage_dir(app)) {
+        Ok(storage_dir) => storage_dir.join("screen_time.db"),
+        Err(error) => {
+            tracing::error!(error = %error, "failed to resolve storage directory");
+            panic!("storage dir: {error}");
+        }
+    }
 }
 
-pub fn init_db(path: &PathBuf) -> Connection {
+pub fn init_db(path: &Path) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let conn = Connection::open(path).expect("open db");
+    let conn = Connection::open(path).map_err(|error| error.to_string())?;
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS screen_time_daily (
@@ -553,143 +559,215 @@ pub fn init_db(path: &PathBuf) -> Connection {
             ON clipboard_history(created_at DESC);
         ",
     )
-    .expect("init schema");
-    conn.execute(
-        "ALTER TABLE clipboard_history ADD COLUMN image_width INTEGER",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE clipboard_history ADD COLUMN image_height INTEGER",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE clipboard_history ADD COLUMN source_process TEXT",
-        [],
-    )
-    .ok();
-    conn.execute("ALTER TABLE app_usage ADD COLUMN icon_data_url TEXT", [])
-        .ok();
-    conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", [])
-        .ok();
-    conn.execute("ALTER TABLE todos ADD COLUMN pinned_at TEXT", [])
-        .ok();
-    let added_todo_content = conn
-        .execute(
+    .map_err(|error| error.to_string())?;
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE clipboard_history ADD COLUMN image_width INTEGER",
+            [],
+        ),
+        "add clipboard image width column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE clipboard_history ADD COLUMN image_height INTEGER",
+            [],
+        ),
+        "add clipboard image height column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE clipboard_history ADD COLUMN source_process TEXT",
+            [],
+        ),
+        "add clipboard source process column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE app_usage ADD COLUMN icon_data_url TEXT", []),
+        "add app icon data column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", []),
+        "add todo due_at column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE todos ADD COLUMN pinned_at TEXT", []),
+        "add todo pinned_at column",
+    );
+    let added_todo_content = log_optional_migration(
+        conn.execute(
             "ALTER TABLE todos ADD COLUMN content TEXT NOT NULL DEFAULT ''",
             [],
-        )
-        .is_ok();
+        ),
+        "add todo content column",
+    );
     if added_todo_content {
-        conn.execute("UPDATE todos SET content = title WHERE content = ''", [])
-            .ok();
+        log_optional_migration(
+            conn.execute("UPDATE todos SET content = title WHERE content = ''", []),
+            "backfill todo content column",
+        );
     }
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none'",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN remind_1d INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN remind_1h INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN due_reminded_1d INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN due_reminded_1h INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN due_reminded_at INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN remind_custom_hours INTEGER",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN due_reminded_custom INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN recurrence_root_id INTEGER",
-        [],
-    )
-    .ok();
-    conn.execute("ALTER TABLE todos ADD COLUMN next_recurrence_at TEXT", [])
-        .ok();
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN subtasks_completion_snapshot TEXT",
-        [],
-    )
-    .ok();
-    conn.execute("ALTER TABLE snippets ADD COLUMN group_id INTEGER", [])
-        .ok();
-    conn.execute("ALTER TABLE snippets ADD COLUMN shortcut TEXT", [])
-        .ok();
-    conn.execute(
-        "ALTER TABLE snippets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "ALTER TABLE snippets ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-    conn.execute("ALTER TABLE snippets ADD COLUMN last_used_at TEXT", [])
-        .ok();
-    conn.execute("ALTER TABLE snippets ADD COLUMN archived_at TEXT", [])
-        .ok();
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_snippets_usage
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none'",
+            [],
+        ),
+        "add todo recurrence column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN remind_1d INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add todo remind_1d column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN remind_1h INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add todo remind_1h column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN due_reminded_1d INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add todo due_reminded_1d column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN due_reminded_1h INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add todo due_reminded_1h column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN due_reminded_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add todo due_reminded_at column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN remind_custom_hours INTEGER",
+            [],
+        ),
+        "add todo custom reminder column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN due_reminded_custom INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add todo custom reminder sent column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN recurrence_root_id INTEGER",
+            [],
+        ),
+        "add todo recurrence root column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE todos ADD COLUMN next_recurrence_at TEXT", []),
+        "add todo next recurrence column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE todos ADD COLUMN subtasks_completion_snapshot TEXT",
+            [],
+        ),
+        "add todo subtasks completion snapshot column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE snippets ADD COLUMN group_id INTEGER", []),
+        "add snippet group column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE snippets ADD COLUMN shortcut TEXT", []),
+        "add snippet shortcut column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE snippets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add snippet pinned column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "ALTER TABLE snippets ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        ),
+        "add snippet use_count column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE snippets ADD COLUMN last_used_at TEXT", []),
+        "add snippet last_used_at column",
+    );
+    log_optional_migration(
+        conn.execute("ALTER TABLE snippets ADD COLUMN archived_at TEXT", []),
+        "add snippet archived_at column",
+    );
+    log_optional_migration(
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_snippets_usage
          ON snippets(pinned DESC, sort_order ASC, last_used_at DESC, updated_at DESC)",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_snippets_shortcut
+            [],
+        ),
+        "create snippet usage index",
+    );
+    log_optional_migration(
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_snippets_shortcut
          ON snippets(shortcut)
          WHERE shortcut IS NOT NULL AND shortcut <> ''",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "UPDATE todos
+            [],
+        ),
+        "create snippet shortcut index",
+    );
+    log_optional_migration(
+        conn.execute(
+            "UPDATE todos
          SET due_at = NULL,
              remind_1d = 0,
              remind_1h = 0,
              remind_custom_hours = NULL
          WHERE recurrence != 'none'",
-        [],
-    )
-    .ok();
-    conn.execute(
-        "UPDATE todos
+            [],
+        ),
+        "normalize recurring todo due reminders",
+    );
+    log_optional_migration(
+        conn.execute(
+            "UPDATE todos
          SET recurrence_root_id = id
          WHERE recurrence != 'none' AND recurrence_root_id IS NULL",
-        [],
-    )
-    .ok();
-    conn.execute_batch(
-        "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;",
-    )
-    .ok();
-    conn
+            [],
+        ),
+        "backfill recurrence root id",
+    );
+    if let Err(error) = conn
+        .execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;")
+    {
+        tracing::warn!(error = %error, "failed to apply database pragmas");
+    }
+    Ok(conn)
+}
+
+fn log_optional_migration<T>(result: rusqlite::Result<T>, migration: &'static str) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::debug!(
+                migration = %migration,
+                error = %error,
+                "database migration skipped or failed"
+            );
+            false
+        }
+    }
 }
 
 pub fn get_setting(conn: &Connection, key: &str, default: &str) -> String {
@@ -700,12 +778,13 @@ pub fn get_setting(conn: &Connection, key: &str, default: &str) -> String {
 }
 
 pub fn set_setting(conn: &Connection, key: &str, value: &str) {
-    conn.execute(
+    if let Err(error) = conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![key, value],
-    )
-    .ok();
+    ) {
+        tracing::warn!(setting_key = key, error = %error, "failed to save setting");
+    }
 }
 
 pub fn load_settings(conn: &Connection) -> Settings {
@@ -740,7 +819,17 @@ pub fn load_settings(conn: &Connection) -> Settings {
             if raw.is_empty() {
                 None
             } else {
-                raw.parse().ok()
+                match raw.parse() {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        tracing::debug!(
+                            setting_key = "pomodoro_float_x",
+                            error = %error,
+                            "failed to parse numeric setting"
+                        );
+                        None
+                    }
+                }
             }
         },
         pomodoro_float_y: {
@@ -748,7 +837,17 @@ pub fn load_settings(conn: &Connection) -> Settings {
             if raw.is_empty() {
                 None
             } else {
-                raw.parse().ok()
+                match raw.parse() {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        tracing::debug!(
+                            setting_key = "pomodoro_float_y",
+                            error = %error,
+                            "failed to parse numeric setting"
+                        );
+                        None
+                    }
+                }
             }
         },
         clipboard_monitor_enabled: get_setting(conn, "clipboard_monitor_enabled", "true") == "true",
@@ -875,25 +974,39 @@ pub fn normalize_clipboard_history_retention(value: &str) -> String {
 
 pub fn get_pomodoro_sessions_today(conn: &Connection) -> u32 {
     let today = today_str();
-    conn.query_row(
+    match conn.query_row(
         "SELECT COUNT(*) FROM pomodoro_sessions
          WHERE date(started_at) = ?1
            AND ended_at IS NOT NULL
            AND (completed = 1 OR skipped = 1)",
         [today],
         |row| row.get::<_, i64>(0),
-    )
-    .unwrap_or(0)
-    .max(0) as u32
+    ) {
+        Ok(count) => count.max(0) as u32,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to count today's pomodoro sessions");
+            0
+        }
+    }
 }
 
 pub fn active_todo_title(conn: &Connection, todo_id: i64) -> Option<String> {
-    conn.query_row(
+    match conn.query_row(
         "SELECT title FROM todos WHERE id = ?1 AND completed = 0",
         [todo_id],
         |row| row.get(0),
-    )
-    .ok()
+    ) {
+        Ok(title) => Some(title),
+        Err(SqliteError::QueryReturnedNoRows) => None,
+        Err(error) => {
+            tracing::warn!(
+                todo_id = todo_id,
+                error = %error,
+                "failed to load active todo title"
+            );
+            None
+        }
+    }
 }
 
 pub fn start_pomodoro_work_session(
@@ -917,7 +1030,7 @@ pub fn finalize_pomodoro_work_session(
     completed: bool,
     skipped: bool,
 ) {
-    conn.execute(
+    if let Err(error) = conn.execute(
         "UPDATE pomodoro_sessions
          SET ended_at = ?1,
              duration_seconds = ?2,
@@ -931,13 +1044,18 @@ pub fn finalize_pomodoro_work_session(
             if skipped { 1 } else { 0 },
             session_id
         ],
-    )
-    .ok();
+    ) {
+        tracing::warn!(
+            session_id = session_id,
+            error = %error,
+            "failed to finalize pomodoro work session"
+        );
+    }
 }
 
 pub fn get_todo_focus_summary(conn: &Connection, todo_id: i64) -> TodoFocusSummary {
     let today = today_str();
-    conn.query_row(
+    match conn.query_row(
         "SELECT
             COALESCE(SUM(CASE WHEN completed = 1 AND date(started_at) = ?1 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN date(started_at) = ?1 THEN duration_seconds ELSE 0 END), 0),
@@ -957,15 +1075,24 @@ pub fn get_todo_focus_summary(conn: &Connection, todo_id: i64) -> TodoFocusSumma
                 last_focused_at: row.get(4)?,
             })
         },
-    )
-    .unwrap_or(TodoFocusSummary {
-        todo_id,
-        sessions_today: 0,
-        total_seconds_today: 0,
-        total_seconds_all: 0,
-        sessions_all: 0,
-        last_focused_at: None,
-    })
+    ) {
+        Ok(summary) => summary,
+        Err(error) => {
+            tracing::warn!(
+                todo_id = todo_id,
+                error = %error,
+                "failed to load todo focus summary"
+            );
+            TodoFocusSummary {
+                todo_id,
+                sessions_today: 0,
+                total_seconds_today: 0,
+                total_seconds_all: 0,
+                sessions_all: 0,
+                last_focused_at: None,
+            }
+        }
+    }
 }
 
 pub fn get_todo_focus_summaries(conn: &Connection, todo_ids: &[i64]) -> Vec<TodoFocusSummary> {
@@ -1047,30 +1174,41 @@ pub fn add_screen_time(conn: &Connection, date: &str, hour: u32, seconds: i64) -
         return 0;
     }
 
-    let current_hour_seconds: i64 = conn
-        .query_row(
-            "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
-            params![date, hour as i64],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
+    let current_hour_seconds: i64 = match conn.query_row(
+        "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
+        params![date, hour as i64],
+        |r| r.get(0),
+    ) {
+        Ok(seconds) => seconds,
+        Err(SqliteError::QueryReturnedNoRows) => 0,
+        Err(error) => {
+            tracing::warn!(
+                hour = hour,
+                error = %error,
+                "failed to load current hourly screen time"
+            );
+            0
+        }
+    };
     let seconds = seconds.min((MAX_HOURLY_SECONDS - current_hour_seconds).max(0));
     if seconds <= 0 {
         return 0;
     }
 
-    conn.execute(
+    if let Err(error) = conn.execute(
         "INSERT INTO screen_time_daily (date, total_seconds) VALUES (?1, ?2)
          ON CONFLICT(date) DO UPDATE SET total_seconds = MIN(?3, total_seconds + excluded.total_seconds)",
         params![date, seconds, MAX_DAILY_SECONDS],
-    )
-    .ok();
-    conn.execute(
+    ) {
+        tracing::warn!(error = %error, "failed to upsert daily screen time");
+    }
+    if let Err(error) = conn.execute(
         "INSERT INTO screen_time_hourly (date, hour, seconds) VALUES (?1, ?2, ?3)
          ON CONFLICT(date, hour) DO UPDATE SET seconds = MIN(?4, seconds + excluded.seconds)",
         params![date, hour as i64, seconds, MAX_HOURLY_SECONDS],
-    )
-    .ok();
+    ) {
+        tracing::warn!(hour = hour, error = %error, "failed to upsert hourly screen time");
+    }
     seconds
 }
 
@@ -1087,7 +1225,7 @@ pub fn add_app_time(
     }
 
     let category = categorize(name, process);
-    conn.execute(
+    if let Err(error) = conn.execute(
         "INSERT INTO app_usage (date, app_name, process_name, category, seconds, icon_data_url)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(date, app_name) DO UPDATE SET
@@ -1096,18 +1234,23 @@ pub fn add_app_time(
            category = excluded.category,
            icon_data_url = COALESCE(excluded.icon_data_url, app_usage.icon_data_url)",
         params![date, name, process, category, seconds, icon_data_url],
-    )
-    .ok();
+    ) {
+        tracing::warn!(seconds = seconds, error = %error, "failed to upsert app usage");
+    }
 }
 
 pub fn top_apps(conn: &Connection, date: &str, limit: i64) -> Vec<AppUsage> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT app_name, process_name, category, seconds, icon_data_url FROM app_usage
+    let mut stmt = match conn.prepare(
+        "SELECT app_name, process_name, category, seconds, icon_data_url FROM app_usage
              WHERE date = ?1 ORDER BY seconds DESC",
-        )
-        .unwrap();
-    stmt.query_map(params![date], |r| {
+    ) {
+        Ok(stmt) => stmt,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to prepare top apps query");
+            return Vec::new();
+        }
+    };
+    let rows = match stmt.query_map(params![date], |r| {
         Ok(AppUsage {
             app_name: r.get(0)?,
             process_name: r.get(1)?,
@@ -1115,21 +1258,41 @@ pub fn top_apps(conn: &Connection, date: &str, limit: i64) -> Vec<AppUsage> {
             seconds: r.get(3)?,
             icon_data_url: r.get(4)?,
         })
-    })
-    .unwrap()
-    .filter_map(|x| x.ok())
-    .filter(|app| !is_system_host_usage(&app.app_name, &app.process_name))
-    .take(limit.max(0) as usize)
-    .collect()
+    }) {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to query top apps");
+            return Vec::new();
+        }
+    };
+
+    let mut apps = Vec::new();
+    for row in rows {
+        match row {
+            Ok(app) if !is_system_host_usage(&app.app_name, &app.process_name) => apps.push(app),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "failed to read top app row"),
+        }
+        if apps.len() >= limit.max(0) as usize {
+            break;
+        }
+    }
+    apps
 }
 
 pub fn get_daily_total(conn: &Connection, date: &str) -> i64 {
-    conn.query_row(
+    match conn.query_row(
         "SELECT COALESCE(total_seconds, 0) FROM screen_time_daily WHERE date = ?1",
         [date],
         |r| r.get(0),
-    )
-    .unwrap_or(0)
+    ) {
+        Ok(total) => total,
+        Err(SqliteError::QueryReturnedNoRows) => 0,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to load daily screen time total");
+            0
+        }
+    }
     .clamp(0, MAX_DAILY_SECONDS)
 }
 
@@ -1137,10 +1300,13 @@ pub fn cleanup_old_data(conn: &Connection) {
     let cutoff = (Local::now().date_naive() - chrono::Duration::days(30))
         .format("%Y-%m-%d")
         .to_string();
-    conn.execute("DELETE FROM screen_time_daily WHERE date < ?1", [&cutoff])
-        .ok();
-    conn.execute("DELETE FROM screen_time_hourly WHERE date < ?1", [&cutoff])
-        .ok();
-    conn.execute("DELETE FROM app_usage WHERE date < ?1", [&cutoff])
-        .ok();
+    if let Err(error) = conn.execute("DELETE FROM screen_time_daily WHERE date < ?1", [&cutoff]) {
+        tracing::warn!(error = %error, "failed to cleanup old daily screen time");
+    }
+    if let Err(error) = conn.execute("DELETE FROM screen_time_hourly WHERE date < ?1", [&cutoff]) {
+        tracing::warn!(error = %error, "failed to cleanup old hourly screen time");
+    }
+    if let Err(error) = conn.execute("DELETE FROM app_usage WHERE date < ?1", [&cutoff]) {
+        tracing::warn!(error = %error, "failed to cleanup old app usage");
+    }
 }

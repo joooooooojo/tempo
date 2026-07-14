@@ -12,7 +12,7 @@ use super::reports::format_duration;
 use super::todos::{check_pending_recurrences, mark_due_reminder_sent};
 
 pub fn start_tracker(app: AppHandle, state: AppState) {
-    std::thread::spawn(move || {
+    crate::logging::spawn_named("tempo-tracker", move || {
         let mut tick_count: u64 = 0;
         let mut last_tick = Instant::now();
         loop {
@@ -99,7 +99,7 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
     });
 }
 
-fn second_buckets(now: DateTime<Local>, seconds: i64) -> Vec<(String, u32, i64)> {
+pub(crate) fn second_buckets(now: DateTime<Local>, seconds: i64) -> Vec<(String, u32, i64)> {
     let mut buckets: Vec<(String, u32, i64)> = Vec::new();
 
     for offset in 1..=seconds {
@@ -128,19 +128,24 @@ fn update_tray_tooltip(app: &AppHandle, state: &AppState) {
     let tooltip = format!("今日屏幕时长: {}", format_duration(today));
     let app_handle = app.clone();
 
-    let _ = app.run_on_main_thread(move || {
+    if let Err(error) = app.run_on_main_thread(move || {
         if let Some(tray) = app_handle.tray_by_id("main") {
-            let _ = tray.set_tooltip(Some(&tooltip));
+            crate::logging::debug_if_err(tray.set_tooltip(Some(&tooltip)), "update tray tooltip");
         }
-    });
+    }) {
+        tracing::warn!(error = %error, "failed to dispatch tray tooltip update");
+    }
 }
 
 pub(crate) fn emit_on_main(app: &AppHandle, event: &str, payload: serde_json::Value) {
     let app_handle = app.clone();
     let event = event.to_string();
-    let _ = app.run_on_main_thread(move || {
-        let _ = app_handle.emit(&event, payload);
-    });
+    let event_for_log = event.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        crate::logging::debug_if_err(app_handle.emit(&event, payload), "emit app event");
+    }) {
+        tracing::warn!(event = %event_for_log, error = %error, "failed to dispatch app event");
+    }
 }
 
 fn check_reminders(app: &AppHandle, state: &AppState) {
@@ -194,7 +199,10 @@ fn check_todo_due_reminders(app: &AppHandle, state: &AppState) {
              WHERE completed = 0 AND due_at IS NOT NULL",
         ) {
             Ok(stmt) => stmt,
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to prepare todo due reminder query");
+                return;
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -212,11 +220,21 @@ fn check_todo_due_reminders(app: &AppHandle, state: &AppState) {
             ))
         }) {
             Ok(rows) => rows,
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to query todo due reminders");
+                return;
+            }
         };
 
         let mut pending: Vec<(i64, String, String, Option<i64>, &'static str)> = Vec::new();
-        for row in rows.filter_map(|row| row.ok()) {
+        for row in rows {
+            let row = match row {
+                Ok(row) => row,
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to read todo due reminder row");
+                    continue;
+                }
+            };
             let (
                 id,
                 title,
@@ -230,6 +248,7 @@ fn check_todo_due_reminders(app: &AppHandle, state: &AppState) {
                 reminded_at,
             ) = row;
             let Ok(due) = DateTime::parse_from_rfc3339(&due_at) else {
+                tracing::warn!(todo_id = id, "todo due_at has invalid rfc3339 value");
                 continue;
             };
             let due = due.with_timezone(&Local);
@@ -278,7 +297,14 @@ fn check_todo_due_reminders(app: &AppHandle, state: &AppState) {
         }
 
         for (id, title, lead, hours, flag) in &pending {
-            mark_due_reminder_sent(&conn, *id, flag).ok();
+            if let Err(error) = mark_due_reminder_sent(&conn, *id, flag) {
+                tracing::warn!(
+                    todo_id = *id,
+                    flag = %flag,
+                    error = %error,
+                    "failed to mark todo due reminder as sent"
+                );
+            }
             let _ = (title, lead, hours);
         }
 
@@ -300,7 +326,7 @@ fn check_todo_due_reminders(app: &AppHandle, state: &AppState) {
     }
 }
 
-fn is_in_night_range(now: &str, start: &str, end: &str) -> bool {
+pub(crate) fn is_in_night_range(now: &str, start: &str, end: &str) -> bool {
     if start <= end {
         now >= start && now <= end
     } else {

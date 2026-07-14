@@ -14,10 +14,18 @@ pub struct ForegroundApp {
 }
 
 pub fn extract_icon_png_bytes(app_name: &str, process_name: &str) -> Option<Vec<u8>> {
-    for candidate in icon_path_candidates(app_name, process_name) {
+    let candidates = icon_path_candidates(app_name, process_name);
+    let candidate_count = candidates.len();
+    for candidate in candidates {
         if let Some(bytes) = get_cached_icon_png_bytes(&candidate) {
             return Some(bytes);
         }
+    }
+    if candidate_count > 0 {
+        tracing::debug!(
+            candidate_count = candidate_count,
+            "failed to extract app icon from candidate paths"
+        );
     }
     None
 }
@@ -201,7 +209,10 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
                 process_name: process,
             })
         }
-        Err(_) => None,
+        Err(error) => {
+            tracing::debug!(error = ?error, "failed to read active foreground window");
+            None
+        }
     }
 }
 
@@ -435,6 +446,7 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
     unsafe {
         let hdc = CreateCompatibleDC(HDC::default());
         if hdc.0.is_null() {
+            tracing::debug!("failed to create icon render device context");
             let _ = DestroyIcon(icon);
             return None;
         }
@@ -460,7 +472,8 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
             0,
         ) {
             Ok(bitmap) => bitmap,
-            Err(_) => {
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to create icon render bitmap");
                 let _ = DeleteDC(hdc);
                 let _ = DestroyIcon(icon);
                 return None;
@@ -469,6 +482,9 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
 
         let old_object = SelectObject(hdc, bitmap);
         let drawn = DrawIconEx(hdc, 0, 0, icon, ICON_SIZE, ICON_SIZE, 0, None, DI_NORMAL).is_ok();
+        if !drawn {
+            tracing::debug!("failed to draw app icon");
+        }
         let _ = SelectObject(hdc, old_object);
         let _ = DestroyIcon(icon);
 
@@ -531,8 +547,28 @@ fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
         let mut encoder = png::Encoder::new(&mut bytes, width, height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().ok()?;
-        writer.write_image_data(rgba).ok()?;
+        let mut writer = match encoder.write_header() {
+            Ok(writer) => writer,
+            Err(error) => {
+                tracing::debug!(
+                    width = width,
+                    height = height,
+                    error = %error,
+                    "failed to prepare app icon png encoder"
+                );
+                return None;
+            }
+        };
+        if let Err(error) = writer.write_image_data(rgba) {
+            tracing::debug!(
+                width = width,
+                height = height,
+                bytes = rgba.len(),
+                error = %error,
+                "failed to encode app icon png"
+            );
+            return None;
+        }
     }
     Some(bytes)
 }
@@ -551,7 +587,13 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
         .to_ascii_lowercase();
 
     if icon_ext == "png" {
-        fs::read(&icon_path).ok()
+        match fs::read(&icon_path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to read macos app icon png");
+                None
+            }
+        }
     } else {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         icon_path.hash(&mut hasher);
@@ -561,21 +603,41 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
             hasher.finish()
         ));
 
-        let status = Command::new("sips")
+        let status = match Command::new("sips")
             .args(["-s", "format", "png", "-Z", "128"])
             .arg(&icon_path)
             .arg("--out")
             .arg(&out)
             .status()
-            .ok()?;
+        {
+            Ok(status) => status,
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to run macos icon converter");
+                return None;
+            }
+        };
 
         if !status.success() {
-            let _ = fs::remove_file(&out);
+            if let Err(error) = fs::remove_file(&out) {
+                tracing::debug!(error = %error, "failed to remove incomplete macos icon output");
+            }
+            tracing::debug!(
+                status_code = status.code().unwrap_or(-1),
+                "macos icon converter exited unsuccessfully"
+            );
             return None;
         }
 
-        let bytes = fs::read(&out).ok()?;
-        let _ = fs::remove_file(&out);
+        let bytes = match fs::read(&out) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to read converted macos app icon");
+                return None;
+            }
+        };
+        if let Err(error) = fs::remove_file(&out) {
+            tracing::debug!(error = %error, "failed to remove converted macos icon output");
+        }
         Some(bytes)
     }
 }
@@ -603,9 +665,22 @@ fn resolve_macos_icon_path(app_bundle: &Path) -> Option<PathBuf> {
         }
     }
 
-    std::fs::read_dir(resources)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+    let entries = match std::fs::read_dir(resources) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to read macos app resources directory");
+            return None;
+        }
+    };
+
+    entries
+        .filter_map(|entry| match entry {
+            Ok(entry) => Some(entry.path()),
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to read macos app resources entry");
+                None
+            }
+        })
         .find(|path| path.extension().is_some_and(|ext| ext == "icns"))
 }
 
@@ -697,18 +772,38 @@ pub fn simulate_paste() -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn read_macos_plist_value(plist: &Path, key: &str) -> Option<String> {
-    let output = std::process::Command::new("/usr/libexec/PlistBuddy")
+    let output = match std::process::Command::new("/usr/libexec/PlistBuddy")
         .arg("-c")
         .arg(format!("Print :{key}"))
         .arg(plist)
         .output()
-        .ok()?;
+    {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::debug!(
+                key = %key,
+                error = %error,
+                "failed to run macos plist reader"
+            );
+            return None;
+        }
+    };
 
     if !output.status.success() {
         return None;
     }
 
-    let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    let value = match String::from_utf8(output.stdout) {
+        Ok(value) => value.trim().to_string(),
+        Err(error) => {
+            tracing::debug!(
+                key = %key,
+                error = %error,
+                "failed to decode macos plist reader output"
+            );
+            return None;
+        }
+    };
     (!value.is_empty()).then_some(value)
 }
 

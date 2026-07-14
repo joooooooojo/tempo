@@ -232,35 +232,63 @@ pub(crate) fn restore_backup_markdown_image_urls(
 
 pub(crate) fn cleanup_unreferenced_markdown_images(app: &AppHandle, conn: &Connection) {
     let Ok(markdown_dir) = markdown_images_dir(app) else {
+        tracing::warn!("failed to resolve markdown image directory for cleanup");
         return;
     };
     let mut referenced = HashSet::<String>::new();
 
-    if let Ok(mut stmt) = conn.prepare("SELECT content FROM todos") {
-        if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
-            for content in rows.filter_map(|row| row.ok()) {
-                for src in markdown_image_sources(&content) {
-                    if let Some((file_name, _)) = markdown_image_reference(&src, &markdown_dir) {
-                        referenced.insert(file_name);
+    match conn.prepare("SELECT content FROM todos") {
+        Ok(mut stmt) => match stmt.query_map([], |row| row.get::<_, String>(0)) {
+            Ok(rows) => {
+                for row in rows {
+                    match row {
+                        Ok(content) => {
+                            for src in markdown_image_sources(&content) {
+                                if let Some((file_name, _)) =
+                                    markdown_image_reference(&src, &markdown_dir)
+                                {
+                                    referenced.insert(file_name);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "failed to read todo markdown content row");
+                        }
+                    }
+                }
+            }
+            Err(error) => tracing::warn!(error = %error, "failed to query todo markdown content"),
+        },
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to prepare todo markdown cleanup query")
+        }
+    }
+
+    match std::fs::read_dir(&markdown_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        tracing::debug!(error = %error, "failed to read markdown image directory entry");
+                        continue;
+                    }
+                };
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if !referenced.contains(file_name) {
+                    if let Err(error) = std::fs::remove_file(path) {
+                        tracing::debug!(error = %error, "failed to remove unreferenced markdown image");
                     }
                 }
             }
         }
-    }
-
-    if let Ok(entries) = std::fs::read_dir(&markdown_dir) {
-        for entry in entries.filter_map(|entry| entry.ok()) {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if !referenced.contains(file_name) {
-                let _ = std::fs::remove_file(path);
-            }
-        }
+        Err(error) => tracing::warn!(error = %error, "failed to list markdown image directory"),
     }
 }
 
@@ -389,7 +417,10 @@ pub fn markdown_image_protocol_response(
 
     let markdown_dir = match markdown_images_dir(app) {
         Ok(dir) => dir,
-        Err(_) => return empty_markdown_image_response(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to resolve markdown image directory");
+            return empty_markdown_image_response(StatusCode::INTERNAL_SERVER_ERROR);
+        }
     };
     let path = markdown_dir.join(&file_name);
     let canonical_path = match path.canonicalize() {
@@ -419,7 +450,10 @@ pub fn markdown_image_protocol_response(
             .header(CONTENT_LENGTH, bytes.len())
             .body(bytes)
             .unwrap(),
-        Err(_) => empty_markdown_image_response(StatusCode::NOT_FOUND),
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to read markdown image file");
+            empty_markdown_image_response(StatusCode::NOT_FOUND)
+        }
     }
 }
 

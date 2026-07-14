@@ -9,12 +9,16 @@ mod auxiliary_windows;
 mod clipboard_db;
 mod clipboard_images;
 mod clipboard_watcher;
+mod logging;
 #[cfg(target_os = "macos")]
 mod macos_dock;
 #[cfg(target_os = "macos")]
 mod macos_overlay_panel;
 mod todo_images;
 mod tray_menu;
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(target_os = "macos")]
 #[macro_use]
@@ -34,6 +38,8 @@ const SHELF_ESCAPE_SHORTCUT: &str = "Escape";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logging::install_panic_hook();
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -60,7 +66,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
 
-    builder
+    let result = builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -68,10 +74,11 @@ pub fn run() {
                         return;
                     }
                     let id = shortcut.to_string();
+                    let dispatch_id = id.clone();
                     let app = app.clone();
                     let app_for_main = app.clone();
-                    let _ = app.run_on_main_thread(move || {
-                        let result = match id.as_str() {
+                    if let Err(error) = app.run_on_main_thread(move || {
+                        let result = match dispatch_id.as_str() {
                             QUICK_TODO_SHORTCUT => {
                                 auxiliary_windows::show_quick_todo(&app_for_main)
                             }
@@ -91,14 +98,28 @@ pub fn run() {
                             _ => Ok(()),
                         };
                         if let Err(error) = result {
-                            let _ = app_for_main.emit(
-                                "toast",
-                                serde_json::json!({
-                                    "message": format!("快捷键窗口打开失败: {error}")
-                                }),
+                            tracing::warn!(
+                                shortcut = %dispatch_id,
+                                error = %error,
+                                "global shortcut action failed"
+                            );
+                            logging::debug_if_err(
+                                app_for_main.emit(
+                                    "toast",
+                                    serde_json::json!({
+                                        "message": format!("快捷键窗口打开失败: {error}")
+                                    }),
+                                ),
+                                "emit shortcut failure toast",
                             );
                         }
-                    });
+                    }) {
+                        tracing::warn!(
+                            shortcut = %id,
+                            error = %error,
+                            "failed to dispatch global shortcut action to main thread"
+                        );
+                    }
                 })
                 .build(),
         )
@@ -107,11 +128,23 @@ pub fn run() {
             Some(vec![]),
         ))
         .setup(|app| {
+            match logging::init(app.handle()) {
+                Ok(_) => tracing::info!(
+                    version = env!("CARGO_PKG_VERSION"),
+                    "runtime logging initialized"
+                ),
+                Err(error) => eprintln!("failed to initialize runtime logging: {error}"),
+            }
+
             db::prepare_storage_dir(app.handle()).map_err(|error| {
+                tracing::error!(error = %error, "failed to prepare storage directory");
                 Box::<dyn std::error::Error>::from(std::io::Error::other(error))
             })?;
             let path = db_path(app.handle());
-            let conn = init_db(&path);
+            let conn = init_db(&path).map_err(|error| {
+                tracing::error!(error = %error, "failed to initialize database");
+                Box::<dyn std::error::Error>::from(std::io::Error::other(error))
+            })?;
             clipboard_images::migrate_legacy_clipboard_images(app.handle(), &conn);
             todo_images::migrate_legacy_todo_images(app.handle(), &conn);
             app_icons::migrate_legacy_app_icons(app.handle(), &conn);
@@ -143,19 +176,24 @@ pub fn run() {
                     runtime.status != db::PomodoroStatus::Idle
                 };
                 if should_restore_float {
-                    let _ = auxiliary_windows::show_pomodoro_float_window(app.handle());
+                    logging::warn_if_err(
+                        auxiliary_windows::show_pomodoro_float_window(app.handle()),
+                        "restore pomodoro float window",
+                    );
                 }
             }
 
             #[cfg(target_os = "macos")]
             {
-                let _ = app
-                    .handle()
-                    .set_activation_policy(tauri::ActivationPolicy::Regular);
+                logging::debug_if_err(
+                    app.handle()
+                        .set_activation_policy(tauri::ActivationPolicy::Regular),
+                    "set macos activation policy",
+                );
             }
 
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_maximizable(true);
+                logging::debug_if_err(window.set_maximizable(true), "set main window maximizable");
                 let app_handle = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
@@ -168,8 +206,21 @@ pub fn run() {
                     {
                         if crate::macos_dock::is_main_window_in_tray() {
                             if let Some(main) = app_handle.get_webview_window("main") {
-                                if main.is_visible().unwrap_or(false) {
-                                    let _ = main.hide();
+                                let visible = match main.is_visible() {
+                                    Ok(visible) => visible,
+                                    Err(error) => {
+                                        tracing::debug!(
+                                            error = %error,
+                                            "failed to read main window visibility"
+                                        );
+                                        false
+                                    }
+                                };
+                                if visible {
+                                    logging::debug_if_err(
+                                        main.hide(),
+                                        "hide main window from dock state",
+                                    );
                                 }
                             }
                         }
@@ -251,8 +302,12 @@ pub fn run() {
             auxiliary_windows::show_snippet_picker,
             auxiliary_windows::hide_shelf_picker,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!());
+
+    if let Err(error) = result {
+        tracing::error!(error = %error, "tauri application exited with error");
+        panic!("error while running tauri application: {error}");
+    }
 }
 
 fn register_global_shortcuts(app: &tauri::AppHandle) {
@@ -263,12 +318,19 @@ fn register_global_shortcuts(app: &tauri::AppHandle) {
         SHELF_ESCAPE_SHORTCUT,
     ] {
         if let Err(error) = app.global_shortcut().register(shortcut) {
-            eprintln!("Failed to register {shortcut} global shortcut: {error}");
-            let _ = app.emit(
-                "toast",
-                serde_json::json!({
-                    "message": format!("{shortcut} shortcut unavailable: {error}")
-                }),
+            tracing::warn!(
+                shortcut = %shortcut,
+                error = %error,
+                "failed to register global shortcut"
+            );
+            logging::debug_if_err(
+                app.emit(
+                    "toast",
+                    serde_json::json!({
+                        "message": format!("{shortcut} shortcut unavailable: {error}")
+                    }),
+                ),
+                "emit shortcut registration failure toast",
             );
         }
     }

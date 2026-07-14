@@ -5,7 +5,7 @@ pub mod reports;
 pub mod settings;
 pub mod snippets;
 pub mod todos;
-mod tracker;
+pub(crate) mod tracker;
 pub mod window;
 
 use serde::{Deserialize, Serialize};

@@ -47,7 +47,7 @@ fn clipboard_access_guard() -> MutexGuard<'static, ()> {
 }
 
 pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
-    std::thread::spawn(move || {
+    crate::logging::spawn_named("tempo-clipboard-watcher", move || {
         let mut last_text_hash = String::new();
         let mut last_image_hash = String::new();
         let mut last_retention_purge = std::time::Instant::now();
@@ -224,6 +224,12 @@ fn capture_clipboard_snapshot(
                         max_entries,
                     )
                 } else {
+                    tracing::warn!(
+                        image_width = width,
+                        image_height = height,
+                        png_bytes = png_bytes.len(),
+                        "failed to persist clipboard image"
+                    );
                     None
                 };
 
@@ -255,7 +261,10 @@ fn capture_clipboard_snapshot(
         }
         Ok(ClipboardSnapshot::Empty) => ClipboardCaptureResult::Captured { changed: false },
         Err(error) if clipboard_error_is_busy(&error) => ClipboardCaptureResult::Busy,
-        Err(_) => ClipboardCaptureResult::Captured { changed: false },
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to read clipboard snapshot");
+            ClipboardCaptureResult::Captured { changed: false }
+        }
     }
 }
 
@@ -279,10 +288,17 @@ fn read_clipboard_snapshot() -> Result<ClipboardSnapshot, ClipboardError> {
         match clipboard.get_image() {
             Ok(image) => Ok(ClipboardSnapshot::Image(image)),
             Err(error) if clipboard_error_is_busy(&error) => Err(error),
-            Err(_) => match clipboard.get_text() {
+            Err(image_error) => match clipboard.get_text() {
                 Ok(text) => Ok(ClipboardSnapshot::Text(text)),
                 Err(error) if clipboard_error_is_busy(&error) => Err(error),
-                Err(_) => Ok(ClipboardSnapshot::Empty),
+                Err(text_error) => {
+                    tracing::debug!(
+                        image_error = %image_error,
+                        text_error = %text_error,
+                        "clipboard snapshot did not contain readable image or text"
+                    );
+                    Ok(ClipboardSnapshot::Empty)
+                }
             },
         }
     }
@@ -335,9 +351,18 @@ fn start_windows_clipboard_listener() -> Receiver<()> {
 
         if msg == WM_CLIPBOARDUPDATE {
             if let Some(signal) = WINDOWS_CLIPBOARD_SIGNAL.get() {
-                let tx = signal.lock().ok().and_then(|guard| guard.as_ref().cloned());
+                let tx = match signal.lock() {
+                    Ok(guard) => guard.as_ref().cloned(),
+                    Err(error) => {
+                        tracing::debug!(
+                            error = %error,
+                            "failed to lock windows clipboard listener signal"
+                        );
+                        None
+                    }
+                };
                 if let Some(tx) = tx {
-                    let _ = tx.send(());
+                    crate::logging::debug_if_err(tx.send(()), "signal windows clipboard update");
                 }
             }
             return windows::Win32::Foundation::LRESULT(0);
@@ -352,7 +377,7 @@ fn start_windows_clipboard_listener() -> Receiver<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(tx.clone());
 
-    std::thread::spawn(move || {
+    crate::logging::spawn_named("tempo-windows-clipboard-listener", move || {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::System::DataExchange::AddClipboardFormatListener;
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -368,7 +393,12 @@ fn start_windows_clipboard_listener() -> Receiver<()> {
                 lpszClassName: windows::core::PCWSTR(class_name.as_ptr()),
                 ..Default::default()
             };
-            let _ = RegisterClassW(&window_class);
+            let class_atom = RegisterClassW(&window_class);
+            if class_atom == 0 {
+                tracing::debug!(
+                    "windows clipboard listener window class registration returned zero"
+                );
+            }
 
             let Ok(hwnd) = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
@@ -384,16 +414,24 @@ fn start_windows_clipboard_listener() -> Receiver<()> {
                 None,
                 None,
             ) else {
-                let _ = tx.send(());
+                tracing::error!("failed to create windows clipboard listener window");
+                crate::logging::debug_if_err(
+                    tx.send(()),
+                    "signal windows clipboard listener startup failure",
+                );
                 return;
             };
 
-            if AddClipboardFormatListener(hwnd).is_err() {
-                let _ = tx.send(());
+            if let Err(error) = AddClipboardFormatListener(hwnd) {
+                tracing::error!(error = %error, "failed to register windows clipboard format listener");
+                crate::logging::debug_if_err(
+                    tx.send(()),
+                    "signal windows clipboard listener registration failure",
+                );
                 return;
             }
 
-            let _ = tx.send(());
+            crate::logging::debug_if_err(tx.send(()), "signal windows clipboard listener ready");
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND(std::ptr::null_mut()), 0, 0).as_bool() {
@@ -482,13 +520,19 @@ fn macos_pasteboard_change_count() -> Option<isize> {
 }
 
 pub fn emit_clipboard_update(app: &AppHandle) {
-    let _ = app.emit("clipboard-update", ());
-    let _ = app.emit_to("shelf-picker", "clipboard-update", ());
-    let _ = app.emit_to("main", "clipboard-update", ());
+    crate::logging::debug_if_err(app.emit("clipboard-update", ()), "emit clipboard update");
+    crate::logging::debug_if_err(
+        app.emit_to("shelf-picker", "clipboard-update", ()),
+        "emit shelf picker clipboard update",
+    );
+    crate::logging::debug_if_err(
+        app.emit_to("main", "clipboard-update", ()),
+        "emit main clipboard update",
+    );
 }
 
 pub fn prewarm_clipboard_image_cache(app: AppHandle, state: AppState, contents: Vec<String>) {
-    std::thread::spawn(move || {
+    crate::logging::spawn_named("tempo-clipboard-image-prewarm", move || {
         let mut seen = HashSet::new();
         for content in contents.into_iter().take(DECODED_IMAGE_CACHE_MAX_ENTRIES) {
             let cache_key = normalize_clipboard_image_reference(&content);
@@ -503,13 +547,18 @@ pub fn prewarm_clipboard_image_cache(app: AppHandle, state: AppState, contents: 
             let Some((width, height, rgba, timing)) =
                 load_clipboard_image_rgba_timed(&app, &content)
             else {
-                debug_clipboard_log(format!("prewarm image failed key={cache_key}"));
+                debug_clipboard_log(format!(
+                    "prewarm image failed reference_kind={}",
+                    clipboard_reference_kind(&content)
+                ));
                 continue;
             };
             cache_decoded_clipboard_image(&state, &cache_key, width, height, rgba);
             debug_clipboard_log(format!(
-                "prewarm image cached key={} png_bytes={} read_ms={} decode_ms={} total_ms={} outer_ms={}",
-                cache_key,
+                "prewarm image cached reference_kind={} width={} height={} png_bytes={} read_ms={} decode_ms={} total_ms={} outer_ms={}",
+                clipboard_reference_kind(&content),
+                width,
+                height,
                 timing.png_bytes,
                 timing.read_ms,
                 timing.decode_ms,
@@ -541,15 +590,16 @@ pub fn write_clipboard_image(
 ) -> Result<(), String> {
     let total_start = Instant::now();
     debug_clipboard_log(format!(
-        "write image requested content_prefix={}",
-        content.chars().take(96).collect::<String>()
+        "write image requested reference_kind={} chars={}",
+        clipboard_reference_kind(content),
+        content.chars().count()
     ));
 
     let cache_key = normalize_clipboard_image_reference(content);
     let image = if let Some(cached) = get_cached_clipboard_image(state, &cache_key) {
         debug_clipboard_log(format!(
-            "write image cache hit key={} width={} height={} rgba_bytes={}",
-            cache_key,
+            "write image cache hit reference_kind={} width={} height={} rgba_bytes={}",
+            clipboard_reference_kind(content),
             cached.width,
             cached.height,
             cached.rgba.len()
@@ -565,8 +615,8 @@ pub fn write_clipboard_image(
             }
         };
         debug_clipboard_log(format!(
-            "write image cache miss key={} png_bytes={} read_ms={} decode_ms={} load_total_ms={} outer_load_ms={} rgba_bytes={}",
-            cache_key,
+            "write image cache miss reference_kind={} png_bytes={} read_ms={} decode_ms={} load_total_ms={} outer_load_ms={} rgba_bytes={}",
+            clipboard_reference_kind(content),
             timing.png_bytes,
             timing.read_ms,
             timing.decode_ms,
@@ -668,9 +718,9 @@ fn maybe_simulate_paste(app: &AppHandle, settings: &crate::db::Settings) {
     }
 
     let app = app.clone();
-    std::thread::spawn(move || {
+    crate::logging::spawn_named("tempo-clipboard-simulate-paste", move || {
         if let Some(window) = app.get_webview_window("shelf-picker") {
-            let _ = window.hide();
+            crate::logging::debug_if_err(window.hide(), "hide shelf picker before paste");
         }
         #[cfg(target_os = "macos")]
         {
@@ -681,7 +731,7 @@ fn maybe_simulate_paste(app: &AppHandle, settings: &crate::db::Settings) {
 
         std::thread::sleep(std::time::Duration::from_millis(120));
         if let Err(error) = crate::platform::simulate_paste() {
-            eprintln!("simulate paste failed: {error}");
+            tracing::warn!(error = %error, "simulate paste failed");
         }
     });
 }
@@ -697,10 +747,10 @@ pub fn copy_clipboard_entry_by_id(
         get_clipboard_entry(&conn, id).ok_or_else(|| "clipboard entry not found".to_string())?
     };
     debug_clipboard_log(format!(
-        "copy entry fetched id={} kind={} content_prefix={}",
+        "copy entry fetched id={} kind={} content_summary={}",
         entry.id,
         entry.kind,
-        entry.content.chars().take(96).collect::<String>()
+        clipboard_entry_content_summary(&entry)
     ));
     use_clipboard_entry(state, app, &entry)?;
     {
@@ -712,11 +762,35 @@ pub fn copy_clipboard_entry_by_id(
 }
 
 fn debug_clipboard_log(message: impl AsRef<str>) {
-    #[cfg(debug_assertions)]
-    eprintln!("[tempo-debug][clipboard] {}", message.as_ref());
+    tracing::debug!(
+        target: "tempo::clipboard",
+        message = %crate::logging::sanitize_log_value(message.as_ref()),
+        "clipboard runtime"
+    );
+}
 
-    #[cfg(not(debug_assertions))]
-    let _ = message;
+fn clipboard_reference_kind(content: &str) -> &'static str {
+    if crate::clipboard_images::is_legacy_clipboard_image_data_url(content) {
+        "legacy-data-url"
+    } else if crate::clipboard_images::is_clipboard_image_storage_key(content) {
+        "storage-key"
+    } else {
+        "external-reference"
+    }
+}
+
+pub(crate) fn clipboard_entry_content_summary(
+    entry: &crate::clipboard_db::ClipboardEntry,
+) -> String {
+    if entry.kind == "image" {
+        format!(
+            "reference_kind={} chars={}",
+            clipboard_reference_kind(&entry.content),
+            entry.content.chars().count()
+        )
+    } else {
+        format!("text_chars={}", entry.content.chars().count())
+    }
 }
 
 fn get_cached_clipboard_image(state: &AppState, key: &str) -> Option<CachedClipboardImage> {
@@ -773,8 +847,8 @@ fn cache_decoded_clipboard_image(
     }
 
     debug_clipboard_log(format!(
-        "decoded image cached key={} image_bytes={} cache_entries={} cache_bytes={}",
-        key,
+        "decoded image cached reference_kind={} image_bytes={} cache_entries={} cache_bytes={}",
+        clipboard_reference_kind(key),
         image_bytes,
         runtime.decoded_image_cache.len(),
         runtime.decoded_image_cache_bytes
@@ -794,7 +868,7 @@ fn with_skip_capture<T>(
 
     let result = write();
 
-    std::thread::spawn({
+    crate::logging::spawn_named("tempo-clipboard-skip-reset", {
         let state = state.clone();
         move || {
             std::thread::sleep(std::time::Duration::from_millis(900));
@@ -806,7 +880,7 @@ fn with_skip_capture<T>(
     result
 }
 
-fn resolve_clipboard_source(
+pub(crate) fn resolve_clipboard_source(
     current: Option<ForegroundApp>,
     fallback_app: Option<&str>,
     fallback_process: Option<&str>,

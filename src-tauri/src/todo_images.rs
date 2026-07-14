@@ -100,7 +100,14 @@ pub fn todo_image_protocol_response(
 fn migrate_table_legacy_images(app: &AppHandle, conn: &Connection, table: &str, query: &str) {
     let mut stmt = match conn.prepare(query) {
         Ok(stmt) => stmt,
-        Err(_) => return,
+        Err(error) => {
+            tracing::warn!(
+                table,
+                error = %error,
+                "failed to prepare legacy todo image migration query"
+            );
+            return;
+        }
     };
     let rows = match stmt.query_map([], |row| {
         Ok((
@@ -109,8 +116,24 @@ fn migrate_table_legacy_images(app: &AppHandle, conn: &Connection, table: &str, 
             row.get::<_, String>(2)?,
         ))
     }) {
-        Ok(rows) => rows.filter_map(Result::ok).collect::<Vec<_>>(),
-        Err(_) => return,
+        Ok(rows) => {
+            let mut values = Vec::new();
+            for row in rows {
+                match row {
+                    Ok(value) => values.push(value),
+                    Err(error) => tracing::warn!(
+                        table,
+                        error = %error,
+                        "failed to read legacy todo image row"
+                    ),
+                }
+            }
+            values
+        }
+        Err(error) => {
+            tracing::warn!(table = %table, error = %error, "failed to query legacy todo images");
+            return;
+        }
     };
 
     for (id, data_url, mime_type) in rows {
@@ -119,12 +142,20 @@ fn migrate_table_legacy_images(app: &AppHandle, conn: &Connection, table: &str, 
             mime_type,
         };
         let Ok(storage_key) = save_todo_image_input(app, &input) else {
+            tracing::debug!(table = %table, row_id = id, "failed to save migrated todo image");
             continue;
         };
-        let _ = conn.execute(
+        if let Err(error) = conn.execute(
             &format!("UPDATE {table} SET data_url = ?1 WHERE id = ?2"),
             rusqlite::params![storage_key, id],
-        );
+        ) {
+            tracing::warn!(
+                table,
+                row_id = id,
+                error = %error,
+                "failed to update migrated todo image row"
+            );
+        }
     }
 }
 

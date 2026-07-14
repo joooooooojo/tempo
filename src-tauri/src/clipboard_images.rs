@@ -62,13 +62,23 @@ pub fn hydrate_clipboard_image_urls(
         let original = entry.content.clone();
         if is_legacy_clipboard_image_data_url(&original) {
             if let Ok(storage_key) = migrate_legacy_image_content(app, &original) {
-                let _ = conn.execute(
+                if let Err(error) = conn.execute(
                     "UPDATE clipboard_history SET content = ?1 WHERE id = ?2",
                     rusqlite::params![storage_key, entry.id],
-                );
+                ) {
+                    tracing::warn!(
+                        entry_id = entry.id,
+                        error = %error,
+                        "failed to update hydrated clipboard image storage key"
+                    );
+                }
                 entry.content = hydrate_clipboard_image_content(&storage_key);
                 continue;
             }
+            tracing::debug!(
+                entry_id = entry.id,
+                "failed to hydrate legacy clipboard image"
+            );
         }
         entry.content = hydrate_clipboard_image_content(&original);
     }
@@ -116,9 +126,24 @@ pub fn load_clipboard_image_rgba_timed(
     let total_start = Instant::now();
     if is_legacy_clipboard_image_data_url(content) {
         let decode_start = Instant::now();
-        let png_bytes = decode_legacy_png_bytes(content)?;
+        let png_bytes = match decode_legacy_png_bytes(content) {
+            Some(bytes) => bytes,
+            None => {
+                tracing::debug!("failed to decode legacy clipboard image data url");
+                return None;
+            }
+        };
         let png_len = png_bytes.len();
-        let (width, height, rgba) = decode_png_bytes(&png_bytes)?;
+        let (width, height, rgba) = match decode_png_bytes(&png_bytes) {
+            Some(decoded) => decoded,
+            None => {
+                tracing::debug!(
+                    png_bytes = png_len,
+                    "failed to decode legacy clipboard image png"
+                );
+                return None;
+            }
+        };
         let decode_ms = decode_start.elapsed().as_millis();
         return Some((
             width,
@@ -137,11 +162,26 @@ pub fn load_clipboard_image_rgba_timed(
         return None;
     }
     let read_start = Instant::now();
-    let png_bytes = read_clipboard_image_bytes(app, &storage_key).ok()?;
+    let png_bytes = match read_clipboard_image_bytes(app, &storage_key) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                "failed to read clipboard image bytes"
+            );
+            return None;
+        }
+    };
     let read_ms = read_start.elapsed().as_millis();
     let png_len = png_bytes.len();
     let decode_start = Instant::now();
-    let (width, height, rgba) = decode_png_bytes(&png_bytes)?;
+    let (width, height, rgba) = match decode_png_bytes(&png_bytes) {
+        Some(decoded) => decoded,
+        None => {
+            tracing::debug!(png_bytes = png_len, "failed to decode clipboard image png");
+            return None;
+        }
+    };
     let decode_ms = decode_start.elapsed().as_millis();
     Some((
         width,
@@ -161,21 +201,31 @@ pub fn maybe_delete_clipboard_image_file(conn: &Connection, app: &AppHandle, con
     if !is_clipboard_image_storage_key(&storage_key) {
         return;
     }
-    let still_referenced = conn
-        .query_row(
-            "SELECT COUNT(*) FROM clipboard_history WHERE content = ?1",
-            [&storage_key],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0)
-        > 0;
+    let still_referenced = match conn.query_row(
+        "SELECT COUNT(*) FROM clipboard_history WHERE content = ?1",
+        [&storage_key],
+        |row| row.get::<_, i64>(0),
+    ) {
+        Ok(count) => count > 0,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to count clipboard image references"
+            );
+            true
+        }
+    };
     if still_referenced {
         return;
     }
     if let Ok(dir) = clipboard_images_dir(app) {
         if let Some(file_name) = storage_key.strip_prefix(&format!("{CLIPBOARD_IMAGE_SUBDIR}/")) {
-            let _ = std::fs::remove_file(dir.join(file_name));
+            if let Err(error) = std::fs::remove_file(dir.join(file_name)) {
+                tracing::debug!(error = %error, "failed to remove unreferenced clipboard image");
+            }
         }
+    } else {
+        tracing::debug!("failed to resolve clipboard image directory for cleanup");
     }
 }
 
@@ -185,23 +235,50 @@ pub fn migrate_legacy_clipboard_images(app: &AppHandle, conn: &Connection) {
          WHERE kind = 'image' AND content LIKE 'data:image/png;base64,%'",
     ) {
         Ok(stmt) => stmt,
-        Err(_) => return,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to prepare legacy clipboard image migration query");
+            return;
+        }
     };
     let rows = match stmt.query_map([], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
     }) {
-        Ok(rows) => rows.filter_map(Result::ok).collect::<Vec<_>>(),
-        Err(_) => return,
+        Ok(rows) => {
+            let mut values = Vec::new();
+            for row in rows {
+                match row {
+                    Ok(value) => values.push(value),
+                    Err(error) => {
+                        tracing::warn!(error = %error, "failed to read legacy clipboard image row");
+                    }
+                }
+            }
+            values
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to query legacy clipboard images");
+            return;
+        }
     };
 
     for (id, content) in rows {
         let Ok(storage_key) = migrate_legacy_image_content(app, &content) else {
+            tracing::debug!(
+                entry_id = id,
+                "failed to migrate legacy clipboard image content"
+            );
             continue;
         };
-        let _ = conn.execute(
+        if let Err(error) = conn.execute(
             "UPDATE clipboard_history SET content = ?1 WHERE id = ?2",
             rusqlite::params![storage_key, id],
-        );
+        ) {
+            tracing::warn!(
+                entry_id = id,
+                error = %error,
+                "failed to update migrated clipboard image row"
+            );
+        }
     }
 }
 
@@ -243,18 +320,41 @@ fn read_clipboard_image_bytes(app: &AppHandle, storage_key: &str) -> Result<Vec<
 
 fn decode_legacy_png_bytes(data_url: &str) -> Option<Vec<u8>> {
     let payload = data_url.strip_prefix("data:image/png;base64,")?;
-    base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .ok()
+    match base64::engine::general_purpose::STANDARD.decode(payload) {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to decode legacy clipboard image base64");
+            None
+        }
+    }
 }
 
 fn decode_png_bytes(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
-    let mut reader = decoder.read_info().ok()?;
+    let mut reader = match decoder.read_info() {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::debug!(
+                png_bytes = png_bytes.len(),
+                error = %error,
+                "failed to read clipboard png metadata"
+            );
+            return None;
+        }
+    };
     let width = reader.info().width;
     let height = reader.info().height;
     let mut rgba = vec![0_u8; reader.output_buffer_size()];
-    reader.next_frame(&mut rgba).ok()?;
+    if let Err(error) = reader.next_frame(&mut rgba) {
+        tracing::debug!(
+            width = width,
+            height = height,
+            png_bytes = png_bytes.len(),
+            error = %error,
+            "failed to decode clipboard png frame"
+        );
+        return None;
+    }
     rgba.truncate((width as usize) * (height as usize) * 4);
     Some((width, height, rgba))
 }

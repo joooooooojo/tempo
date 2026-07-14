@@ -86,7 +86,13 @@ pub fn resolve_app_icon_storage_key(
     }
 
     let png_bytes = crate::platform::extract_icon_png_bytes(app_name, process_name)?;
-    let storage_key = save_app_icon_png(app, &png_bytes).ok()?;
+    let storage_key = match save_app_icon_png(app, &png_bytes) {
+        Ok(storage_key) => storage_key,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to save resolved app icon");
+            return None;
+        }
+    };
     if let Ok(mut icons) = cache.lock() {
         icons.insert(key, storage_key.clone());
     }
@@ -100,7 +106,10 @@ pub fn migrate_legacy_app_icons(app: &AppHandle, conn: &Connection) {
          WHERE icon_data_url LIKE 'data:image/%'",
     ) {
         Ok(stmt) => stmt,
-        Err(_) => return,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to prepare legacy app icon migration query");
+            return;
+        }
     };
     let rows = match stmt.query_map([], |row| {
         Ok((
@@ -110,20 +119,37 @@ pub fn migrate_legacy_app_icons(app: &AppHandle, conn: &Connection) {
             row.get::<_, String>(3)?,
         ))
     }) {
-        Ok(rows) => rows.filter_map(Result::ok).collect::<Vec<_>>(),
-        Err(_) => return,
+        Ok(rows) => {
+            let mut values = Vec::new();
+            for row in rows {
+                match row {
+                    Ok(value) => values.push(value),
+                    Err(error) => {
+                        tracing::warn!(error = %error, "failed to read legacy app icon row");
+                    }
+                }
+            }
+            values
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to query legacy app icons");
+            return;
+        }
     };
 
     for (date, app_name, process_name, icon_data_url) in rows {
         let Some(storage_key) = migrate_legacy_app_icon_value(app, &icon_data_url)
             .or_else(|| resolve_app_icon_storage_key(app, &app_name, &process_name))
         else {
+            tracing::debug!("failed to migrate legacy app icon value");
             continue;
         };
-        let _ = conn.execute(
+        if let Err(error) = conn.execute(
             "UPDATE app_usage SET icon_data_url = ?1 WHERE date = ?2 AND app_name = ?3",
             rusqlite::params![storage_key, date, app_name],
-        );
+        ) {
+            tracing::warn!(error = %error, "failed to update migrated app icon row");
+        }
     }
 }
 
@@ -139,14 +165,24 @@ pub fn app_icon_protocol_response(app: &AppHandle, request: Request<Vec<u8>>) ->
 
 fn migrate_legacy_app_icon_value(app: &AppHandle, value: &str) -> Option<String> {
     let png_bytes = decode_legacy_png_data_url(value)?;
-    save_app_icon_png(app, &png_bytes).ok()
+    match save_app_icon_png(app, &png_bytes) {
+        Ok(storage_key) => Some(storage_key),
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to save migrated app icon");
+            None
+        }
+    }
 }
 
 fn decode_legacy_png_data_url(data_url: &str) -> Option<Vec<u8>> {
     let payload = data_url.strip_prefix("data:image/png;base64,")?;
-    base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .ok()
+    match base64::engine::general_purpose::STANDARD.decode(payload) {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to decode legacy app icon data url");
+            None
+        }
+    }
 }
 
 fn is_valid_app_icon_file_name(file_name: &str) -> bool {

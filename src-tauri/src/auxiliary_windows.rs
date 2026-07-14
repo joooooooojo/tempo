@@ -48,12 +48,29 @@ pub fn pomodoro_float_window_size() -> (f64, f64) {
     (POMODORO_FLOAT_PANEL_WIDTH, POMODORO_FLOAT_PANEL_HEIGHT)
 }
 
+fn emit_to_debug<P>(app: &AppHandle, target: &str, event: &str, payload: P)
+where
+    P: serde::Serialize + Clone,
+{
+    crate::logging::debug_if_err(
+        app.emit_to(target, event, payload),
+        "emit auxiliary window event",
+    );
+}
+
+fn emit_debug<P>(app: &AppHandle, event: &str, payload: P)
+where
+    P: serde::Serialize + Clone,
+{
+    crate::logging::debug_if_err(app.emit(event, payload), "emit auxiliary app event");
+}
+
 pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("quick-todo").is_none() {
         let (width, height) = quick_todo_window_size();
         let window = build_quick_todo_window(app, width, height)?;
         polish_quick_todo_window(&window);
-        let _ = window.hide();
+        crate::logging::debug_if_err(window.hide(), "precache hide quick todo window");
     }
 
     // Pre-create eye-care overlays during startup so the first reminder does not
@@ -62,13 +79,19 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
     {
         if app.get_webview_window(EYE_CARE_PRIMARY_LABEL).is_none() {
             let window = build_eye_care_overlay_window(app, EYE_CARE_PRIMARY_LABEL)?;
-            let _ = window.hide();
+            crate::logging::debug_if_err(window.hide(), "precache hide eye care window");
         }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let monitors = ordered_monitors(app).unwrap_or_default();
+        let monitors = match ordered_monitors(app) {
+            Ok(monitors) => monitors,
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to resolve monitors for eye care precache");
+                Vec::new()
+            }
+        };
         let count = monitors.len().max(1);
         for index in 0..count {
             let label = eye_care_label(index);
@@ -81,7 +104,7 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
             if let Some(monitor) = monitors.get(index) {
                 place_eye_care_window_on_monitor(&window, monitor);
             }
-            let _ = window.hide();
+            crate::logging::debug_if_err(window.hide(), "precache hide eye care window");
         }
     }
 
@@ -90,7 +113,7 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         let window = build_pomodoro_float_window(app, width, height)?;
         attach_pomodoro_float_menu_handler(app, &window);
         polish_pomodoro_float_window(&window);
-        let _ = window.hide();
+        crate::logging::debug_if_err(window.hide(), "precache hide pomodoro float window");
     }
 
     if app.get_webview_window(SHELF_PICKER_LABEL).is_none() {
@@ -101,11 +124,14 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         polish_shelf_picker_window(&window, true);
         #[cfg(target_os = "macos")]
         {
-            let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
-            let _ = window.set_shadow(true);
+            crate::logging::debug_if_err(
+                window.set_background_color(Some(Color(0, 0, 0, 0))),
+                "set shelf picker transparent background",
+            );
+            crate::logging::debug_if_err(window.set_shadow(true), "set shelf picker shadow");
             apply_macos_shelf_vibrancy(&window);
         }
-        let _ = window.hide();
+        crate::logging::debug_if_err(window.hide(), "precache hide shelf picker window");
     }
 
     Ok(())
@@ -121,13 +147,19 @@ pub fn show_quick_todo(app: &AppHandle) -> tauri::Result<()> {
         window
     };
 
-    let _ = window.set_size(LogicalSize::new(width, height));
-    let _ = window.center();
-    let _ = window.set_always_on_top(true);
+    crate::logging::debug_if_err(
+        window.set_size(LogicalSize::new(width, height)),
+        "size quick todo window",
+    );
+    crate::logging::debug_if_err(window.center(), "center quick todo window");
+    crate::logging::debug_if_err(
+        window.set_always_on_top(true),
+        "set quick todo always on top",
+    );
     polish_quick_todo_window(&window);
     window.show()?;
     window.set_focus()?;
-    let _ = app.emit_to("quick-todo", "quick-todo:focus-title", ());
+    emit_to_debug(app, "quick-todo", "quick-todo:focus-title", ());
     Ok(())
 }
 
@@ -148,7 +180,7 @@ pub fn hide_shelf_picker(app: AppHandle) -> Result<(), String> {
 
 pub fn is_shelf_picker_visible(app: &AppHandle) -> bool {
     app.get_webview_window(SHELF_PICKER_LABEL)
-        .and_then(|window| window.is_visible().ok())
+        .map(|window| window_is_visible(&window, "check shelf picker visibility"))
         .unwrap_or(false)
 }
 
@@ -162,11 +194,11 @@ pub fn hide_shelf_picker_window(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
         if let Some(window) = app.get_webview_window(SHELF_PICKER_LABEL) {
-            let _ = window.hide();
+            crate::logging::debug_if_err(window.hide(), "hide shelf picker window");
         }
     }
 
-    let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:hide", ());
+    emit_to_debug(app, SHELF_PICKER_LABEL, "shelf-picker:hide", ());
     SHELF_VISIBLE_TAB.store(SHELF_TAB_NONE, Ordering::Relaxed);
     #[cfg(target_os = "windows")]
     SHELF_OUTSIDE_CLOSE_TOKEN.fetch_add(1, Ordering::Relaxed);
@@ -182,6 +214,20 @@ fn shelf_tab_id(tab: ShelfPickerTab) -> u8 {
 
 fn on_shelf_picker_shown(_app: &AppHandle, _window: &WebviewWindow, tab: ShelfPickerTab) {
     SHELF_VISIBLE_TAB.store(shelf_tab_id(tab), Ordering::Relaxed);
+}
+
+fn window_is_visible(window: &WebviewWindow, operation: &'static str) -> bool {
+    match window.is_visible() {
+        Ok(visible) => visible,
+        Err(error) => {
+            tracing::debug!(
+                operation = %operation,
+                error = %error,
+                "failed to read window visibility"
+            );
+            false
+        }
+    }
 }
 
 fn show_shelf_window_without_stealing_focus(
@@ -264,7 +310,7 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         tab: shelf_picker_tab_name(tab),
     };
 
-    if window.is_visible().unwrap_or(false) {
+    if window_is_visible(&window, "check shelf picker visibility before show") {
         if !consume_shelf_shortcut_action() {
             return Ok(());
         }
@@ -276,7 +322,7 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         }
 
         SHELF_VISIBLE_TAB.store(tab_id, Ordering::Relaxed);
-        let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:activate", &payload);
+        emit_to_debug(app, SHELF_PICKER_LABEL, "shelf-picker:activate", &payload);
         return Ok(());
     }
 
@@ -284,11 +330,14 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         return Ok(());
     }
 
-    let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:prepare", &payload);
+    emit_to_debug(app, SHELF_PICKER_LABEL, "shelf-picker:prepare", &payload);
     place_bottom_shelf_window(app, &window, CLIPBOARD_SHELF_WIDTH_RATIO)?;
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = window.set_always_on_top(true);
+        crate::logging::debug_if_err(
+            window.set_always_on_top(true),
+            "set shelf picker always on top",
+        );
     }
     polish_shelf_picker_window(&window, true);
     show_shelf_window_without_stealing_focus(app, SHELF_PICKER_LABEL, &window)?;
@@ -302,7 +351,7 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         start_windows_shelf_outside_click_watcher(app, &window);
     }
     on_shelf_picker_shown(app, &window, tab);
-    let _ = app.emit_to(SHELF_PICKER_LABEL, "shelf-picker:open", &payload);
+    emit_to_debug(app, SHELF_PICKER_LABEL, "shelf-picker:open", &payload);
     Ok(())
 }
 
@@ -376,14 +425,20 @@ fn place_bottom_shelf_window(
         (area_w / scale) * width_ratio
     };
     let height = SHELF_HEIGHT;
-    let _ = window.set_size(LogicalSize::new(width, height));
+    crate::logging::debug_if_err(
+        window.set_size(LogicalSize::new(width, height)),
+        "size shelf picker window",
+    );
     let x = if full_width {
         area_pos.x + side_margin
     } else {
         area_pos.x + ((area_w - width * scale) / 2.0).round() as i32
     };
     let y = area_pos.y + (area_h - height * scale).round() as i32 - bottom_margin;
-    let _ = window.set_position(PhysicalPosition::new(x, y));
+    crate::logging::debug_if_err(
+        window.set_position(PhysicalPosition::new(x, y)),
+        "position shelf picker window",
+    );
     Ok(())
 }
 
@@ -402,7 +457,13 @@ fn windows_shelf_target(
     window: &WebviewWindow,
     width_ratio: f64,
 ) -> Option<WindowsShelfTarget> {
-    let monitor = shelf_monitor(app, window).ok()?;
+    let monitor = match shelf_monitor(app, window) {
+        Ok(monitor) => monitor,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to resolve shelf picker monitor");
+            return None;
+        }
+    };
     let scale = monitor.scale_factor();
     let position = monitor.position();
     let size = monitor.size();
@@ -498,7 +559,7 @@ fn align_windows_shelf_client_to_target(
             return;
         }
 
-        let _ = SetWindowPos(
+        if let Err(error) = SetWindowPos(
             hwnd,
             HWND_TOPMOST,
             window_left,
@@ -506,7 +567,9 @@ fn align_windows_shelf_client_to_target(
             window_width,
             window_height,
             SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
-        );
+        ) {
+            tracing::debug!(error = %error, "failed to align windows shelf client");
+        }
     }
 }
 
@@ -519,7 +582,7 @@ fn start_windows_shelf_outside_click_watcher(app: &AppHandle, window: &WebviewWi
     let app = app.clone();
     let token = SHELF_OUTSIDE_CLOSE_TOKEN.fetch_add(1, Ordering::Relaxed) + 1;
 
-    std::thread::spawn(move || {
+    crate::logging::spawn_named("tempo-shelf-outside-click-watcher", move || {
         let hwnd = windows::Win32::Foundation::HWND(hwnd_value as *mut _);
         let mut previous_buttons = windows_pressed_mouse_buttons();
 
@@ -530,7 +593,7 @@ fn start_windows_shelf_outside_click_watcher(app: &AppHandle, window: &WebviewWi
 
             let visible = app
                 .get_webview_window(SHELF_PICKER_LABEL)
-                .and_then(|window| window.is_visible().ok())
+                .map(|window| window_is_visible(&window, "check shelf picker watcher visibility"))
                 .unwrap_or(false);
             if !visible {
                 break;
@@ -541,7 +604,10 @@ fn start_windows_shelf_outside_click_watcher(app: &AppHandle, window: &WebviewWi
             previous_buttons = buttons;
 
             if newly_pressed != 0 && !windows_cursor_is_over_shelf(hwnd) {
-                let _ = hide_shelf_picker_window(&app);
+                crate::logging::debug_if_err(
+                    hide_shelf_picker_window(&app),
+                    "hide shelf picker from outside click watcher",
+                );
                 break;
             }
 
@@ -636,24 +702,27 @@ fn build_shelf_picker_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
-    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+    crate::logging::debug_if_err(
+        window.set_background_color(Some(Color(0, 0, 0, 0))),
+        "set shelf picker transparent background",
+    );
 
     #[cfg(target_os = "macos")]
     {
-        let _ = window.set_shadow(true);
+        crate::logging::debug_if_err(window.set_shadow(true), "set shelf picker shadow");
         polish_macos_shelf_picker_window(window, topmost);
     }
 
     #[cfg(target_os = "windows")]
     {
-        let _ = window.set_shadow(true);
+        crate::logging::debug_if_err(window.set_shadow(true), "set shelf picker shadow");
         apply_windows_shelf_appearance(window);
         let _ = topmost;
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = window.set_shadow(false);
+        crate::logging::debug_if_err(window.set_shadow(false), "unset shelf picker shadow");
         let _ = topmost;
     }
 }
@@ -673,12 +742,14 @@ fn apply_windows_shelf_appearance(window: &WebviewWindow) {
 
     let border_color = DWMWA_COLOR_DEFAULT;
     unsafe {
-        let _ = DwmSetWindowAttribute(
+        if let Err(error) = DwmSetWindowAttribute(
             hwnd,
             DWMWA_BORDER_COLOR,
             &border_color as *const _ as *const _,
             std::mem::size_of_val(&border_color) as u32,
-        );
+        ) {
+            tracing::debug!(error = %error, "failed to apply windows shelf border appearance");
+        }
     }
 }
 
@@ -706,12 +777,15 @@ fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
         apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
     };
 
-    let _ = clear_vibrancy(window);
-    let _ = apply_vibrancy(
-        window,
-        NSVisualEffectMaterial::HudWindow,
-        Some(NSVisualEffectState::Active),
-        Some(MACOS_SHELF_CORNER_RADIUS),
+    crate::logging::debug_if_err(clear_vibrancy(window), "clear shelf picker macos vibrancy");
+    crate::logging::debug_if_err(
+        apply_vibrancy(
+            window,
+            NSVisualEffectMaterial::HudWindow,
+            Some(NSVisualEffectState::Active),
+            Some(MACOS_SHELF_CORNER_RADIUS),
+        ),
+        "apply shelf picker macos vibrancy",
     );
 }
 
@@ -719,9 +793,12 @@ fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
 fn polish_macos_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
     apply_macos_shelf_vibrancy(window);
 
-    let _ = window.with_webview(move |webview| unsafe {
-        apply_macos_shelf_appearance(webview.ns_window(), topmost);
-    });
+    crate::logging::debug_if_err(
+        window.with_webview(move |webview| unsafe {
+            apply_macos_shelf_appearance(webview.ns_window(), topmost);
+        }),
+        "apply shelf picker macos native appearance",
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -760,7 +837,7 @@ unsafe fn apply_macos_shelf_appearance(ns_window: *mut std::ffi::c_void, topmost
 
 pub fn is_pomodoro_float_visible(app: &AppHandle) -> bool {
     app.get_webview_window(POMODORO_FLOAT_LABEL)
-        .and_then(|window| window.is_visible().ok())
+        .map(|window| window_is_visible(&window, "check pomodoro float visibility"))
         .unwrap_or(false)
 }
 
@@ -805,9 +882,15 @@ pub fn show_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
     let (width, height) = pomodoro_float_window_size();
     let window = get_or_create_pomodoro_float_window(app, width, height)?;
 
-    let _ = window.set_size(LogicalSize::new(width, height));
+    crate::logging::debug_if_err(
+        window.set_size(LogicalSize::new(width, height)),
+        "size pomodoro float window",
+    );
     place_pomodoro_float_window(app, &window, width, height)?;
-    let _ = window.set_always_on_top(true);
+    crate::logging::debug_if_err(
+        window.set_always_on_top(true),
+        "set pomodoro float always on top",
+    );
     polish_pomodoro_float_window(&window);
     window.show()?;
     emit_pomodoro_float_visible(app, true);
@@ -823,7 +906,7 @@ pub fn hide_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn emit_pomodoro_float_visible(app: &AppHandle, visible: bool) {
-    let _ = app.emit("pomodoro-float-visible", visible);
+    emit_debug(app, "pomodoro-float-visible", visible);
     crate::tray_menu::sync_pomodoro_float_checked(app, visible);
 }
 
@@ -856,7 +939,10 @@ fn attach_pomodoro_float_menu_handler(app: &AppHandle, window: &WebviewWindow) {
     let app_handle = app.clone();
     window.on_menu_event(move |_window, event| {
         if event.id.as_ref() == "pomodoro-float-hide" {
-            let _ = hide_pomodoro_float_window(&app_handle);
+            crate::logging::warn_if_err(
+                hide_pomodoro_float_window(&app_handle),
+                "hide pomodoro float from menu",
+            );
         }
     });
 }
@@ -891,13 +977,19 @@ fn place_pomodoro_float_window(
         };
 
         if let (Some(x), Some(y)) = (settings.pomodoro_float_x, settings.pomodoro_float_y) {
-            let _ = window.set_position(PhysicalPosition::new(x, y));
+            crate::logging::debug_if_err(
+                window.set_position(PhysicalPosition::new(x, y)),
+                "position pomodoro float window from settings",
+            );
             return Ok(());
         }
     }
 
     if let Some(position) = default_pomodoro_float_position(app, width, height) {
-        let _ = window.set_position(position);
+        crate::logging::debug_if_err(
+            window.set_position(position),
+            "position pomodoro float window",
+        );
     }
 
     Ok(())
@@ -908,7 +1000,17 @@ fn default_pomodoro_float_position(
     width: f64,
     height: f64,
 ) -> Option<PhysicalPosition<i32>> {
-    let monitor = app.primary_monitor().ok()??;
+    let monitor = match app.primary_monitor() {
+        Ok(Some(monitor)) => monitor,
+        Ok(None) => {
+            tracing::debug!("no primary monitor available for pomodoro float");
+            return None;
+        }
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to resolve primary monitor for pomodoro float");
+            return None;
+        }
+    };
     let position = monitor.position();
     let size = monitor.size();
     let scale = monitor.scale_factor();
@@ -923,23 +1025,26 @@ fn default_pomodoro_float_position(
 }
 
 pub fn polish_pomodoro_float_window(window: &WebviewWindow) {
-    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+    crate::logging::debug_if_err(
+        window.set_background_color(Some(Color(0, 0, 0, 0))),
+        "set pomodoro float transparent background",
+    );
 
     #[cfg(target_os = "macos")]
     {
-        let _ = window.set_shadow(true);
+        crate::logging::debug_if_err(window.set_shadow(true), "set pomodoro float shadow");
         polish_macos_pomodoro_float_window(window);
     }
 
     #[cfg(target_os = "windows")]
     {
-        let _ = window.set_shadow(true);
+        crate::logging::debug_if_err(window.set_shadow(true), "set pomodoro float shadow");
         apply_windows_shelf_appearance(window);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = window.set_shadow(false);
+        crate::logging::debug_if_err(window.set_shadow(false), "unset pomodoro float shadow");
     }
 }
 
@@ -979,10 +1084,13 @@ pub fn show_eye_care_overlay_window(app: &AppHandle) -> tauri::Result<()> {
         // macOS: simple fullscreen on the primary display only.
         // Multi-monitor window overlays look poor and are intentionally skipped.
         let window = get_or_create_eye_care_window(app, EYE_CARE_PRIMARY_LABEL)?;
-        let _ = window.set_simple_fullscreen(true);
+        crate::logging::debug_if_err(
+            window.set_simple_fullscreen(true),
+            "set eye care fullscreen",
+        );
         polish_macos_eye_care_overlay(&window);
         present_eye_care_window(&window)?;
-        let _ = app.emit("eye-care:reveal", ());
+        emit_debug(app, "eye-care:reveal", ());
         return Ok(());
     }
 
@@ -1007,10 +1115,10 @@ pub fn show_eye_care_overlay_window(app: &AppHandle) -> tauri::Result<()> {
         close_extra_eye_care_windows(app, monitors.len());
 
         if let Some(primary) = app.get_webview_window(EYE_CARE_PRIMARY_LABEL) {
-            let _ = primary.set_focus();
+            crate::logging::debug_if_err(primary.set_focus(), "focus primary eye care overlay");
         }
 
-        let _ = app.emit("eye-care:reveal", ());
+        emit_debug(app, "eye-care:reveal", ());
         Ok(())
     }
 }
@@ -1024,14 +1132,17 @@ pub fn hide_eye_care_overlay(app: AppHandle) -> Result<(), String> {
         }
 
         #[cfg(target_os = "macos")]
-        let _ = window.set_simple_fullscreen(false);
+        crate::logging::debug_if_err(
+            window.set_simple_fullscreen(false),
+            "unset eye care fullscreen",
+        );
 
         if label == EYE_CARE_PRIMARY_LABEL {
             window.hide().map_err(|error| error.to_string())?;
         } else {
             // Keep secondary overlays around so the next reminder does not recreate
             // WebViews inside the invoke handler (Windows WebView2 can deadlock IPC).
-            let _ = window.hide();
+            crate::logging::debug_if_err(window.hide(), "hide secondary eye care overlay");
         }
     }
 
@@ -1082,8 +1193,11 @@ pub fn sync_eye_care_window_background(app: AppHandle, dark: bool) -> Result<(),
 }
 
 fn present_eye_care_window(window: &WebviewWindow) -> tauri::Result<()> {
-    let _ = window.set_always_on_top(true);
-    let _ = window.set_shadow(false);
+    crate::logging::debug_if_err(
+        window.set_always_on_top(true),
+        "set eye care overlay always on top",
+    );
+    crate::logging::debug_if_err(window.set_shadow(false), "unset eye care overlay shadow");
     window.show()?;
     Ok(())
 }
@@ -1115,8 +1229,14 @@ fn place_eye_care_window_on_monitor(window: &WebviewWindow, monitor: &Monitor) {
     let position = monitor.position();
     let size = monitor.size();
     // Use physical pixels so mixed-DPI secondary monitors land correctly.
-    let _ = window.set_position(PhysicalPosition::new(position.x, position.y));
-    let _ = window.set_size(PhysicalSize::new(size.width, size.height));
+    crate::logging::debug_if_err(
+        window.set_position(PhysicalPosition::new(position.x, position.y)),
+        "position eye care overlay",
+    );
+    crate::logging::debug_if_err(
+        window.set_size(PhysicalSize::new(size.width, size.height)),
+        "size eye care overlay",
+    );
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1130,34 +1250,37 @@ fn close_extra_eye_care_windows(app: &AppHandle, active_count: usize) {
             continue;
         };
         let Ok(index) = suffix.parse::<usize>() else {
-            let _ = window.close();
+            crate::logging::debug_if_err(window.close(), "close stale eye care overlay");
             continue;
         };
 
         if index >= active_count {
-            let _ = window.close();
+            crate::logging::debug_if_err(window.close(), "close inactive eye care overlay");
         }
     }
 }
 
 pub fn polish_quick_todo_window(window: &WebviewWindow) {
-    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+    crate::logging::debug_if_err(
+        window.set_background_color(Some(Color(0, 0, 0, 0))),
+        "set quick todo transparent background",
+    );
 
     #[cfg(target_os = "macos")]
     {
-        let _ = window.set_shadow(true);
+        crate::logging::debug_if_err(window.set_shadow(true), "set quick todo shadow");
         polish_macos_quick_todo_window(window);
     }
 
     #[cfg(target_os = "windows")]
     {
-        let _ = window.set_shadow(true);
+        crate::logging::debug_if_err(window.set_shadow(true), "set quick todo shadow");
         apply_windows_shelf_appearance(window);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = window.set_shadow(false);
+        crate::logging::debug_if_err(window.set_shadow(false), "unset quick todo shadow");
     }
 }
 
@@ -1207,9 +1330,12 @@ fn build_eye_care_overlay_window(app: &AppHandle, label: &str) -> tauri::Result<
 
 #[cfg(target_os = "macos")]
 fn polish_macos_eye_care_overlay(window: &WebviewWindow) {
-    let _ = window.with_webview(|webview| unsafe {
-        apply_macos_overlay_level(webview.ns_window());
-    });
+    crate::logging::debug_if_err(
+        window.with_webview(|webview| unsafe {
+            apply_macos_overlay_level(webview.ns_window());
+        }),
+        "apply eye care macos overlay level",
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -1232,9 +1358,12 @@ const MACOS_OVERLAY_CORNER_RADIUS: f64 = 10.0;
 
 #[cfg(target_os = "macos")]
 fn polish_macos_pomodoro_float_window(window: &WebviewWindow) {
-    let _ = window.with_webview(|webview| unsafe {
-        apply_macos_native_overlay_window(webview.ns_window());
-    });
+    crate::logging::debug_if_err(
+        window.with_webview(|webview| unsafe {
+            apply_macos_native_overlay_window(webview.ns_window());
+        }),
+        "apply pomodoro float macos native appearance",
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -1269,7 +1398,10 @@ unsafe fn apply_macos_native_overlay_window(ns_window: *mut std::ffi::c_void) {
 
 #[cfg(target_os = "macos")]
 fn polish_macos_quick_todo_window(window: &WebviewWindow) {
-    let _ = window.with_webview(|webview| unsafe {
-        apply_macos_native_overlay_window(webview.ns_window());
-    });
+    crate::logging::debug_if_err(
+        window.with_webview(|webview| unsafe {
+            apply_macos_native_overlay_window(webview.ns_window());
+        }),
+        "apply quick todo macos native appearance",
+    );
 }

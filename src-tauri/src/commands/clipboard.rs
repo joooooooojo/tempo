@@ -3,7 +3,7 @@ use crate::clipboard_db::{
     list_clipboard_entries, set_clipboard_entry_pinned, ClipboardEntry,
 };
 use crate::clipboard_images::{hydrate_clipboard_image_urls, maybe_delete_clipboard_image_file};
-use rusqlite::Connection;
+use rusqlite::{Connection, Error as SqliteError};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -77,7 +77,7 @@ fn lookup_existing_app_icon(
     app_name: &str,
     process_name: &str,
 ) -> Option<String> {
-    conn.query_row(
+    match conn.query_row(
         "SELECT icon_data_url
          FROM app_usage
          WHERE icon_data_url IS NOT NULL
@@ -87,8 +87,14 @@ fn lookup_existing_app_icon(
          LIMIT 1",
         rusqlite::params![app_name, process_name],
         |row| row.get::<_, String>(0),
-    )
-    .ok()
+    ) {
+        Ok(icon) => Some(icon),
+        Err(SqliteError::QueryReturnedNoRows) => None,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to lookup existing app icon");
+            None
+        }
+    }
 }
 
 #[tauri::command]
@@ -176,7 +182,6 @@ pub fn copy_clipboard_entry(
     state: tauri::State<AppState>,
     id: i64,
 ) -> Result<(), String> {
-    #[cfg(debug_assertions)]
-    eprintln!("[tempo-debug][clipboard-command] copy_clipboard_entry id={id}");
+    tracing::debug!(target: "tempo::clipboard", entry_id = id, "copy clipboard entry command");
     copy_clipboard_entry_by_id(&state, &app, id)
 }

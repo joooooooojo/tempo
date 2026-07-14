@@ -11,7 +11,10 @@ pub fn hide_presence(app: &AppHandle) {
         return;
     }
 
-    let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+    crate::logging::debug_if_err(
+        app.set_activation_policy(ActivationPolicy::Accessory),
+        "set macos accessory activation policy",
+    );
     ensure_main_window_hidden(app);
 }
 
@@ -29,7 +32,7 @@ pub fn ensure_main_window_hidden(app: &AppHandle) {
 
 fn hide_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        crate::logging::debug_if_err(window.hide(), "hide main window for macos tray");
     }
 }
 

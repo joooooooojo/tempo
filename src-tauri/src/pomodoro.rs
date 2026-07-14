@@ -204,7 +204,13 @@ fn begin_phase(
         let started_at = Local::now().to_rfc3339();
         let session_id = {
             let conn = state.db.lock();
-            start_pomodoro_work_session(&conn, runtime.active_todo_id, &started_at).ok()
+            match start_pomodoro_work_session(&conn, runtime.active_todo_id, &started_at) {
+                Ok(session_id) => Some(session_id),
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to start pomodoro work session");
+                    None
+                }
+            }
         };
         runtime.work_session_id = session_id;
     } else {
@@ -277,29 +283,42 @@ fn focus_main_window(app: &AppHandle) {
     }
 
     let app_handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
+    if let Err(error) = app.run_on_main_thread(move || {
         if let Some(window) = app_handle.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
+            crate::logging::debug_if_err(window.show(), "show main window for pomodoro");
+            crate::logging::debug_if_err(
+                window.unminimize(),
+                "unminimize main window for pomodoro",
+            );
+            crate::logging::debug_if_err(window.set_focus(), "focus main window for pomodoro");
         }
-    });
+    }) {
+        tracing::warn!(error = %error, "failed to dispatch pomodoro main window focus");
+    }
 }
 
 pub fn push_pomodoro_update(app: &AppHandle, state: &AppState) {
     let snapshot = pomodoro_state_snapshot(state);
     let app_handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let _ = app_handle.emit("pomodoro-update", snapshot);
-    });
+    if let Err(error) = app.run_on_main_thread(move || {
+        crate::logging::debug_if_err(
+            app_handle.emit("pomodoro-update", snapshot),
+            "emit pomodoro update",
+        );
+    }) {
+        tracing::warn!(error = %error, "failed to dispatch pomodoro update");
+    }
 }
 
 fn emit_on_main(app: &AppHandle, event: &str, payload: serde_json::Value) {
     let app_handle = app.clone();
     let event = event.to_string();
-    let _ = app.run_on_main_thread(move || {
-        let _ = app_handle.emit(&event, payload);
-    });
+    let event_for_log = event.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        crate::logging::debug_if_err(app_handle.emit(&event, payload), "emit pomodoro event");
+    }) {
+        tracing::warn!(event = %event_for_log, error = %error, "failed to dispatch pomodoro event");
+    }
 }
 
 fn status_label(status: PomodoroStatus) -> &'static str {
@@ -315,72 +334,5 @@ fn phase_label(phase: PomodoroPhase) -> &'static str {
         PomodoroPhase::Work => "work",
         PomodoroPhase::ShortBreak => "short_break",
         PomodoroPhase::LongBreak => "long_break",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::{ClipboardRuntime, TrackerState};
-    use parking_lot::Mutex;
-    use rusqlite::Connection;
-    use std::{
-        sync::{mpsc, Arc},
-        time::Duration,
-    };
-
-    fn test_state() -> AppState {
-        let conn = Connection::open_in_memory().expect("open in-memory db");
-        conn.execute_batch(
-            "
-            CREATE TABLE settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            CREATE TABLE todos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                completed INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE pomodoro_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                todo_id INTEGER,
-                started_at TEXT NOT NULL,
-                ended_at TEXT,
-                duration_seconds INTEGER NOT NULL DEFAULT 0,
-                completed INTEGER NOT NULL DEFAULT 0,
-                skipped INTEGER NOT NULL DEFAULT 0
-            );
-            ",
-        )
-        .expect("create test tables");
-
-        AppState {
-            db: Arc::new(Mutex::new(conn)),
-            tracker: Arc::new(Mutex::new(TrackerState::default())),
-            pomodoro: Arc::new(Mutex::new(PomodoroRuntime::default())),
-            clipboard: Arc::new(Mutex::new(ClipboardRuntime::default())),
-        }
-    }
-
-    #[test]
-    fn start_pause_and_stop_return_without_deadlock() {
-        let state = test_state();
-        let (tx, rx) = mpsc::channel();
-
-        std::thread::spawn(move || {
-            let started = start_pomodoro(&state, None).expect("start pomodoro");
-            let paused = pause_pomodoro(&state);
-            let stopped = stop_pomodoro(&state);
-            tx.send((started, paused, stopped)).ok();
-        });
-
-        let (started, paused, stopped) = rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("pomodoro commands should return without deadlocking");
-
-        assert_eq!(started.status, "running");
-        assert_eq!(paused.status, "paused");
-        assert_eq!(stopped.status, "idle");
     }
 }

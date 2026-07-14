@@ -26,7 +26,10 @@ pub fn start_pomodoro(
     let snapshot = crate::pomodoro::start_pomodoro(&state, todo_id)?;
     crate::pomodoro::push_pomodoro_update(&app, &state);
 
-    let _ = crate::auxiliary_windows::show_pomodoro_float_window(&app);
+    crate::logging::warn_if_err(
+        crate::auxiliary_windows::show_pomodoro_float_window(&app),
+        "show pomodoro float after start",
+    );
 
     Ok(snapshot)
 }
