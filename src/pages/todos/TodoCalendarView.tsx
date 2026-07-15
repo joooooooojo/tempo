@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type AnimationEvent } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TodoItem } from "@/types";
@@ -17,9 +17,9 @@ function localDayKey(date: Date) {
   return `${y}-${m}-${d}`;
 }
 
-function dueDayKey(dueAt?: string | null) {
-  if (!dueAt) return null;
-  const date = new Date(dueAt);
+function isoDayKey(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return localDayKey(date);
 }
@@ -30,6 +30,21 @@ function startOfMonth(date: Date) {
 
 function addMonths(date: Date, delta: number) {
   return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+function groupTodosByDay(
+  todos: TodoItem[],
+  keyOf: (todo: TodoItem) => string | null
+) {
+  const map = new Map<string, TodoItem[]>();
+  for (const todo of todos) {
+    const key = keyOf(todo);
+    if (!key) continue;
+    const list = map.get(key) ?? [];
+    list.push(todo);
+    map.set(key, list);
+  }
+  return map;
 }
 
 /** Monday-first month grid (always 6 weeks for stable layout). */
@@ -100,6 +115,12 @@ function orbitLayouts(count: number, seedBase: number): OrbitLayout[] {
   });
 }
 
+type DayRelation = {
+  todo: TodoItem;
+  isDue: boolean;
+  isCreated: boolean;
+};
+
 export function TodoCalendarView({
   todos,
   onOpenDetail,
@@ -110,39 +131,83 @@ export function TodoCalendarView({
   const today = useMemo(() => startOfLocalDay(new Date()), []);
   const [month, setMonth] = useState(() => startOfMonth(today));
   const [activeDay, setActiveDay] = useState<Date | null>(null);
+  const [orbitState, setOrbitState] = useState<"open" | "closed">("closed");
 
-  const todosByDay = useMemo(() => {
-    const map = new Map<string, TodoItem[]>();
-    for (const todo of todos) {
-      const key = dueDayKey(todo.due_at);
-      if (!key) continue;
-      const list = map.get(key) ?? [];
-      list.push(todo);
-      map.set(key, list);
-    }
-    return map;
-  }, [todos]);
+  const todosByDueDay = useMemo(
+    () => groupTodosByDay(todos, (todo) => isoDayKey(todo.due_at)),
+    [todos]
+  );
+
+  const todosByCreatedDay = useMemo(
+    () => groupTodosByDay(todos, (todo) => isoDayKey(todo.created_at)),
+    [todos]
+  );
 
   const cells = useMemo(() => buildMonthCells(month), [month]);
   const activeKey = activeDay ? localDayKey(activeDay) : null;
-  const activeTodos = activeKey ? (todosByDay.get(activeKey) ?? []) : [];
+  const orbitOpen = Boolean(activeDay);
+
+  const activeRelations = useMemo(() => {
+    if (!activeKey) return [] as DayRelation[];
+    const dueList = todosByDueDay.get(activeKey) ?? [];
+    const createdList = todosByCreatedDay.get(activeKey) ?? [];
+    const byId = new Map<number, DayRelation>();
+
+    for (const todo of dueList) {
+      byId.set(todo.id, { todo, isDue: true, isCreated: false });
+    }
+    for (const todo of createdList) {
+      const existing = byId.get(todo.id);
+      if (existing) {
+        existing.isCreated = true;
+      } else {
+        byId.set(todo.id, { todo, isDue: false, isCreated: true });
+      }
+    }
+
+    return Array.from(byId.values());
+  }, [activeKey, todosByCreatedDay, todosByDueDay]);
+
   const layouts = useMemo(() => {
     if (!activeDay) return [];
     const seed =
       activeDay.getFullYear() * 10000 +
       (activeDay.getMonth() + 1) * 100 +
       activeDay.getDate();
-    return orbitLayouts(activeTodos.length, seed);
-  }, [activeDay, activeTodos.length]);
+    return orbitLayouts(activeRelations.length, seed);
+  }, [activeDay, activeRelations.length]);
+
+  const openOrbit = (date: Date) => {
+    setActiveDay(date);
+    setOrbitState("open");
+  };
+
+  const closeOrbit = useCallback(() => {
+    setOrbitState((state) => {
+      if (state === "closed") return state;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduceMotion) {
+        setActiveDay(null);
+      }
+      return "closed";
+    });
+  }, []);
+
+  const handleOrbitAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (orbitState !== "closed") return;
+    if (event.animationName !== "todo-orbit-overlay-out") return;
+    setActiveDay(null);
+  };
 
   useEffect(() => {
-    if (!activeDay) return;
+    if (!orbitOpen || orbitState !== "open") return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setActiveDay(null);
+      if (event.key === "Escape") closeOrbit();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeDay]);
+  }, [closeOrbit, orbitOpen, orbitState]);
 
   const monthLabel = month.toLocaleDateString("zh-CN", {
     year: "numeric",
@@ -173,6 +238,17 @@ export function TodoCalendarView({
         </button>
       </header>
 
+      <div className="mb-1.5 flex shrink-0 items-center justify-end gap-3 px-0.5 text-[10px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1">
+          <span className="size-1.5 rounded-full bg-primary" />
+          截止
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="size-1.5 rounded-full bg-sky-500" />
+          创建
+        </span>
+      </div>
+
       <div className="mb-2 grid shrink-0 grid-cols-7 gap-1.5">
         {WEEKDAYS.map((label) => (
           <div
@@ -187,16 +263,18 @@ export function TodoCalendarView({
       <div className="grid min-h-0 flex-1 grid-cols-7 grid-rows-6 gap-1.5">
         {cells.map((date) => {
           const key = localDayKey(date);
-          const count = todosByDay.get(key)?.length ?? 0;
+          const dueCount = todosByDueDay.get(key)?.length ?? 0;
+          const createdCount = todosByCreatedDay.get(key)?.length ?? 0;
           const inMonth = date.getMonth() === month.getMonth();
           const isToday = key === localDayKey(today);
           const isActive = activeKey === key;
+          const hasMarkers = dueCount > 0 || createdCount > 0;
 
           return (
             <button
               key={key}
               type="button"
-              onClick={() => setActiveDay(date)}
+              onClick={() => openOrbit(date)}
               className={cn(
                 "todo-month-calendar__cell group relative flex min-h-0 flex-col items-start justify-between rounded-2xl border px-2.5 py-2 text-left transition-colors",
                 inMonth
@@ -216,18 +294,32 @@ export function TodoCalendarView({
               >
                 {date.getDate()}
               </span>
-              {count > 0 ? (
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
-                    isToday
-                      ? "bg-primary/15 text-primary"
-                      : "bg-foreground/[0.06] text-foreground/75"
+              {hasMarkers ? (
+                <div className="flex flex-wrap items-center gap-1">
+                  {dueCount > 0 && (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                        isToday
+                          ? "bg-primary/15 text-primary"
+                          : "bg-primary/10 text-primary"
+                      )}
+                      title={`${dueCount} 项截止`}
+                    >
+                      <span className="size-1 rounded-full bg-primary opacity-80" />
+                      {dueCount}
+                    </span>
                   )}
-                >
-                  <span className="size-1 rounded-full bg-current opacity-70" />
-                  {count}
-                </span>
+                  {createdCount > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-sky-700 dark:text-sky-300"
+                      title={`${createdCount} 项创建`}
+                    >
+                      <span className="size-1 rounded-full bg-sky-500 opacity-80" />
+                      {createdCount}
+                    </span>
+                  )}
+                </div>
               ) : (
                 <span className="h-[18px]" />
               )}
@@ -236,24 +328,26 @@ export function TodoCalendarView({
         })}
       </div>
 
-      {activeDay && (
+      {orbitOpen && activeDay && (
         <div
           className="todo-month-calendar__orbit absolute inset-0 z-20 overflow-hidden rounded-2xl"
+          data-state={orbitState}
           role="dialog"
           aria-modal="true"
           aria-label={`${activeDay.toLocaleDateString("zh-CN", {
             month: "long",
             day: "numeric",
           })} 的待办`}
+          onAnimationEnd={handleOrbitAnimationEnd}
         >
           <button
             type="button"
-            className="absolute inset-0 z-0 cursor-default bg-background/72 backdrop-blur-[2px]"
+            className="todo-month-calendar__orbit-backdrop absolute inset-0 z-0 cursor-default bg-background/72 backdrop-blur-[2px]"
             aria-label="关闭"
-            onClick={() => setActiveDay(null)}
+            onClick={closeOrbit}
           />
 
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-4">
+          <div className="todo-month-calendar__orbit-header pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-4">
             <div>
               <p className="text-[13px] font-semibold text-foreground">
                 {activeDay.toLocaleDateString("zh-CN", {
@@ -263,43 +357,52 @@ export function TodoCalendarView({
                 })}
               </p>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {activeTodos.length > 0
-                  ? `${activeTodos.length} 项截止待办 · 点击卡片查看详情`
-                  : "这一天没有截止待办 · 点击空白处返回"}
+                {activeRelations.length > 0
+                  ? `${activeRelations.length} 项相关待办 · 点击卡片查看详情`
+                  : "这一天没有相关待办 · 点击空白处返回"}
               </p>
             </div>
             <button
               type="button"
               className="pointer-events-auto inline-flex size-8 items-center justify-center rounded-full border border-border/60 bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
               aria-label="关闭日视图"
-              onClick={() => setActiveDay(null)}
+              onClick={closeOrbit}
             >
               <X className="size-4" />
             </button>
           </div>
 
           <div className="pointer-events-none absolute inset-0 z-[1]">
-            {activeTodos.length === 0 ? (
-              <div className="absolute top-1/2 left-1/2 w-[min(240px,70%)] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-dashed border-border/70 bg-background/80 px-5 py-8 text-center text-[12px] text-muted-foreground shadow-sm">
-                这一天没有截止待办
+            {activeRelations.length === 0 ? (
+              <div className="todo-month-calendar__orbit-empty absolute top-1/2 left-1/2 w-[min(240px,70%)] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-dashed border-border/70 bg-background/80 px-5 py-8 text-center text-[12px] text-muted-foreground shadow-sm">
+                这一天没有相关待办
                 <span className="mt-1.5 block text-[11px] text-muted-foreground/80">
                   点击空白处返回日历
                 </span>
               </div>
             ) : (
-              activeTodos.map((todo, index) => {
+              activeRelations.map((relation, index) => {
                 const layout = layouts[index] ?? layouts[0];
+                const { todo, isDue, isCreated } = relation;
+                const exitDelayMs = Math.max(0, (activeRelations.length - 1 - index) * 35);
                 return (
                   <button
                     key={todo.id}
                     type="button"
-                    className="todo-month-calendar__orbit-card pointer-events-auto absolute max-w-[220px] min-w-[148px] rounded-3xl border border-border/60 bg-background/95 px-3.5 py-3 text-left shadow-[0_10px_30px_-12px_rgba(15,40,30,0.35)] backdrop-blur-sm transition-[box-shadow,transform] hover:z-10 hover:shadow-[0_16px_36px_-12px_rgba(15,40,30,0.42)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    className={cn(
+                      "todo-month-calendar__orbit-card pointer-events-auto absolute max-w-[220px] min-w-[148px] rounded-3xl border bg-background/95 px-3.5 py-3 text-left shadow-[0_10px_30px_-12px_rgba(15,40,30,0.35)] backdrop-blur-sm transition-[box-shadow,transform] hover:z-10 hover:shadow-[0_16px_36px_-12px_rgba(15,40,30,0.42)] focus-visible:outline-none focus-visible:ring-2",
+                      isDue && isCreated && "border-primary/45 ring-1 ring-sky-400/35 focus-visible:ring-primary/40",
+                      isDue && !isCreated && "border-primary/50 focus-visible:ring-primary/40",
+                      !isDue && isCreated && "border-sky-400/55 focus-visible:ring-sky-400/40"
+                    )}
                     style={{
                       left: `${layout.x}%`,
                       top: `${layout.y}%`,
                       ["--orbit-rot" as string]: `${layout.rot}deg`,
-                      animationDelay: `${layout.delay}s`,
-                      animationDuration: `${layout.duration}s`,
+                      ["--orbit-enter-delay" as string]: `${40 + index * 55}ms`,
+                      ["--orbit-exit-delay" as string]: `${exitDelayMs}ms`,
+                      ["--orbit-wobble-delay" as string]: `${layout.delay}s`,
+                      ["--orbit-wobble-duration" as string]: `${layout.duration}s`,
                     }}
                     onClick={() => onOpenDetail(todo)}
                   >
@@ -311,16 +414,23 @@ export function TodoCalendarView({
                     >
                       {todo.title}
                     </p>
-                    {todo.due_at && (
-                      <span
-                        className={cn(
-                          "mt-2 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                          dueBadgeClass(todo)
-                        )}
-                      >
-                        {formatTodoDate(todo.due_at)}
-                      </span>
-                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-1">
+                      {isDue && (
+                        <span
+                          className={cn(
+                            "inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                            dueBadgeClass(todo)
+                          )}
+                        >
+                          截止{todo.due_at ? ` ${formatTodoDate(todo.due_at)}` : ""}
+                        </span>
+                      )}
+                      {isCreated && (
+                        <span className="inline-flex rounded-full bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                          创建
+                        </span>
+                      )}
+                    </div>
                   </button>
                 );
               })

@@ -1,9 +1,165 @@
+.todo-month-calendar__orbit[data-state="open"] {
+  animation: todo-orbit-overlay-in 220ms ease-out both;
+}
+
+.todo-month-calendar__orbit[data-state="closed"] {
+  pointer-events: none;
+  animation: todo-orbit-overlay-out 280ms ease-in both;
+}
+
+.todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-backdrop {
+  animation: todo-orbit-backdrop-in 260ms ease-out both;
+}
+
+.todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-backdrop {
+  animation: todo-orbit-backdrop-out 240ms ease-in both;
+}
+
+.todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-header {
+  animation: todo-orbit-header-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-header {
+  animation: todo-orbit-header-out 200ms ease-in both;
+}
+
+.todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-empty {
+  animation: todo-orbit-empty-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-empty {
+  animation: todo-orbit-empty-out 200ms ease-in both;
+}
+
 .todo-month-calendar__orbit-card {
-  transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg));
-  animation-name: todo-orbit-wobble;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
-  will-change: transform;
+  --orbit-rot: 0deg;
+  --orbit-enter-delay: 0ms;
+  --orbit-exit-delay: 0ms;
+  --orbit-wobble-delay: 0s;
+  --orbit-wobble-duration: 4s;
+  transform: translate(-50%, -50%) rotate(var(--orbit-rot));
+  will-change: transform, opacity;
+}
+
+.todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-card {
+  animation:
+    todo-orbit-card-in 480ms cubic-bezier(0.22, 1, 0.36, 1) var(--orbit-enter-delay) both,
+    todo-orbit-wobble var(--orbit-wobble-duration) ease-in-out
+      calc(var(--orbit-enter-delay) + 420ms + var(--orbit-wobble-delay)) infinite;
+}
+
+.todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-card {
+  animation: todo-orbit-card-out 260ms cubic-bezier(0.4, 0, 1, 1) var(--orbit-exit-delay) both;
+}
+
+@keyframes todo-orbit-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes todo-orbit-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes todo-orbit-backdrop-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(2px);
+  }
+}
+
+@keyframes todo-orbit-backdrop-out {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(2px);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+}
+
+@keyframes todo-orbit-header-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes todo-orbit-header-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes todo-orbit-card-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.42) rotate(calc(var(--orbit-rot, 0deg) - 10deg));
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.04) rotate(var(--orbit-rot, 0deg));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(var(--orbit-rot, 0deg));
+  }
+}
+
+@keyframes todo-orbit-card-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(var(--orbit-rot, 0deg));
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.5) rotate(calc(var(--orbit-rot, 0deg) + 8deg));
+  }
+}
+
+@keyframes todo-orbit-empty-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes todo-orbit-empty-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.94);
+  }
 }
 
 @keyframes todo-orbit-wobble {
@@ -23,7 +179,21 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .todo-month-calendar__orbit-card {
+  .todo-month-calendar__orbit[data-state="open"],
+  .todo-month-calendar__orbit[data-state="closed"],
+  .todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-backdrop,
+  .todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-backdrop,
+  .todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-header,
+  .todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-header,
+  .todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-empty,
+  .todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-empty,
+  .todo-month-calendar__orbit[data-state="open"] .todo-month-calendar__orbit-card,
+  .todo-month-calendar__orbit[data-state="closed"] .todo-month-calendar__orbit-card {
     animation: none;
+  }
+
+  .todo-month-calendar__orbit-card {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg));
   }
 }

@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Table,
   TableBody,
@@ -434,9 +435,9 @@ export function SnippetsPage() {
                 </div>
               </DialogHeader>
 
-              <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 py-5">
                 {detailSnippet.tags.length > 0 && (
-                  <div className="mb-4 flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
                     {detailSnippet.tags.map((tag) => (
                       <span
                         key={tag}
@@ -447,17 +448,25 @@ export function SnippetsPage() {
                     ))}
                   </div>
                 )}
-                {detailSnippet.language && detailSnippet.language !== "plain" ? (
-                  <CodeHighlight
-                    code={detailSnippet.content}
-                    language={detailSnippet.language}
-                    className="m-0"
-                  />
-                ) : (
-                  <div className="whitespace-pre-wrap break-words text-[13px] leading-6 text-foreground/90">
-                    <TextWithLinks text={detailSnippet.content} />
-                  </div>
-                )}
+                <ScrollArea
+                  className="h-80 shrink-0 overflow-hidden rounded-md border border-border/50 bg-muted/40"
+                  scrollbars="both"
+                  viewportClassName="no-scrollbar"
+                  aria-label="短语内容"
+                >
+                  {detailSnippet.language && detailSnippet.language !== "plain" ? (
+                    <CodeHighlight
+                      code={detailSnippet.content}
+                      language={detailSnippet.language}
+                      overflow={false}
+                      className="m-0 border-0 bg-transparent"
+                    />
+                  ) : (
+                    <div className="whitespace-pre-wrap break-words p-3 text-[13px] leading-6 text-foreground/90">
+                      <TextWithLinks text={detailSnippet.content} />
+                    </div>
+                  )}
+                </ScrollArea>
               </div>
 
               <DialogFooter className="mx-0 mb-0 flex w-full shrink-0 flex-row items-center gap-3 rounded-none border-t border-border/60 bg-foreground/[0.018] px-6 py-4 sm:space-x-0">
@@ -695,18 +704,9 @@ function SnippetRow({
         </div>
       </TableCell>
       <TableCell className="max-w-0 px-3 py-2 align-middle">
-        {snippet.language ? (
-          <CodeHighlight
-            code={snippet.content}
-            language={snippet.language}
-            maxLines={2}
-            className="m-0 max-h-12 overflow-hidden rounded-md p-2 text-[11px] leading-[15px]"
-          />
-        ) : (
-          <div className="m-0 block max-w-full truncate text-[12px] leading-[17px] text-foreground/88">
-            <TextWithLinks text={previewLines(snippet.content, 1)} />
-          </div>
-        )}
+        <div className="m-0 block max-w-full truncate text-[12px] leading-[17px] text-foreground/88">
+          <TextWithLinks text={previewLines(snippet.content, 1)} />
+        </div>
       </TableCell>
       <TableCell className="px-3 py-2 align-middle">
         <span className="truncate text-muted-foreground">

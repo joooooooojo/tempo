@@ -1,8 +1,12 @@
 /* Static highlight preview */
 .code-editor__hljs.hljs,
-.code-highlight .hljs {
+.code-highlight .hljs,
+pre.code-highlight > code.hljs {
   background: transparent !important;
   padding: 0 !important;
+  /* github.css sets `pre code.hljs { overflow-x: auto }` — kill native bars;
+     parent `pre` / ScrollArea owns scrolling instead. */
+  overflow: visible !important;
   color: inherit;
   font: inherit;
   line-height: inherit;

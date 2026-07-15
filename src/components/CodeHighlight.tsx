@@ -40,11 +40,14 @@ export function CodeHighlight({
   language,
   className,
   maxLines,
+  overflow = true,
 }: {
   code: string;
   language?: string | null;
   className?: string;
   maxLines?: number;
+  /** When false, skip internal scroll so a parent ScrollArea can own scrolling. */
+  overflow?: boolean;
 }) {
   const display = useMemo(() => {
     if (maxLines && maxLines > 0) {
@@ -58,13 +61,14 @@ export function CodeHighlight({
   return (
     <pre
       className={cn(
-        "code-highlight overflow-x-auto rounded-md border border-border/50 bg-muted/40 p-3 text-[12px] leading-5 text-foreground",
+        "code-highlight rounded-md border border-border/50 bg-muted/40 p-3 text-[12px] leading-5 text-foreground",
+        overflow && "overflow-x-auto",
         className
       )}
     >
       <code
         className={cn(
-          "hljs code-editor__hljs block whitespace-pre font-mono text-[12px] leading-5",
+          "hljs code-editor__hljs block overflow-visible whitespace-pre font-mono text-[12px] leading-5",
           language && `language-${language}`
         )}
         dangerouslySetInnerHTML={{ __html: html }}

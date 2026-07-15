@@ -29,17 +29,17 @@ pub fn sync_pomodoro_float_checked(app: &AppHandle, visible: bool) {
 }
 
 pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItem::with_id(app, "show", "鎵撳紑棣栭〉", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "打开首页", true, None::<&str>)?;
     let pomodoro_float = CheckMenuItem::with_id(
         app,
         "pomodoro_float",
-        "鐣寗閽熸偓娴獥",
+        "番茄钟悬浮窗",
         true,
         auxiliary_windows::is_pomodoro_float_visible(app.handle()),
         None::<&str>,
     )?;
-    let reset = MenuItem::with_id(app, "reset", "娓呯┖褰撴棩鏁版嵁", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "閫€鍑鸿蒋浠?", true, None::<&str>)?;
+    let reset = MenuItem::with_id(app, "reset", "清空当日数据", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出软件", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &pomodoro_float, &reset, &quit])?;
 
     app.manage(TrayMenuState {
@@ -54,7 +54,7 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         )
         .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
-        .tooltip("Tempo: 鍔犺浇涓?..")
+        .tooltip("Tempo: 加载中...")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 crate::logging::warn_if_err(commands::show_window(app.clone()), "tray show window");
@@ -71,7 +71,7 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
                     crate::logging::debug_if_err(
                         app.emit(
                             "toast",
-                            serde_json::json!({ "message": "浠婃棩鏁版嵁宸叉竻绌?" }),
+                            serde_json::json!({ "message": "今日数据已清空" }),
                         ),
                         "emit reset toast",
                     );

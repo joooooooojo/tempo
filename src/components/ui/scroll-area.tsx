@@ -64,7 +64,10 @@ function ScrollBar({
       data-orientation={orientation}
       orientation={orientation}
       className={cn(
-        "flex touch-none p-px transition-colors select-none data-horizontal:h-2.5 data-horizontal:flex-col data-vertical:h-full data-vertical:w-2.5",
+        "flex touch-none p-px transition-opacity select-none data-horizontal:h-2.5 data-horizontal:flex-col data-vertical:h-full data-vertical:w-2.5",
+        "pointer-events-none opacity-0 duration-150",
+        "data-hovering:pointer-events-auto data-hovering:opacity-100",
+        "data-scrolling:pointer-events-auto data-scrolling:opacity-100 data-scrolling:duration-0",
         className
       )}
       {...props}
