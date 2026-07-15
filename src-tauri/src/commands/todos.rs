@@ -22,6 +22,26 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
+fn emit_todo_created(app: &AppHandle, todo: &TodoItem) {
+    emit_on_main(
+        app,
+        "todo-created",
+        serde_json::to_value(todo).unwrap_or_else(|_| json!({})),
+    );
+}
+
+fn emit_todo_updated(app: &AppHandle, todo: &TodoItem) {
+    emit_on_main(
+        app,
+        "todo-updated",
+        serde_json::to_value(todo).unwrap_or_else(|_| json!({})),
+    );
+}
+
+fn emit_todo_deleted(app: &AppHandle, id: i64) {
+    emit_on_main(app, "todo-deleted", json!({ "id": id }));
+}
+
 #[tauri::command]
 pub fn get_todos(app: AppHandle, state: tauri::State<AppState>) -> Result<Vec<TodoItem>, String> {
     let spawned = {
@@ -29,11 +49,7 @@ pub fn get_todos(app: AppHandle, state: tauri::State<AppState>) -> Result<Vec<To
         process_pending_recurrences(&conn)?
     };
     for todo in spawned {
-        emit_on_main(
-            &app,
-            "todo-created",
-            serde_json::to_value(todo).unwrap_or_else(|_| json!({})),
-        );
+        emit_todo_created(&app, &todo);
     }
 
     let conn = state.db.lock();
@@ -59,11 +75,7 @@ pub fn check_pending_recurrences(app: &AppHandle, state: &AppState) {
     };
 
     for todo in spawned {
-        emit_on_main(
-            app,
-            "todo-created",
-            serde_json::to_value(todo).unwrap_or_else(|_| json!({})),
-        );
+        emit_todo_created(app, &todo);
     }
 }
 
@@ -125,7 +137,9 @@ pub fn add_todo(
     insert_todo_images(&app, &conn, id, &images)?;
     insert_subtasks(&conn, id, &subtask_titles)?;
     insert_todo_tags(&conn, id, &tag_names)?;
-    fetch_todo(&conn, id)
+    let todo = fetch_todo(&conn, id)?;
+    emit_todo_created(&app, &todo);
+    Ok(todo)
 }
 
 #[tauri::command]
@@ -202,11 +216,13 @@ pub fn update_todo_details(
 
     let todo = fetch_todo(&conn, id)?;
     cleanup_unreferenced_markdown_images(&app, &conn);
+    emit_todo_updated(&app, &todo);
     Ok(todo)
 }
 
 #[tauri::command]
 pub fn set_todo_completed(
+    app: AppHandle,
     state: tauri::State<AppState>,
     id: i64,
     completed: bool,
@@ -285,11 +301,14 @@ pub fn set_todo_completed(
         }
     }
 
-    fetch_todo(&conn, id)
+    let todo = fetch_todo(&conn, id)?;
+    emit_todo_updated(&app, &todo);
+    Ok(todo)
 }
 
 #[tauri::command]
 pub fn set_todo_pinned(
+    app: AppHandle,
     state: tauri::State<AppState>,
     id: i64,
     pinned: bool,
@@ -306,11 +325,14 @@ pub fn set_todo_pinned(
         return Err("待办不存在".into());
     }
 
-    fetch_todo(&conn, id)
+    let todo = fetch_todo(&conn, id)?;
+    emit_todo_updated(&app, &todo);
+    Ok(todo)
 }
 
 #[tauri::command]
 pub fn add_todo_subtask(
+    app: AppHandle,
     state: tauri::State<AppState>,
     todo_id: i64,
     title: String,
@@ -334,7 +356,9 @@ pub fn add_todo_subtask(
     )
     .map_err(|e| e.to_string())?;
 
-    fetch_todo(&conn, todo_id)
+    let todo = fetch_todo(&conn, todo_id)?;
+    emit_todo_updated(&app, &todo);
+    Ok(todo)
 }
 
 #[tauri::command]
@@ -453,7 +477,9 @@ pub fn add_todo_note(
 
     let note_id = conn.last_insert_rowid();
     insert_todo_note_images(&app, &conn, note_id, &images)?;
-    fetch_todo(&conn, todo_id)
+    let todo = fetch_todo(&conn, todo_id)?;
+    emit_todo_updated(&app, &todo);
+    Ok(todo)
 }
 
 #[tauri::command]
@@ -510,7 +536,7 @@ pub fn restore_todo_note(
 }
 
 #[tauri::command]
-pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
+pub fn delete_todo(app: AppHandle, state: tauri::State<AppState>, id: i64) -> Result<(), String> {
     let conn = state.db.lock();
     conn.execute(
         "DELETE FROM todo_note_images WHERE note_id IN (SELECT id FROM todo_notes WHERE todo_id = ?1)",
@@ -532,6 +558,8 @@ pub fn delete_todo(state: tauri::State<AppState>, id: i64) -> Result<(), String>
         return Err("待办不存在".into());
     }
 
+    drop(conn);
+    emit_todo_deleted(&app, id);
     Ok(())
 }
 

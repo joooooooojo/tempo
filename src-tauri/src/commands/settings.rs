@@ -6,7 +6,7 @@ use crate::db::{
 use crate::db::{normalize_clipboard_history_retention, normalize_clipboard_paste_mode};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use super::markdown::{
     markdown_image_reference, markdown_image_sources, markdown_image_url_for_path,
@@ -183,6 +183,28 @@ pub fn update_settings(
         }
     }
 
+    let mut mcp_changed = false;
+    if let Some(v) = settings.get("mcp_enabled").and_then(|v| v.as_bool()) {
+        if current.mcp_enabled != v {
+            current.mcp_enabled = v;
+            mcp_changed = true;
+        }
+    }
+    if let Some(v) = settings.get("mcp_port").and_then(|v| v.as_u64()) {
+        let port = crate::db::normalize_mcp_port(v);
+        if current.mcp_port != port {
+            current.mcp_port = port;
+            mcp_changed = true;
+        }
+    }
+    if let Some(v) = settings.get("mcp_token").and_then(|v| v.as_str()) {
+        let token = v.trim();
+        if !token.is_empty() && current.mcp_token != token {
+            current.mcp_token = token.into();
+            mcp_changed = true;
+        }
+    }
+
     if shortcuts_changed {
         let (quick, clipboard, snippet) = crate::validate_shortcut_bindings(
             &current.shortcut_quick_todo,
@@ -205,8 +227,41 @@ pub fn update_settings(
     if retention_changed {
         purge_clipboard_history_by_retention(&conn, &current.clipboard_history_retention);
     }
+    drop(conn);
+
+    if mcp_changed {
+        if let Some(controller) = app.try_state::<crate::mcp::McpController>() {
+            controller.restart(&app);
+        }
+    }
+
     Ok(())
 }
+
+#[tauri::command]
+pub fn regenerate_mcp_token(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<Settings, String> {
+    let mut current = {
+        let conn = state.db.lock();
+        let mut settings = load_settings(&conn);
+        settings.mcp_token = crate::db::generate_mcp_token();
+        crate::db::save_settings(&conn, &settings);
+        settings
+    };
+    current.storage_dir = current_storage_dir(&app)
+        .or_else(|_| default_storage_dir(&app))
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    if let Some(controller) = app.try_state::<crate::mcp::McpController>() {
+        controller.restart(&app);
+    }
+
+    Ok(current)
+}
+
 #[tauri::command]
 pub fn set_storage_dir(
     app: AppHandle,

@@ -74,43 +74,79 @@ type OrbitLayout = {
   duration: number;
 };
 
-function orbitLayouts(count: number, seedBase: number): OrbitLayout[] {
+/**
+ * Diffuse outward from the viewport center with seeded randomness.
+ * Positions are clamped so cards stay inside the visible area.
+ */
+function scatterLayouts(count: number, seedBase: number): OrbitLayout[] {
   if (count <= 0) return [];
 
-  const needsCenter = count === 1 || count > 3;
-  const ringCount = needsCenter ? count - 1 : count;
-  const radiusBase = ringCount <= 0 ? 0 : Math.min(36, 18 + ringCount * 2.8);
+  const clamp = (value: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, value));
 
-  const makeMeta = (index: number) => ({
-    rot: (hashUnit(seedBase + index * 41) - 0.5) * 14,
-    delay: 0.04 + hashUnit(seedBase + index * 7) * 0.28,
-    duration: 3.2 + hashUnit(seedBase + index * 11) * 2.4,
-  });
+  // Keep card centers inset so the full card (~168px + rotation) stays on-screen.
+  const minX = 15;
+  const maxX = 85;
+  const minY = 18;
+  const maxY = 86;
 
-  return Array.from({ length: count }, (_, index) => {
-    const meta = makeMeta(index);
-
-    if (needsCenter && index === 0) {
-      return {
+  if (count === 1) {
+    return [
+      {
         x: 50,
-        y: 50,
+        y: 52,
         rot: (hashUnit(seedBase + 3) - 0.5) * 6,
         delay: 0.02,
-        duration: 4.2,
-      };
+        duration: 4,
+      },
+    ];
+  }
+
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const maxRadius = Math.min(34, 14 + count * 2.4);
+  const minDist = count <= 5 ? 18 : count <= 9 ? 14 : 12;
+  const placed: Array<{ x: number; y: number }> = [];
+
+  return Array.from({ length: count }, (_, index) => {
+    let chosen = { x: 50, y: 52 };
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      const progress =
+        (index + 0.35 + hashUnit(seedBase + index * 11 + attempt) * 0.4) /
+        Math.max(count - 0.15, 1);
+      const angle =
+        index * golden +
+        (hashUnit(seedBase + index * 19 + attempt * 5) - 0.5) * 1.1;
+      const radius =
+        (5 + Math.sqrt(Math.min(1, progress)) * maxRadius) *
+        (0.82 + hashUnit(seedBase + index * 29 + attempt * 7) * 0.4);
+      const x = clamp(50 + Math.cos(angle) * radius, minX, maxX);
+      const y = clamp(52 + Math.sin(angle) * radius * 0.94, minY, maxY);
+
+      let nearest = Number.POSITIVE_INFINITY;
+      for (const point of placed) {
+        nearest = Math.min(nearest, Math.hypot(point.x - x, point.y - y));
+      }
+      const score = nearest === Number.POSITIVE_INFINITY ? 0 : Math.max(0, minDist - nearest);
+      if (score === 0) {
+        chosen = { x, y };
+        bestScore = 0;
+        break;
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        chosen = { x, y };
+      }
     }
 
-    const ringIndex = needsCenter ? index - 1 : index;
-    const angle =
-      (ringIndex / ringCount) * Math.PI * 2 -
-      Math.PI / 2 +
-      (hashUnit(seedBase + ringIndex * 17) - 0.5) * 0.45;
-    const radius = radiusBase + (hashUnit(seedBase + ringIndex * 29) - 0.5) * 12;
-
+    placed.push(chosen);
     return {
-      x: 50 + Math.cos(angle) * radius,
-      y: 50 + Math.sin(angle) * radius * 0.88,
-      ...meta,
+      x: chosen.x,
+      y: chosen.y,
+      rot: (hashUnit(seedBase + index * 41) - 0.5) * 10,
+      delay: 0.03 + hashUnit(seedBase + index * 7) * 0.24,
+      duration: 3.4 + hashUnit(seedBase + index * 11) * 2.2,
     };
   });
 }
@@ -132,6 +168,7 @@ export function TodoCalendarView({
   const [month, setMonth] = useState(() => startOfMonth(today));
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [orbitState, setOrbitState] = useState<"open" | "closed">("closed");
+  const [layoutSeed, setLayoutSeed] = useState(0);
 
   const todosByDueDay = useMemo(
     () => groupTodosByDay(todos, (todo) => isoDayKey(todo.due_at)),
@@ -170,14 +207,11 @@ export function TodoCalendarView({
 
   const layouts = useMemo(() => {
     if (!activeDay) return [];
-    const seed =
-      activeDay.getFullYear() * 10000 +
-      (activeDay.getMonth() + 1) * 100 +
-      activeDay.getDate();
-    return orbitLayouts(activeRelations.length, seed);
-  }, [activeDay, activeRelations.length]);
+    return scatterLayouts(activeRelations.length, layoutSeed);
+  }, [activeDay, activeRelations.length, layoutSeed]);
 
   const openOrbit = (date: Date) => {
+    setLayoutSeed(Math.floor(Math.random() * 1_000_000_000) + Date.now() % 1_000_000);
     setActiveDay(date);
     setOrbitState("open");
   };
@@ -286,36 +320,42 @@ export function TodoCalendarView({
             >
               <span
                 className={cn(
-                  "inline-flex size-7 items-center justify-center rounded-full text-[13px] font-medium tabular-nums",
-                  isToday && "bg-primary text-primary-foreground",
+                  "relative inline-flex size-7 items-center justify-center text-[13px] font-medium tabular-nums",
+                  isToday && "text-primary",
                   !isToday && inMonth && "text-foreground",
                   !inMonth && "text-muted-foreground/50"
                 )}
               >
-                {date.getDate()}
+                {isToday && (
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-[-6px] rounded-full bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.42)_0%,hsl(var(--primary)/0.16)_38%,transparent_72%)]"
+                  />
+                )}
+                <span className="relative z-[1]">{date.getDate()}</span>
               </span>
               {hasMarkers ? (
-                <div className="flex flex-wrap items-center gap-1">
+                <div className="flex flex-nowrap items-center gap-1">
                   {dueCount > 0 && (
                     <span
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                        "inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
                         isToday
                           ? "bg-primary/15 text-primary"
                           : "bg-primary/10 text-primary"
                       )}
                       title={`${dueCount} 项截止`}
                     >
-                      <span className="size-1 rounded-full bg-primary opacity-80" />
+                      <span className="size-1 shrink-0 rounded-full bg-primary opacity-80" />
                       {dueCount}
                     </span>
                   )}
                   {createdCount > 0 && (
                     <span
-                      className="inline-flex items-center gap-1 rounded-full bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-sky-700 dark:text-sky-300"
+                      className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-sky-700 dark:text-sky-300"
                       title={`${createdCount} 项创建`}
                     >
-                      <span className="size-1 rounded-full bg-sky-500 opacity-80" />
+                      <span className="size-1 shrink-0 rounded-full bg-sky-500 opacity-80" />
                       {createdCount}
                     </span>
                   )}
@@ -374,7 +414,7 @@ export function TodoCalendarView({
 
           <div className="pointer-events-none absolute inset-0 z-[1]">
             {activeRelations.length === 0 ? (
-              <div className="todo-month-calendar__orbit-empty absolute top-1/2 left-1/2 w-[min(240px,70%)] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-dashed border-border/70 bg-background/80 px-5 py-8 text-center text-[12px] text-muted-foreground shadow-sm">
+              <div className="todo-month-calendar__orbit-empty absolute left-1/2 top-1/2 w-[min(240px,70%)] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-dashed border-border/70 bg-background/80 px-5 py-8 text-center text-[12px] text-muted-foreground shadow-sm">
                 这一天没有相关待办
                 <span className="mt-1.5 block text-[11px] text-muted-foreground/80">
                   点击空白处返回日历
@@ -390,7 +430,7 @@ export function TodoCalendarView({
                     key={todo.id}
                     type="button"
                     className={cn(
-                      "todo-month-calendar__orbit-card pointer-events-auto absolute max-w-[220px] min-w-[148px] rounded-3xl border bg-background/95 px-3.5 py-3 text-left shadow-[0_10px_30px_-12px_rgba(15,40,30,0.35)] backdrop-blur-sm transition-[box-shadow,transform] hover:z-10 hover:shadow-[0_16px_36px_-12px_rgba(15,40,30,0.42)] focus-visible:outline-none focus-visible:ring-2",
+                      "todo-month-calendar__orbit-card pointer-events-auto absolute box-border w-[168px] shrink-0 rounded-3xl border bg-background/95 px-3.5 py-3 text-left shadow-[0_10px_30px_-12px_rgba(15,40,30,0.35)] backdrop-blur-sm transition-[box-shadow] hover:z-10 hover:shadow-[0_16px_36px_-12px_rgba(15,40,30,0.42)] focus-visible:outline-none focus-visible:ring-2",
                       isDue && isCreated && "border-primary/45 ring-1 ring-sky-400/35 focus-visible:ring-primary/40",
                       isDue && !isCreated && "border-primary/50 focus-visible:ring-primary/40",
                       !isDue && isCreated && "border-sky-400/55 focus-visible:ring-sky-400/40"
@@ -414,11 +454,11 @@ export function TodoCalendarView({
                     >
                       {todo.title}
                     </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-1">
+                    <div className="mt-2 flex flex-nowrap items-center gap-1">
                       {isDue && (
                         <span
                           className={cn(
-                            "inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                            "inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
                             dueBadgeClass(todo)
                           )}
                         >
@@ -426,7 +466,7 @@ export function TodoCalendarView({
                         </span>
                       )}
                       {isCreated && (
-                        <span className="inline-flex rounded-full bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                        <span className="inline-flex shrink-0 rounded-full bg-sky-500/12 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
                           创建
                         </span>
                       )}

@@ -28,6 +28,7 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Partial<Settings>) =>
     invoke<void>("update_settings", { settings }),
+  regenerateMcpToken: () => invoke<Settings>("regenerate_mcp_token"),
   setStorageDir: (storageDir: string) =>
     invoke<Settings>("set_storage_dir", { storageDir }),
   resetToday: () => invoke<void>("reset_today"),

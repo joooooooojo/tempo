@@ -185,7 +185,7 @@ export function ClipboardPage() {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索历史..."
+            placeholder="搜索"
             className="h-9 border-0 pl-9 glass-subtle"
           />
         </div>

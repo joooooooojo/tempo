@@ -99,8 +99,6 @@ export function SnippetsPage() {
   const [actionMenuId, setActionMenuId] = useState<number | null>(null);
 
   const groupId = useMemo(() => groupFilterToId(groupFilter), [groupFilter]);
-  const pinnedCount = snippets.filter((snippet) => snippet.pinned).length;
-  const usedCount = snippets.reduce((total, snippet) => total + snippet.use_count, 0);
 
   const load = useCallback(
     async (showLoading = false) => {
@@ -272,12 +270,6 @@ export function SnippetsPage() {
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3">
-      <div className="grid shrink-0 grid-cols-1 gap-2 md:grid-cols-3">
-        <Metric label="短语" value={snippets.length} />
-        <Metric label="固定" value={pinnedCount} />
-        <Metric label="累计使用" value={usedCount} />
-      </div>
-
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -944,15 +936,6 @@ function SnippetMoreSettings({
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-lg border border-border/55 bg-foreground/[0.018] px-3 py-2">
-      <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-      <p className="mt-0.5 text-lg font-semibold tabular-nums text-foreground">{value}</p>
-    </div>
   );
 }
 

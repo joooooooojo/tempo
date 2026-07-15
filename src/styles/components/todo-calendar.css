@@ -117,11 +117,11 @@
 @keyframes todo-orbit-card-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(0.42) rotate(calc(var(--orbit-rot, 0deg) - 10deg));
+    transform: translate(-50%, -50%) scale(0.28) rotate(calc(var(--orbit-rot, 0deg) - 8deg));
   }
-  70% {
+  68% {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1.04) rotate(var(--orbit-rot, 0deg));
+    transform: translate(-50%, -50%) scale(1.03) rotate(var(--orbit-rot, 0deg));
   }
   to {
     opacity: 1;
@@ -143,22 +143,22 @@
 @keyframes todo-orbit-empty-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(0.92);
+    transform: scale(0.92);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+    transform: scale(1);
   }
 }
 
 @keyframes todo-orbit-empty-out {
   from {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+    transform: scale(1);
   }
   to {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(0.94);
+    transform: scale(0.94);
   }
 }
 
@@ -168,13 +168,13 @@
     transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg)) translate(0, 0);
   }
   20% {
-    transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg)) translate(1.5px, -2.5px);
+    transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg)) translate(0.8px, -1.2px);
   }
   45% {
-    transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg)) translate(-2px, 1.5px);
+    transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg)) translate(-1px, 0.8px);
   }
   70% {
-    transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg)) translate(1px, 2px);
+    transform: translate(-50%, -50%) rotate(var(--orbit-rot, 0deg)) translate(0.6px, 1px);
   }
 }
 

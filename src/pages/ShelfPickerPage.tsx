@@ -447,7 +447,7 @@ export function ShelfPickerPage() {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={tab === "clipboard" ? "搜索历史..." : "搜索短语..."}
+              placeholder="搜索"
               className="shelf-picker-search-inline__input"
               tabIndex={searchOpen ? 0 : -1}
             />

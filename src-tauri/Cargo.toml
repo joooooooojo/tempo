@@ -1,6 +1,6 @@
 [package]
 name = "tempo"
-version = "1.0.0"
+version = "1.0.1"
 description = "Tempo - screen time and focus timer"
 authors = ["zekun"]
 edition = "2021"
@@ -38,6 +38,13 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2.5"
 tracing-log = "0.2.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+tokio-util = "0.7"
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["cors"] }
+rmcp = { version = "2.2", features = ["server", "macros", "transport-streamable-http-server", "schemars"] }
+rand = "0.8"
+schemars = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # NSPanel relies on AppKit and must only be resolved/compiled on macOS.

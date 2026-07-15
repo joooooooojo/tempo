@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { emit } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, RefreshCw, RotateCcw } from "lucide-react";
+import { FolderOpen, RefreshCw, RotateCcw, Copy, Eye, EyeOff, CircleHelp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api";
 import { emitThemeChange } from "@/lib/theme";
 import {
@@ -79,10 +80,13 @@ export function SettingsPage() {
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [pendingUpdate, setPendingUpdate] = useState<AvailableUpdate | null>(null);
   const [pendingVersion, setPendingVersion] = useState("");
+  const [showMcpToken, setShowMcpToken] = useState(false);
+  const [mcpPortDraft, setMcpPortDraft] = useState("");
 
   const load = async () => {
     const s = await api.getSettings();
     setSettings(s);
+    setMcpPortDraft(String(s.mcp_port));
   };
 
   useEffect(() => {
@@ -250,6 +254,139 @@ export function SettingsPage() {
               {migratingStorage ? "迁移中" : "更换"}
             </Button>
           </CardContent>
+        </Card>
+      </Section>
+
+      <Section title="MCP 服务">
+        <Card>
+          <Row
+            label="启用 MCP 服务"
+            labelExtra={<McpCapabilitiesHint />}
+          >
+            <Switch
+              checked={settings.mcp_enabled}
+              onCheckedChange={(v) => update({ mcp_enabled: v })}
+            />
+          </Row>
+          {settings.mcp_enabled && (
+            <div className="space-y-4 border-t border-border/50 px-4 py-4">
+              <div>
+                <Label className="text-[13px]">端口</Label>
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1024}
+                    max={65535}
+                    value={mcpPortDraft}
+                    onChange={(e) => setMcpPortDraft(e.target.value)}
+                    onBlur={() => {
+                      const port = Number(mcpPortDraft);
+                      if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+                        setMcpPortDraft(String(settings.mcp_port));
+                        toast.error("端口需在 1024–65535");
+                        return;
+                      }
+                      if (port !== settings.mcp_port) {
+                        void update({ mcp_port: port });
+                      }
+                    }}
+                    className="h-9 w-28 border-0 glass-subtle"
+                  />
+                  <span className="text-[12px] text-muted-foreground">仅监听 127.0.0.1</span>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-[13px]">连接地址</Label>
+                <div className="mt-2 flex items-center gap-2">
+                  <code className="min-w-0 flex-1 truncate rounded-md bg-muted/60 px-2 py-1.5 text-[12px]">
+                    {`http://127.0.0.1:${settings.mcp_port}/mcp`}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(
+                        `http://127.0.0.1:${settings.mcp_port}/mcp`
+                      );
+                      toast.success("已复制 URL");
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    复制
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-[13px]">访问令牌</Label>
+                <div className="mt-2 flex items-center gap-2">
+                  <code className="min-w-0 flex-1 truncate rounded-md bg-muted/60 px-2 py-1.5 text-[12px]">
+                    {showMcpToken ? settings.mcp_token : "••••••••••••••••"}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowMcpToken((v) => !v)}
+                  >
+                    {showMcpToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(settings.mcp_token);
+                      toast.success("已复制令牌");
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const next = await api.regenerateMcpToken();
+                        setSettings(next);
+                        setMcpPortDraft(String(next.mcp_port));
+                        toast.success("已轮换令牌");
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : String(error));
+                      }
+                    }}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    轮换
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={async () => {
+                    const config = {
+                      mcpServers: {
+                        tempo: {
+                          url: `http://127.0.0.1:${settings.mcp_port}/mcp`,
+                          headers: {
+                            Authorization: `Bearer ${settings.mcp_token}`,
+                          },
+                        },
+                      },
+                    };
+                    await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+                    toast.success("已复制");
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  复制配置
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
       </Section>
 
@@ -482,6 +619,32 @@ export function SettingsPage() {
   );
 }
 
+function McpCapabilitiesHint() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild openOnHover delay={200} closeDelay={100}>
+        <button
+          type="button"
+          className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="查看 MCP 功能"
+        >
+          <CircleHelp className="size-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" side="bottom" initialFocus={false} className="w-72 p-3">
+        <p className="mb-2 text-[13px] font-medium">MCP 可提供的能力</p>
+        <ul className="space-y-1.5 text-[12px] leading-relaxed text-muted-foreground">
+          <li>待办：创建、查询、更新、完成、置顶、删除、子任务与备注</li>
+          <li>快捷短语：查询、创建、更新、删除、分组、复制到剪贴板</li>
+          <li>剪贴板：搜索历史记录</li>
+          <li>番茄钟：查看状态、开始 / 暂停 / 停止 / 跳过</li>
+          <li>报告：读取今日屏幕使用报告</li>
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
@@ -491,11 +654,24 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Row({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
+function Row({
+  label,
+  desc,
+  labelExtra,
+  children,
+}: {
+  label: string;
+  desc?: string;
+  labelExtra?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div className="list-row">
       <div>
-        <p className="text-[14px] font-medium">{label}</p>
+        <p className="inline-flex items-center gap-1.5 text-[14px] font-medium">
+          {label}
+          {labelExtra}
+        </p>
         {desc && <p className="text-[11px] text-muted-foreground">{desc}</p>}
       </div>
       {children}

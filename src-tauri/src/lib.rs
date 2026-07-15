@@ -10,6 +10,7 @@ mod clipboard_db;
 mod clipboard_images;
 mod clipboard_watcher;
 mod logging;
+mod mcp;
 #[cfg(target_os = "macos")]
 mod macos_dock;
 #[cfg(target_os = "macos")]
@@ -187,7 +188,10 @@ pub fn run() {
             clipboard_watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
             app.manage(state.clone());
             app.manage(Mutex::new(ShortcutActionMap::default()));
+            let mcp_controller = mcp::McpController::new();
+            app.manage(mcp_controller.clone());
             commands::check_pending_recurrences(app.handle(), &state);
+            mcp_controller.start(app.handle());
 
             tray_menu::setup_tray(app)?;
             {
@@ -294,6 +298,7 @@ pub fn run() {
             commands::reports::get_weekly_report,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            commands::settings::regenerate_mcp_token,
             commands::settings::set_storage_dir,
             commands::settings::reset_today,
             commands::settings::reset_all,

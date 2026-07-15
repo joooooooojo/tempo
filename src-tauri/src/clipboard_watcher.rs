@@ -24,7 +24,9 @@ const CLIPBOARD_POLL_MS: u64 = 500;
 const DECODED_IMAGE_CACHE_MAX_ENTRIES: usize = 16;
 const DECODED_IMAGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(target_os = "windows")]
-const WINDOWS_CLIPBOARD_SETTLE_MS: u64 = 220;
+const WINDOWS_CLIPBOARD_SETTLE_MS: u64 = 650;
+#[cfg(target_os = "windows")]
+const WINDOWS_CLIPBOARD_BUSY_BACKOFF_MS: u64 = 400;
 
 enum ClipboardCaptureResult {
     Captured { changed: bool },
@@ -131,7 +133,36 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
                 &mut last_image_hash,
             ) {
                 ClipboardCaptureResult::Captured { changed } => changed,
-                ClipboardCaptureResult::Busy => continue,
+                ClipboardCaptureResult::Busy => {
+                    // Yield to Windows Clipboard History (Win+V), then retry once.
+                    #[cfg(target_os = "windows")]
+                    {
+                        std::thread::sleep(Duration::from_millis(
+                            WINDOWS_CLIPBOARD_BUSY_BACKOFF_MS,
+                        ));
+                        match capture_clipboard_snapshot(
+                            &app,
+                            &state,
+                            source_app.as_deref(),
+                            source_process.as_deref(),
+                            max_entries,
+                            &mut last_text_hash,
+                            &mut last_image_hash,
+                        ) {
+                            ClipboardCaptureResult::Captured { changed } => changed,
+                            ClipboardCaptureResult::Busy => {
+                                sync_windows_clipboard_sequence(
+                                    &mut last_windows_clipboard_sequence,
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        continue;
+                    }
+                }
             };
             #[cfg(target_os = "windows")]
             sync_windows_clipboard_sequence(&mut last_windows_clipboard_sequence);

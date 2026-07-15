@@ -150,14 +150,33 @@ export function TodoPage() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<TodoItem>("todo-created", (event) => {
+    const unlistenCreated = listen<TodoItem>("todo-created", (event) => {
       const created = normalizeTodo(event.payload);
-      setTodos((current) => sortTodos([created, ...current.filter((todo) => todo.id !== created.id)]));
+      setTodos((current) => upsertTodo(current, created));
       setFilter("active");
+    });
+    const unlistenUpdated = listen<TodoItem>("todo-updated", (event) => {
+      const updated = normalizeTodo(event.payload);
+      setTodos((current) => upsertTodo(current, updated));
+    });
+    const unlistenDeleted = listen<{ id: number }>("todo-deleted", (event) => {
+      const id = event.payload.id;
+      setTodos((current) => current.filter((todo) => todo.id !== id));
+      setDetailId((current) => (current === id ? null : current));
+      setEditingId((current) => (current === id ? null : current));
+      setActionMenuId((current) => (current === id ? null : current));
+      setExpandedTodoIds((current) => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
     });
 
     return () => {
-      unlisten.then((fn) => fn());
+      void unlistenCreated.then((fn) => fn());
+      void unlistenUpdated.then((fn) => fn());
+      void unlistenDeleted.then((fn) => fn());
     };
   }, []);
 
@@ -706,10 +725,12 @@ export function TodoPage() {
   };
 
   return (
-    <div className={cn(
-      "relative mx-auto flex h-full min-h-0 w-full flex-col",
-      viewMode === "calendar" ? "max-w-none gap-0" : "max-w-3xl gap-5"
-    )}>
+    <div
+      className={cn(
+        "relative mx-auto flex h-full min-h-0 w-full max-w-none flex-col",
+        viewMode === "calendar" ? "gap-0" : "gap-4"
+      )}
+    >
       <TodoCreateDialog
         open={createOpen}
         todoTitle={title}
@@ -1012,8 +1033,8 @@ export function TodoPage() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 pb-14">
-        <Card className="flex h-fit max-h-full w-full flex-col overflow-hidden">
+      <div className="min-h-0 flex-1">
+        <Card className="flex h-full max-h-full w-full flex-col overflow-hidden">
           <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto p-0">
           {loading ? (
             <TodoEmptyState text="加载中..." />
@@ -1251,7 +1272,7 @@ export function TodoPage() {
         </>
       )}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-30 flex justify-center">
         <Tabs
           value={viewMode}
           onValueChange={(value) => {

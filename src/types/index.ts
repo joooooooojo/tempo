@@ -117,6 +117,9 @@ export interface Settings {
   shortcut_clipboard_picker: string;
   shortcut_snippet_picker: string;
   storage_dir: string;
+  mcp_enabled: boolean;
+  mcp_port: number;
+  mcp_token: string;
 }
 
 export interface ClipboardEntry {

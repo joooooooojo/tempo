@@ -156,6 +156,9 @@ pub struct Settings {
     pub shortcut_clipboard_picker: String,
     pub shortcut_snippet_picker: String,
     pub storage_dir: String,
+    pub mcp_enabled: bool,
+    pub mcp_port: u16,
+    pub mcp_token: String,
 }
 
 impl Default for Settings {
@@ -187,8 +190,24 @@ impl Default for Settings {
             shortcut_clipboard_picker: "F4".into(),
             shortcut_snippet_picker: "F5".into(),
             storage_dir: String::new(),
+            mcp_enabled: true,
+            mcp_port: DEFAULT_MCP_PORT,
+            mcp_token: String::new(),
         }
     }
+}
+
+pub const DEFAULT_MCP_PORT: u16 = 17832;
+
+pub fn generate_mcp_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn normalize_mcp_port(value: u64) -> u16 {
+    value.clamp(1024, 65535) as u16
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -889,6 +908,22 @@ pub fn load_settings(conn: &Connection) -> Settings {
             "F5",
         ),
         storage_dir: String::new(),
+        mcp_enabled: get_setting(conn, "mcp_enabled", "true") == "true",
+        mcp_port: normalize_mcp_port(
+            get_setting(conn, "mcp_port", &DEFAULT_MCP_PORT.to_string())
+                .parse()
+                .unwrap_or(DEFAULT_MCP_PORT as u64),
+        ),
+        mcp_token: {
+            let existing = get_setting(conn, "mcp_token", "");
+            if existing.trim().is_empty() {
+                let token = generate_mcp_token();
+                set_setting(conn, "mcp_token", &token);
+                token
+            } else {
+                existing
+            }
+        },
     }
 }
 
@@ -986,6 +1021,9 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         "shortcut_snippet_picker",
         &settings.shortcut_snippet_picker,
     );
+    set_setting(conn, "mcp_enabled", &settings.mcp_enabled.to_string());
+    set_setting(conn, "mcp_port", &settings.mcp_port.to_string());
+    set_setting(conn, "mcp_token", &settings.mcp_token);
 }
 
 pub fn normalize_clipboard_paste_mode(value: &str) -> String {
