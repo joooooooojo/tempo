@@ -515,6 +515,7 @@ export function TodoPage() {
 
   const handleAdd = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (saving) return;
     if (!title.trim()) {
       toast.error("请输入标题");
       return;
@@ -534,7 +535,8 @@ export function TodoPage() {
         subtasks,
         tags
       );
-      setTodos((current) => sortTodos([created, ...current]));
+      // Prefer upsert: backend also emits `todo-created`, which may arrive first.
+      setTodos((current) => upsertTodo(current, normalizeTodo(created)));
       resetDraft();
       setCreateOpen(false);
       setFilter("active");

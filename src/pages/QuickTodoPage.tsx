@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "@/lib/api";
 import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
-import type { TodoItem } from "@/types";
 
 export function QuickTodoPage() {
   const [title, setTitle] = useState("");
@@ -81,6 +80,7 @@ export function QuickTodoPage() {
 
   const submit = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (savingRef.current) return;
 
     const nextTitle = title.trim();
     if (!nextTitle) {
@@ -88,12 +88,14 @@ export function QuickTodoPage() {
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     try {
-      const created = await api.addTodo(nextTitle, "", null);
-      await emit<TodoItem>("todo-created", created);
+      // Backend `add_todo` already emits `todo-created`; do not emit again.
+      await api.addTodo(nextTitle, "", null);
       window.setTimeout(() => void hideWindow(), 100);
     } catch {
+      savingRef.current = false;
       setSaving(false);
     }
   };
