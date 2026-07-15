@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tempo",
-  "version": "1.0.8",
+  "version": "1.0.0",
   "identifier": "com.zekun.tempo",
   "build": {
     "beforeDevCommand": "node ./scripts/tauri-dev.mjs",
@@ -60,23 +60,20 @@
         "https://github.com/joooooooojo/tempo/releases/latest/download/latest.json"
       ],
       "windows": {
-        "installMode": "quiet"
+        "installMode": "passive"
       }
     }
   },
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": "all",
+    "targets": [
+      "msi",
+      "dmg"
+    ],
     "windows": {
       "wix": {
         "language": "zh-CN"
-      },
-      "nsis": {
-        "languages": [
-          "SimpChinese",
-          "English"
-        ]
       }
     },
     "icon": [

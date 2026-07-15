@@ -14,11 +14,10 @@ import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
 import { emitThemeChange } from "@/lib/theme";
 import {
-  checkAndDownloadUpdate,
+  checkUpdate,
   getAppVersion,
-  getPreparedUpdate,
   installAndRelaunch,
-  type PreparedUpdate,
+  type AvailableUpdate,
   type UpdateProgress,
 } from "@/lib/update";
 import {
@@ -78,7 +77,7 @@ export function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
-  const [pendingUpdate, setPendingUpdate] = useState<PreparedUpdate | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<AvailableUpdate | null>(null);
   const [pendingVersion, setPendingVersion] = useState("");
 
   const load = async () => {
@@ -89,19 +88,6 @@ export function SettingsPage() {
   useEffect(() => {
     load().catch(console.error);
     getAppVersion().then(setAppVersion).catch(console.error);
-    getPreparedUpdate()
-      .then((update) => {
-        if (!update) return;
-        setPendingUpdate(update);
-        setPendingVersion(update.version);
-        setUpdateProgress({
-          phase: "ready",
-          downloaded: 0,
-          total: 0,
-          version: update.version,
-        });
-      })
-      .catch(console.error);
   }, []);
 
   const update = async (patch: Partial<Settings>) => {
@@ -151,7 +137,7 @@ export function SettingsPage() {
     setUpdateProgress({ phase: "checking", downloaded: 0, total: 0 });
 
     try {
-      const result = await checkAndDownloadUpdate(setUpdateProgress);
+      const result = await checkUpdate(setUpdateProgress);
       if (result.status === "latest") {
         toast.success("已是最新版本");
         setUpdateProgress(null);
@@ -166,7 +152,7 @@ export function SettingsPage() {
         total: 0,
         version: result.version,
       });
-      toast.success(`v${result.version} 已在后台准备完成，点击「重启切换」使用新版本`);
+      toast.success(`发现 v${result.version}，点击「安装更新」开始安装`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       setUpdateProgress(null);
@@ -185,7 +171,7 @@ export function SettingsPage() {
       total: 0,
       version: pendingVersion || pendingUpdate.version,
     });
-    toast.info("正在切换到已准备好的新版本，Tempo 会重新打开。", { duration: 8000 });
+    toast.info("正在下载并安装更新，安装完成后 Tempo 会重启。", { duration: 8000 });
     try {
       await installAndRelaunch(pendingUpdate, setUpdateProgress);
     } catch (error) {
@@ -441,7 +427,7 @@ export function SettingsPage() {
                 <p className="text-[14px] font-medium">Tempo</p>
                 <p className="mt-1 text-[12px] text-muted-foreground">
                   当前版本 {appVersion || "..."}
-                  {pendingVersion ? ` · 已下载 v${pendingVersion}` : ""}
+                  {pendingVersion ? ` · 发现 v${pendingVersion}` : ""}
                 </p>
               </div>
               {pendingUpdate ? (
@@ -452,7 +438,7 @@ export function SettingsPage() {
                   onClick={() => void handleRestartUpdate()}
                 >
                   <RotateCcw className={`h-3.5 w-3.5 ${applyingUpdate ? "animate-spin" : ""}`} />
-                  {applyingUpdate ? "切换中" : "重启切换"}
+                  {applyingUpdate ? "安装中" : "安装更新"}
                 </Button>
               ) : (
                 <Button
@@ -479,8 +465,8 @@ export function SettingsPage() {
                 <Progress value={updatePercent} className="h-1.5" />
               </div>
             )}
-            {updateProgress?.phase === "installing" && (
-              <p className="text-[12px] text-muted-foreground">正在启动已准备好的新版本...</p>
+            {(updateProgress?.phase === "installing" || updateProgress?.phase === "done") && (
+              <p className="text-[12px] text-muted-foreground">正在安装更新，完成后 Tempo 会重启...</p>
             )}
           </CardContent>
         </Card>

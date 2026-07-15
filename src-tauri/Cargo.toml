@@ -1,6 +1,6 @@
 [package]
 name = "tempo"
-version = "1.0.8"
+version = "1.0.0"
 description = "Tempo - screen time and focus timer"
 authors = ["zekun"]
 edition = "2021"
@@ -26,7 +26,6 @@ tauri-plugin-shell = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-semver = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 active-win-pos-rs = "0.8"
@@ -34,8 +33,6 @@ parking_lot = "0.12"
 arboard = "3"
 base64 = "0.22"
 png = "0.17"
-url = "2"
-zip = { version = "4.6", default-features = false, features = ["deflate-flate2"] }
 tauri-plugin-process = "2"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
@@ -51,8 +48,6 @@ appkit-nsworkspace-bindings = "0.1"
 objc = "0.2"
 block = "0.1"
 window-vibrancy = "0.6"
-flate2 = "1.1"
-tar = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"

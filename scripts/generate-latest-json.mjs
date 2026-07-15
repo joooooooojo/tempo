@@ -3,10 +3,7 @@
  * Build a Tauri updater latest.json from a GitHub Release.
  *
  * - Uses public browser_download_url (not GitHub API asset URLs).
- * - Publishes both Windows installer types so each install keeps its type:
- *   MSI installs update via windows-x86_64-msi
- *   NSIS installs update via windows-x86_64-nsis
- * - Does not force one installer into the generic windows-x86_64 key.
+ * - Publishes only the Windows MSI updater entry.
  */
 import { writeFileSync } from "node:fs";
 
@@ -74,25 +71,12 @@ const winMsi =
   pickBySuffix(assets, "_x64_en-US.msi") ||
   pickBySuffix(assets, ".msi");
 const winMsiSig = winMsi ? byName[`${winMsi.name}.sig`] : null;
-const winNsis = pickBySuffix(assets, "_x64-setup.exe");
-const winNsisSig = winNsis ? byName[`${winNsis.name}.sig`] : null;
 
 const msiEntry = await platformEntry(winMsi, winMsiSig);
-const nsisEntry = await platformEntry(winNsis, winNsisSig);
 
-// Specific keys: updater matches the currently installed installer type.
 if (msiEntry) {
   platforms["windows-x86_64-msi"] = msiEntry;
-}
-if (nsisEntry) {
-  platforms["windows-x86_64-nsis"] = nsisEntry;
-}
-
-// Generic key only when exactly one Windows installer exists (legacy fallback).
-if (msiEntry && !nsisEntry) {
   platforms["windows-x86_64"] = msiEntry;
-} else if (nsisEntry && !msiEntry) {
-  platforms["windows-x86_64"] = nsisEntry;
 }
 
 const macArm = pickBySuffix(assets, "_aarch64.app.tar.gz");
@@ -105,11 +89,9 @@ const x64Entry = await platformEntry(macX64, macX64Sig);
 
 if (armEntry) {
   platforms["darwin-aarch64"] = armEntry;
-  platforms["darwin-aarch64-app"] = armEntry;
 }
 if (x64Entry) {
   platforms["darwin-x86_64"] = x64Entry;
-  platforms["darwin-x86_64-app"] = x64Entry;
 }
 
 if (Object.keys(platforms).length === 0) {
