@@ -1,3 +1,4 @@
+use crate::db::APP_STORAGE_FOLDER_NAME;
 use chrono::Utc;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -149,7 +150,7 @@ pub async fn staged_download_update(app: AppHandle) -> Result<StagedUpdateResult
         }
     }
     state.pending = Some(slot.clone());
-    write_state(&root, &state)?;
+    write_staged_state(&app, &root, &state)?;
     let downloaded = downloaded.load(Ordering::Relaxed);
     emit_progress(&app, "ready", downloaded, downloaded, &version);
 
@@ -172,12 +173,12 @@ pub fn staged_restart_to_update(app: AppHandle) -> Result<(), String> {
     if !slot_exists(&slot) {
         state.pending = None;
         mark_failed(&mut state, slot.version, "staged update files are missing");
-        write_state(&root, &state)?;
+        write_staged_state(&app, &root, &state)?;
         return Err("更新文件不存在，请重新下载".into());
     }
 
     increment_pending_attempt(&mut state)?;
-    write_state(&root, &state)?;
+    write_staged_state(&app, &root, &state)?;
     launch_slot(&slot)?;
     tracing::info!(version = %slot.version, "restarting into staged update");
     app.cleanup_before_exit();
@@ -202,7 +203,7 @@ pub fn forward_to_staged_version_if_needed(app: &AppHandle) -> Result<(), String
             );
             state.pending = None;
             mark_failed(&mut state, pending.version, "staged update files are missing");
-            write_state(&root, &state)?;
+            write_staged_state(app, &root, &state)?;
         } else if version_is_newer(&pending.version, current) {
             if pending.launch_attempts >= MAX_PENDING_LAUNCH_ATTEMPTS {
                 tracing::warn!(
@@ -212,11 +213,11 @@ pub fn forward_to_staged_version_if_needed(app: &AppHandle) -> Result<(), String
                 );
                 state.pending = None;
                 mark_failed(&mut state, pending.version, "launch attempts exceeded");
-                write_state(&root, &state)?;
+                write_staged_state(app, &root, &state)?;
             } else {
                 increment_pending_attempt(&mut state)?;
                 let pending = state.pending.clone().expect("pending exists after increment");
-                write_state(&root, &state)?;
+                write_staged_state(app, &root, &state)?;
                 launch_slot(&pending)?;
                 tracing::info!(version = %pending.version, "forwarding to pending staged update");
                 app.cleanup_before_exit();
@@ -234,7 +235,7 @@ pub fn forward_to_staged_version_if_needed(app: &AppHandle) -> Result<(), String
             );
             state.active = None;
             mark_failed(&mut state, active.version, "active staged files are missing");
-            write_state(&root, &state)?;
+            write_staged_state(app, &root, &state)?;
         } else if version_is_newer(&active.version, current) {
             launch_slot(&active)?;
             tracing::info!(version = %active.version, "forwarding to active staged version");
@@ -276,7 +277,7 @@ pub fn confirm_current_staged_launch(app: &AppHandle) -> Result<(), String> {
     state.previous = previous;
     state.active = Some(active.clone());
     state.pending = None;
-    write_state(&root, &state)?;
+    write_staged_state(app, &root, &state)?;
     cleanup_old_versions(&root, &state);
 
     tracing::info!(
@@ -330,11 +331,207 @@ fn ready_pending_slot(state: &StagedUpdateState) -> Option<&StagedVersionSlot> {
 }
 
 fn staged_root(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
+    let root = preferred_staged_root(app)?;
+    migrate_legacy_windows_staged_root(app, &root);
+    Ok(root)
+}
+
+#[cfg(target_os = "windows")]
+fn preferred_staged_root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .local_data_dir()
+        .map(|base| windows_staged_root_from_local_data_dir(&base))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn preferred_staged_root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
         .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join(STAGED_ROOT_DIR))
+        .map(|base| staged_root_from_base(&base))
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn windows_staged_root_from_local_data_dir(local_data_dir: &Path) -> PathBuf {
+    staged_root_from_base(&local_data_dir.join(APP_STORAGE_FOLDER_NAME))
+}
+
+pub(crate) fn staged_root_from_base(base: &Path) -> PathBuf {
+    base.join(STAGED_ROOT_DIR)
+}
+
+#[cfg(target_os = "windows")]
+fn legacy_windows_staged_root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|base| staged_root_from_base(&base))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn migrate_legacy_windows_staged_root(app: &AppHandle, preferred_root: &Path) {
+    let legacy_root = match legacy_windows_staged_root(app) {
+        Ok(root) => root,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to resolve legacy staged update root");
+            return;
+        }
+    };
+
+    if let Err(error) = migrate_staged_root(&legacy_root, preferred_root) {
+        tracing::warn!(
+            legacy_root = %legacy_root.display(),
+            preferred_root = %preferred_root.display(),
+            error = %error,
+            "failed to migrate legacy staged update root"
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn migrate_legacy_windows_staged_root(_app: &AppHandle, _preferred_root: &Path) {}
+
+pub(crate) fn migrate_staged_root(legacy_root: &Path, preferred_root: &Path) -> Result<(), String> {
+    if legacy_root == preferred_root || !legacy_root.exists() {
+        return Ok(());
+    }
+
+    migrate_staged_versions(legacy_root, preferred_root)?;
+
+    if state_path(legacy_root).exists() {
+        if state_path(preferred_root).exists() {
+            merge_legacy_state_into_preferred(legacy_root, preferred_root)?;
+        } else {
+            let mut state = read_state(legacy_root)?;
+            relocate_state_launch_paths(&mut state, legacy_root, preferred_root);
+            write_state(preferred_root, &state)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn merge_legacy_state_into_preferred(
+    legacy_root: &Path,
+    preferred_root: &Path,
+) -> Result<(), String> {
+    let legacy = read_state(legacy_root)?;
+    let mut preferred = read_state(preferred_root)?;
+    let mut changed = false;
+
+    if let Some(preferred_pending) = preferred.pending.as_mut() {
+        if let Some(legacy_pending) = legacy
+            .pending
+            .as_ref()
+            .filter(|slot| slot.version == preferred_pending.version)
+        {
+            let attempts = preferred_pending
+                .launch_attempts
+                .max(legacy_pending.launch_attempts);
+            if preferred_pending.launch_attempts != attempts {
+                preferred_pending.launch_attempts = attempts;
+                changed = true;
+            }
+        } else if legacy
+            .failed
+            .iter()
+            .any(|failed| failed.version == preferred_pending.version)
+        {
+            preferred.pending = None;
+            changed = true;
+        }
+    }
+
+    for failed in legacy.failed {
+        if !preferred
+            .failed
+            .iter()
+            .any(|existing| existing.version == failed.version && existing.reason == failed.reason)
+        {
+            preferred.failed.push(failed);
+            changed = true;
+        }
+    }
+
+    if changed {
+        write_state(preferred_root, &preferred)?;
+    }
+
+    Ok(())
+}
+
+fn migrate_staged_versions(legacy_root: &Path, preferred_root: &Path) -> Result<(), String> {
+    let legacy_versions = versions_dir(legacy_root);
+    if !legacy_versions.exists() {
+        return Ok(());
+    }
+
+    let preferred_versions = versions_dir(preferred_root);
+    fs::create_dir_all(&preferred_versions).map_err(|error| error.to_string())?;
+
+    for entry in fs::read_dir(&legacy_versions).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source = entry.path();
+        if !source.is_dir() {
+            continue;
+        }
+
+        let Some(name) = source.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        if validate_version(name).is_err() {
+            continue;
+        }
+
+        let destination = preferred_versions.join(name);
+        if destination.exists() {
+            continue;
+        }
+
+        let temp_destination = preferred_versions.join(format!("{name}.migrating"));
+        remove_dir_all_within(&preferred_versions, &temp_destination)?;
+        copy_dir_recursive(&source, &temp_destination)?;
+        fs::rename(&temp_destination, &destination).map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn relocate_state_launch_paths(
+    state: &mut StagedUpdateState,
+    legacy_root: &Path,
+    preferred_root: &Path,
+) {
+    for slot in [
+        state.active.as_mut(),
+        state.pending.as_mut(),
+        state.previous.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let launch_path = PathBuf::from(&slot.launch_path);
+        if let Ok(relative) = launch_path.strip_prefix(legacy_root) {
+            slot.launch_path = preferred_root.join(relative).to_string_lossy().into_owned();
+        }
+    }
 }
 
 pub(crate) fn state_path(root: &Path) -> PathBuf {
@@ -371,6 +568,42 @@ pub(crate) fn write_state(root: &Path, state: &StagedUpdateState) -> Result<(), 
     fs::write(&temp, data).map_err(|error| error.to_string())?;
     fs::rename(&temp, &path).map_err(|error| error.to_string())
 }
+
+fn write_staged_state(
+    app: &AppHandle,
+    root: &Path,
+    state: &StagedUpdateState,
+) -> Result<(), String> {
+    write_state(root, state)?;
+    sync_legacy_windows_state(app, root, state);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn sync_legacy_windows_state(app: &AppHandle, root: &Path, state: &StagedUpdateState) {
+    let legacy_root = match legacy_windows_staged_root(app) {
+        Ok(root) => root,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to resolve legacy staged update state root");
+            return;
+        }
+    };
+
+    if legacy_root == root || !legacy_root.exists() {
+        return;
+    }
+
+    if let Err(error) = write_state(&legacy_root, state) {
+        tracing::warn!(
+            legacy_root = %legacy_root.display(),
+            error = %error,
+            "failed to sync legacy staged update state"
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sync_legacy_windows_state(_app: &AppHandle, _root: &Path, _state: &StagedUpdateState) {}
 
 fn stage_package(
     root: &Path,
@@ -752,7 +985,8 @@ fn staged_target() -> &'static str {
 #[cfg(test)]
 pub(crate) mod test_api {
     pub(crate) use super::{
-        read_state, safe_join, state_path, version_is_newer, versions_dir, write_state,
-        StagedUpdateState, StagedVersionSlot,
+        migrate_staged_root, read_state, safe_join, state_path, version_is_newer, versions_dir,
+        windows_staged_root_from_local_data_dir, write_state, StagedUpdateState, StagedVersionSlot,
+        FailedStagedVersion,
     };
 }

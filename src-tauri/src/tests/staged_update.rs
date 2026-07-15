@@ -1,6 +1,7 @@
 use crate::staged_update::test_api::{
-    read_state, safe_join, state_path, version_is_newer, versions_dir, write_state,
-    StagedUpdateState, StagedVersionSlot,
+    migrate_staged_root, read_state, safe_join, state_path, version_is_newer, versions_dir,
+    windows_staged_root_from_local_data_dir, write_state, StagedUpdateState, StagedVersionSlot,
+    FailedStagedVersion,
 };
 use std::path::Path;
 
@@ -60,11 +61,91 @@ fn corrupt_state_file_falls_back_to_default_state() {
 
 #[test]
 fn versions_dir_stays_under_staged_root() {
-    let root = Path::new("C:/Users/example/AppData/Tempo/staged-updates");
+    let root = Path::new("C:/Users/example/AppData/Local/Tempo/staged-updates");
     let versions = versions_dir(root);
 
     assert!(versions.starts_with(root));
     assert!(versions.ends_with("versions"));
+}
+
+#[test]
+fn staged_root_is_derived_from_local_app_data_base() {
+    let local_app_data = Path::new("C:/Users/example/AppData/Local");
+    let root = windows_staged_root_from_local_data_dir(local_app_data);
+
+    assert!(root.starts_with(local_app_data.join("Tempo")));
+    assert!(root.ends_with("staged-updates"));
+    assert!(!root.to_string_lossy().contains("Roaming"));
+}
+
+#[test]
+fn legacy_staged_root_migrates_state_and_version_files_to_local() {
+    let legacy = unique_temp_dir("tempo-staged-legacy");
+    let preferred = unique_temp_dir("tempo-staged-local");
+    let legacy_exe = versions_dir(&legacy).join("1.0.8").join("Tempo.exe");
+    std::fs::create_dir_all(legacy_exe.parent().expect("legacy exe parent"))
+        .expect("create legacy version");
+    std::fs::write(&legacy_exe, b"exe").expect("write legacy exe");
+    let state = StagedUpdateState {
+        active: None,
+        pending: Some(slot("1.0.8", &legacy_exe.to_string_lossy())),
+        previous: None,
+        failed: Vec::new(),
+    };
+    write_state(&legacy, &state).expect("write legacy state");
+
+    migrate_staged_root(&legacy, &preferred).expect("migrate staged root");
+
+    let migrated = read_state(&preferred).expect("read migrated state");
+    let migrated_pending = migrated.pending.expect("migrated pending state");
+    assert!(Path::new(&migrated_pending.launch_path).starts_with(&preferred));
+    assert!(Path::new(&migrated_pending.launch_path).is_file());
+
+    cleanup_temp_dir(&legacy);
+    cleanup_temp_dir(&preferred);
+}
+
+#[test]
+fn legacy_failed_pending_state_clears_matching_local_pending() {
+    let legacy = unique_temp_dir("tempo-staged-legacy-failed");
+    let preferred = unique_temp_dir("tempo-staged-local-failed");
+    let active_path =
+        "C:/Users/example/AppData/Local/Tempo/staged-updates/versions/1.0.8/Tempo.exe";
+    let pending_path =
+        "C:/Users/example/AppData/Local/Tempo/staged-updates/versions/1.0.9/Tempo.exe";
+    write_state(
+        &preferred,
+        &StagedUpdateState {
+            active: Some(slot("1.0.8", active_path)),
+            pending: Some(slot("1.0.9", pending_path)),
+            previous: None,
+            failed: Vec::new(),
+        },
+    )
+    .expect("write preferred state");
+    write_state(
+        &legacy,
+        &StagedUpdateState {
+            active: Some(slot("1.0.8", active_path)),
+            pending: None,
+            previous: None,
+            failed: vec![FailedStagedVersion {
+                version: "1.0.9".into(),
+                reason: "launch attempts exceeded".into(),
+                failed_at: "2026-07-14T00:00:00Z".into(),
+            }],
+        },
+    )
+    .expect("write legacy state");
+
+    migrate_staged_root(&legacy, &preferred).expect("merge legacy state");
+
+    let merged = read_state(&preferred).expect("read merged state");
+    assert!(merged.pending.is_none());
+    assert!(merged.failed.iter().any(|failed| failed.version == "1.0.9"));
+
+    cleanup_temp_dir(&legacy);
+    cleanup_temp_dir(&preferred);
 }
 
 fn slot(version: &str, launch_path: &str) -> StagedVersionSlot {
