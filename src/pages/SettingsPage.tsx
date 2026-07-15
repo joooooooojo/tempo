@@ -14,13 +14,8 @@ import { Progress } from "@/components/ui/progress";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api";
 import { emitThemeChange } from "@/lib/theme";
-import {
-  checkUpdate,
-  getAppVersion,
-  installAndRelaunch,
-  type AvailableUpdate,
-  type UpdateProgress,
-} from "@/lib/update";
+import { getAppVersion } from "@/lib/update";
+import { useUpdateStore, runCheckUpdate, runInstallUpdate } from "@/lib/updateStore";
 import {
   DEFAULT_SHORTCUTS,
   formatShortcutLabel,
@@ -75,11 +70,13 @@ export function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [migratingStorage, setMigratingStorage] = useState(false);
   const [appVersion, setAppVersion] = useState("");
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [applyingUpdate, setApplyingUpdate] = useState(false);
-  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
-  const [pendingUpdate, setPendingUpdate] = useState<AvailableUpdate | null>(null);
-  const [pendingVersion, setPendingVersion] = useState("");
+  const {
+    checking: checkingUpdate,
+    applying: applyingUpdate,
+    progress: updateProgress,
+    pendingUpdate,
+    pendingVersion,
+  } = useUpdateStore();
   const [showMcpToken, setShowMcpToken] = useState(false);
   const [mcpPortDraft, setMcpPortDraft] = useState("");
 
@@ -135,57 +132,37 @@ export function SettingsPage() {
   };
 
   const handleCheckUpdate = async () => {
-    if (checkingUpdate || applyingUpdate || pendingUpdate) return;
-
-    setCheckingUpdate(true);
-    setUpdateProgress({ phase: "checking", downloaded: 0, total: 0 });
+    if (checkingUpdate || applyingUpdate || pendingUpdate || pendingVersion) return;
 
     try {
-      const result = await checkUpdate(setUpdateProgress);
+      const result = await runCheckUpdate();
+      if (result.status === "busy") return;
       if (result.status === "latest") {
         toast.success("已是最新版本");
-        setUpdateProgress(null);
         return;
       }
-
-      setPendingUpdate(result.update);
-      setPendingVersion(result.version);
-      setUpdateProgress((current) => ({
-        phase: "ready",
-        downloaded: current?.downloaded ?? 0,
-        total: current?.total ?? 0,
-        version: result.version,
-      }));
       toast.success(`v${result.version} 已下载，点击「安装更新」完成更新`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
-      setUpdateProgress(null);
-    } finally {
-      setCheckingUpdate(false);
     }
   };
 
   const handleInstallUpdate = async () => {
-    if (!pendingUpdate || applyingUpdate) return;
+    if ((!pendingUpdate && !pendingVersion) || applyingUpdate || checkingUpdate) return;
 
-    setApplyingUpdate(true);
-    setUpdateProgress({
-      phase: "installing",
-      downloaded: 0,
-      total: 0,
-      version: pendingVersion || pendingUpdate.version,
-    });
-    toast.info("正在安装更新，安装完成后 Tempo 会重启。", { duration: 8000 });
+    const needsRedownload = !pendingUpdate;
+    toast.info(
+      needsRedownload
+        ? "正在确认并安装更新，安装完成后 Tempo 会重启。"
+        : "正在安装更新，安装完成后 Tempo 会重启。",
+      { duration: 8000 },
+    );
     try {
-      await installAndRelaunch(pendingUpdate, setUpdateProgress);
+      const result = await runInstallUpdate();
+      if (result === "latest") {
+        toast.success("已是最新版本");
+      }
     } catch (error) {
-      setApplyingUpdate(false);
-      setUpdateProgress({
-        phase: "ready",
-        downloaded: 0,
-        total: 0,
-        version: pendingVersion || pendingUpdate.version,
-      });
       toast.error(error instanceof Error ? error.message : String(error));
     }
   };
@@ -570,18 +547,30 @@ export function SettingsPage() {
                 <p className="text-[14px] font-medium">Tempo</p>
                 <p className="mt-1 text-[12px] text-muted-foreground">
                   当前版本 {appVersion || "..."}
-                  {pendingVersion ? ` · 已下载 v${pendingVersion}` : ""}
+                  {pendingVersion
+                    ? pendingUpdate
+                      ? ` · 已下载 v${pendingVersion}`
+                      : ` · 待安装 v${pendingVersion}`
+                    : ""}
                 </p>
               </div>
-              {pendingUpdate ? (
+              {pendingVersion ? (
                 <Button
                   size="sm"
                   className="shrink-0"
-                  disabled={applyingUpdate}
+                  disabled={applyingUpdate || checkingUpdate}
                   onClick={() => void handleInstallUpdate()}
                 >
-                  <RotateCcw className={`h-3.5 w-3.5 ${applyingUpdate ? "animate-spin" : ""}`} />
-                  {applyingUpdate ? "安装中" : "安装更新"}
+                  <RotateCcw
+                    className={`h-3.5 w-3.5 ${applyingUpdate || checkingUpdate ? "animate-spin" : ""}`}
+                  />
+                  {applyingUpdate
+                    ? updateProgress?.phase === "downloading"
+                      ? "下载中"
+                      : updateProgress?.phase === "checking"
+                        ? "确认中"
+                        : "安装中"
+                    : "安装更新"}
                 </Button>
               ) : (
                 <Button

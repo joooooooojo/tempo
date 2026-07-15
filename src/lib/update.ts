@@ -65,3 +65,46 @@ export async function installAndRelaunch(
   onProgress?.({ phase: "done", downloaded: 0, total: 0, version: update.version });
   await relaunch();
 }
+
+/** Re-check, download, install, and relaunch when the in-memory Update resource is gone. */
+export async function downloadInstallAndRelaunch(
+  onProgress?: (progress: UpdateProgress) => void,
+): Promise<"latest" | "installed"> {
+  onProgress?.({ phase: "checking", downloaded: 0, total: 0 });
+
+  const update = await check();
+  if (!update) {
+    onProgress?.({ phase: "idle", downloaded: 0, total: 0 });
+    return "latest";
+  }
+
+  let downloaded = 0;
+  let total = 0;
+
+  onProgress?.({ phase: "downloading", downloaded, total, version: update.version });
+  await update.downloadAndInstall((event) => {
+    switch (event.event) {
+      case "Started":
+        downloaded = 0;
+        total = event.data.contentLength ?? 0;
+        onProgress?.({ phase: "downloading", downloaded, total, version: update.version });
+        break;
+      case "Progress":
+        downloaded += event.data.chunkLength;
+        onProgress?.({ phase: "downloading", downloaded, total, version: update.version });
+        break;
+      case "Finished":
+        onProgress?.({
+          phase: "installing",
+          downloaded,
+          total,
+          version: update.version,
+        });
+        break;
+    }
+  });
+
+  onProgress?.({ phase: "done", downloaded: 0, total: 0, version: update.version });
+  await relaunch();
+  return "installed";
+}
