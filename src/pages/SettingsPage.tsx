@@ -146,13 +146,13 @@ export function SettingsPage() {
 
       setPendingUpdate(result.update);
       setPendingVersion(result.version);
-      setUpdateProgress({
+      setUpdateProgress((current) => ({
         phase: "ready",
-        downloaded: 0,
-        total: 0,
+        downloaded: current?.downloaded ?? 0,
+        total: current?.total ?? 0,
         version: result.version,
-      });
-      toast.success(`发现 v${result.version}，点击「安装更新」开始安装`);
+      }));
+      toast.success(`v${result.version} 已下载，点击「安装更新」完成更新`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       setUpdateProgress(null);
@@ -161,7 +161,7 @@ export function SettingsPage() {
     }
   };
 
-  const handleRestartUpdate = async () => {
+  const handleInstallUpdate = async () => {
     if (!pendingUpdate || applyingUpdate) return;
 
     setApplyingUpdate(true);
@@ -171,11 +171,17 @@ export function SettingsPage() {
       total: 0,
       version: pendingVersion || pendingUpdate.version,
     });
-    toast.info("正在下载并安装更新，安装完成后 Tempo 会重启。", { duration: 8000 });
+    toast.info("正在安装更新，安装完成后 Tempo 会重启。", { duration: 8000 });
     try {
       await installAndRelaunch(pendingUpdate, setUpdateProgress);
     } catch (error) {
       setApplyingUpdate(false);
+      setUpdateProgress({
+        phase: "ready",
+        downloaded: 0,
+        total: 0,
+        version: pendingVersion || pendingUpdate.version,
+      });
       toast.error(error instanceof Error ? error.message : String(error));
     }
   };
@@ -427,7 +433,7 @@ export function SettingsPage() {
                 <p className="text-[14px] font-medium">Tempo</p>
                 <p className="mt-1 text-[12px] text-muted-foreground">
                   当前版本 {appVersion || "..."}
-                  {pendingVersion ? ` · 发现 v${pendingVersion}` : ""}
+                  {pendingVersion ? ` · 已下载 v${pendingVersion}` : ""}
                 </p>
               </div>
               {pendingUpdate ? (
@@ -435,7 +441,7 @@ export function SettingsPage() {
                   size="sm"
                   className="shrink-0"
                   disabled={applyingUpdate}
-                  onClick={() => void handleRestartUpdate()}
+                  onClick={() => void handleInstallUpdate()}
                 >
                   <RotateCcw className={`h-3.5 w-3.5 ${applyingUpdate ? "animate-spin" : ""}`} />
                   {applyingUpdate ? "安装中" : "安装更新"}

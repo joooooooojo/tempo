@@ -3,7 +3,7 @@
  * Build a Tauri updater latest.json from a GitHub Release.
  *
  * - Uses public browser_download_url (not GitHub API asset URLs).
- * - Publishes only the Windows MSI updater entry.
+ * - Publishes Windows MSI and macOS .app.tar.gz updater entries.
  */
 import { writeFileSync } from "node:fs";
 
@@ -94,8 +94,16 @@ if (x64Entry) {
   platforms["darwin-x86_64"] = x64Entry;
 }
 
-if (Object.keys(platforms).length === 0) {
-  throw new Error("No updater platforms found on release assets");
+const requiredPlatforms = ["windows-x86_64", "darwin-aarch64", "darwin-x86_64"];
+const missingPlatforms = requiredPlatforms.filter((platform) => !platforms[platform]);
+
+if (missingPlatforms.length > 0) {
+  throw new Error(
+    [
+      `Missing required updater platforms: ${missingPlatforms.join(", ")}`,
+      "Expected release assets include Windows .msi + .msi.sig and macOS .app.tar.gz + .app.tar.gz.sig files.",
+    ].join("\n"),
+  );
 }
 
 const version = String(release.tag_name || tag).replace(/^v/, "");

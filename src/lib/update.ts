@@ -30,18 +30,11 @@ export async function checkUpdate(
     return { status: "latest" };
   }
 
-  onProgress?.({ phase: "ready", downloaded: 0, total: 0, version: update.version });
-  return { status: "ready", version: update.version, update };
-}
-
-export async function installAndRelaunch(
-  update: AvailableUpdate,
-  onProgress?: (progress: UpdateProgress) => void,
-) {
   let downloaded = 0;
   let total = 0;
 
-  await update.downloadAndInstall((event) => {
+  onProgress?.({ phase: "downloading", downloaded, total, version: update.version });
+  await update.download((event) => {
     switch (event.event) {
       case "Started":
         downloaded = 0;
@@ -53,11 +46,22 @@ export async function installAndRelaunch(
         onProgress?.({ phase: "downloading", downloaded, total, version: update.version });
         break;
       case "Finished":
-        onProgress?.({ phase: "installing", downloaded, total, version: update.version });
+        onProgress?.({ phase: "ready", downloaded, total, version: update.version });
         break;
     }
   });
 
-  onProgress?.({ phase: "done", downloaded, total, version: update.version });
+  onProgress?.({ phase: "ready", downloaded, total, version: update.version });
+  return { status: "ready", version: update.version, update };
+}
+
+export async function installAndRelaunch(
+  update: AvailableUpdate,
+  onProgress?: (progress: UpdateProgress) => void,
+) {
+  onProgress?.({ phase: "installing", downloaded: 0, total: 0, version: update.version });
+  await update.install();
+
+  onProgress?.({ phase: "done", downloaded: 0, total: 0, version: update.version });
   await relaunch();
 }
