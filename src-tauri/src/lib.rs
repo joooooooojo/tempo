@@ -55,7 +55,21 @@ struct ShortcutActionMap {
 pub fn run() {
     logging::install_panic_hook();
 
-    let builder = tauri::Builder::default()
+    // Single-instance must be registered first so a second launch exits early
+    // and focuses the existing process instead of starting another runtime.
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            logging::warn_if_err(
+                commands::show_window(app.clone()),
+                "focus existing window on second launch",
+            );
+        }));
+    }
+
+    let builder = builder
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol(commands::MARKDOWN_IMAGE_PROTOCOL, |ctx, request| {
@@ -366,7 +380,25 @@ pub fn run() {
             auxiliary_windows::show_snippet_picker,
             auxiliary_windows::hide_shelf_picker,
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+        .map(|app| {
+            app.run(|app_handle, event| {
+                #[cfg(target_os = "macos")]
+                if let tauri::RunEvent::Reopen {
+                    has_visible_windows, ..
+                } = &event
+                {
+                    // Dock icon click while minimized to tray: restore main window.
+                    if !*has_visible_windows {
+                        logging::warn_if_err(
+                            commands::show_window(app_handle.clone()),
+                            "show main window on macos reopen",
+                        );
+                    }
+                }
+                let _ = (app_handle, event);
+            });
+        });
 
     if let Err(error) = result {
         tracing::error!(error = %error, "tauri application exited with error");

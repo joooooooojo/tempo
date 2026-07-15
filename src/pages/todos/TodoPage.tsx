@@ -1033,8 +1033,8 @@ export function TodoPage() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
-        <Card className="flex h-full max-h-full w-full flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden pb-14">
+        <Card className="flex h-fit max-h-full min-h-0 w-full flex-col overflow-hidden">
           <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto p-0">
           {loading ? (
             <TodoEmptyState text="加载中..." />
