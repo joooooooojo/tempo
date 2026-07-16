@@ -16,6 +16,10 @@ import { PomodoroPage } from "@/pages/PomodoroPage";
 import { SnippetsPage } from "@/pages/SnippetsPage";
 import { TodoPage } from "@/pages/TodoPage";
 import { QuickTodoPage } from "@/pages/QuickTodoPage";
+import { ToolsLayout } from "@/pages/tools/ToolsLayout";
+import { ToolsHubPage } from "@/pages/tools/ToolsHubPage";
+import { HostsPage } from "@/pages/tools/hosts/HostsPage";
+import { TranslatePage } from "@/pages/tools/translate/TranslatePage";
 import { api } from "@/lib/api";
 import { revealAppShell } from "@/lib/boot";
 import { notifyUser } from "@/lib/notifications";
@@ -138,6 +142,11 @@ function MainApp() {
             <Route path="reports" element={<ReportsPage />} />
             <Route path="clipboard" element={<ClipboardPage />} />
             <Route path="snippets" element={<SnippetsPage />} />
+            <Route path="tools" element={<ToolsLayout />}>
+              <Route index element={<ToolsHubPage />} />
+              <Route path="hosts" element={<HostsPage />} />
+              <Route path="translate" element={<TranslatePage />} />
+            </Route>
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

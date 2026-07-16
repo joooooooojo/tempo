@@ -182,6 +182,7 @@ function SelectContent({
           sideOffset={sideOffset}
           align={align}
           alignOffset={alignOffset}
+          // Searchable mode cannot use item-align positioning.
           alignItemWithTrigger={searchable ? false : alignItemWithTrigger}
           className={cn("isolate", overlayLayer ? "z-[80]" : "z-50")}
         >
@@ -195,58 +196,71 @@ function SelectContent({
               "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
               searchable
                 ? "max-h-[min(var(--available-height),20rem)] p-0"
-                : "max-h-[min(var(--available-height),16rem)] overflow-x-hidden overflow-y-auto overscroll-contain p-1.5",
+                : // alignItemWithTrigger: do NOT set max-height / overflow-y on Popup
+                  // (conflicts with Base UI list scroller — causes wrong position after scroll).
+                  alignItemWithTrigger
+                  ? "min-h-0 p-1.5"
+                  : "no-scrollbar max-h-[min(var(--available-height),16rem)] overflow-x-hidden overflow-y-auto overscroll-contain p-1.5",
               overlayLayer ? "z-[80]" : "z-50",
               className
             )}
             {...props}
           >
-            {searchable && (
-              <div className="sticky top-0 z-10 shrink-0 border-b border-border/60 bg-popover p-1.5">
-                <div className="relative">
-                  <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    ref={inputRef}
-                    value={query}
-                    placeholder={searchPlaceholder}
-                    className="h-8 border-0 bg-transparent pr-2.5 pl-8 shadow-none focus-visible:ring-0 dark:bg-transparent"
-                    onChange={(event) => setQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      // Keep typing in the search box; let arrows/enter reach the list.
-                      if (
-                        event.key === "ArrowDown" ||
-                        event.key === "ArrowUp" ||
-                        event.key === "Enter" ||
-                        event.key === "Escape" ||
-                        event.key === "Home" ||
-                        event.key === "End"
-                      ) {
-                        return
-                      }
-                      event.stopPropagation()
-                    }}
-                    onClick={(event) => event.stopPropagation()}
-                  />
-                </div>
-              </div>
-            )}
-            <div
-              className={cn(
-                searchable &&
-                  "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-1.5"
-              )}
-            >
-              <SelectScrollUpButton />
-              <SelectPrimitive.List>
-                {filteredChildren}
-                {searchable && matchCount === 0 && (
-                  <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">
-                    无匹配项
+            {searchable ? (
+              <>
+                <div className="sticky top-0 z-10 shrink-0 border-b border-border/60 bg-popover p-1.5">
+                  <div className="relative">
+                    <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      ref={inputRef}
+                      value={query}
+                      placeholder={searchPlaceholder}
+                      className="h-8 border-0 bg-transparent pr-2.5 pl-8 shadow-none focus-visible:ring-0 dark:bg-transparent"
+                      onChange={(event) => setQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        // Keep typing in the search box; let arrows/enter reach the list.
+                        if (
+                          event.key === "ArrowDown" ||
+                          event.key === "ArrowUp" ||
+                          event.key === "Enter" ||
+                          event.key === "Escape" ||
+                          event.key === "Home" ||
+                          event.key === "End"
+                        ) {
+                          return
+                        }
+                        event.stopPropagation()
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                    />
                   </div>
-                )}
-              </SelectPrimitive.List>
-              <SelectScrollDownButton />
-            </div>
+                </div>
+                <div className="no-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-1.5">
+                  <SelectScrollUpButton />
+                  <SelectPrimitive.List className="no-scrollbar">
+                    {filteredChildren}
+                    {matchCount === 0 && (
+                      <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">
+                        无匹配项
+                      </div>
+                    )}
+                  </SelectPrimitive.List>
+                  <SelectScrollDownButton />
+                </div>
+              </>
+            ) : (
+              <>
+                {/*
+                  List must be a flex child of Popup (no unconstrained wrapper),
+                  otherwise max-height:100% never creates a scrollport in align mode.
+                */}
+                <SelectScrollUpButton />
+                <SelectPrimitive.List className="no-scrollbar min-h-0 flex-1 overscroll-contain">
+                  {filteredChildren}
+                </SelectPrimitive.List>
+                <SelectScrollDownButton />
+              </>
+            )}
           </SelectPrimitive.Popup>
         </SelectPrimitive.Positioner>
       </SelectPrimitive.Portal>

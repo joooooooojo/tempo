@@ -38,7 +38,8 @@ export function OnboardingDialog({ open, onComplete }: OnboardingDialogProps) {
                 </p>
                 <ul className="mt-2 flex flex-col gap-1.5 text-[12px] text-muted-foreground">
                   <li>· 读取前台应用名称以统计时长</li>
-                  <li>· 全程离线，不上传任何数据</li>
+                  <li>· 核心功能本地运行，不上传到 Tempo 服务器</li>
+                  <li>· 小工具中的翻译仅在你配置并使用时请求对应厂商</li>
                   <li>· 不读取文档、不截屏</li>
                 </ul>
               </div>

@@ -1,4 +1,5 @@
 pub mod clipboard;
+pub mod hosts;
 pub mod markdown;
 pub mod pomodoro_cmds;
 pub mod reports;
@@ -6,6 +7,7 @@ pub mod settings;
 pub mod snippets;
 pub mod todos;
 pub(crate) mod tracker;
+pub mod translate;
 pub mod window;
 
 use serde::{Deserialize, Serialize};

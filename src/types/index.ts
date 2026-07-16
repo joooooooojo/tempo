@@ -193,3 +193,50 @@ export type ReminderEvent =
   | { type: "night" }
   | { type: "pomodoro_phase_end"; phase: "work" | "short_break" | "long_break"; skipped: boolean }
   | { type: "todo_due"; todo_id: number; title: string; lead: "1d" | "1h" | "due" | "custom"; hours?: number };
+
+export interface HostsWorkspace {
+  path: string;
+  writable: boolean;
+  authorized: boolean;
+  managed: boolean;
+  publicContent: string;
+  activeProfileId?: string | null;
+  profiles: HostsProfile[];
+  systemContent: string;
+}
+
+export interface HostsProfile {
+  id: string;
+  name: string;
+  updatedAt: string;
+  active: boolean;
+}
+
+export interface HostsBackup {
+  id: string;
+  source: string;
+  createdAt: string;
+  preview: string;
+}
+
+export type TranslateProviderId = "youdao" | "baidu" | "tencent" | "google" | "deepl";
+
+export interface TranslateProviderCreds {
+  enabled: boolean;
+  fields: Record<string, string>;
+}
+
+export interface TranslateConfig {
+  defaultProvider: string;
+  defaultSourceLang: string;
+  defaultTargetLang: string;
+  compareMode: boolean;
+  providers: Record<string, TranslateProviderCreds>;
+}
+
+export interface TranslateResult {
+  provider: string;
+  text: string;
+  detectedFrom?: string | null;
+  error?: string | null;
+}

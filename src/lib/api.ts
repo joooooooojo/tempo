@@ -4,6 +4,9 @@ import type {
   ClipboardEntry,
   ClipboardHistoryPage,
   DailyReport,
+  HostsBackup,
+  HostsProfile,
+  HostsWorkspace,
   PomodoroState,
   Settings,
   Snippet,
@@ -13,6 +16,8 @@ import type {
   TodoItem,
   TodoNote,
   TodoRecurrence,
+  TranslateConfig,
+  TranslateResult,
   WeeklyReport,
 } from "@/types";
 
@@ -187,4 +192,30 @@ export const api = {
   showClipboardPicker: () => invoke<void>("show_clipboard_picker"),
   showSnippetPicker: () => invoke<void>("show_snippet_picker"),
   hideShelfPicker: () => invoke<void>("hide_shelf_picker"),
+
+  // Tools — Hosts
+  getHostsWorkspace: () => invoke<HostsWorkspace>("get_hosts_workspace"),
+  authorizeHostsWrite: () => invoke<HostsWorkspace>("authorize_hosts_write"),
+  saveHostsPublic: (content: string) => invoke<HostsWorkspace>("save_hosts_public", { content }),
+  saveHostsProfile: (name: string, content: string, id?: string | null) =>
+    invoke<HostsProfile>("save_hosts_profile", { id: id ?? null, name, content }),
+  deleteHostsProfile: (id: string) => invoke<HostsWorkspace>("delete_hosts_profile", { id }),
+  activateHostsProfile: (id?: string | null) =>
+    invoke<HostsWorkspace>("activate_hosts_profile", { id: id ?? null }),
+  getHostsProfileContent: (id: string) => invoke<string>("get_hosts_profile_content", { id }),
+  applyHosts: () => invoke<HostsWorkspace>("apply_hosts"),
+  flushDns: () => invoke<void>("flush_dns"),
+  listHostsBackups: () => invoke<HostsBackup[]>("list_hosts_backups"),
+  restoreHostsBackup: (id: string) => invoke<HostsWorkspace>("restore_hosts_backup", { id }),
+
+  // Tools — Translate
+  getTranslateConfig: () => invoke<TranslateConfig>("get_translate_config"),
+  updateTranslateConfig: (config: TranslateConfig) =>
+    invoke<TranslateConfig>("update_translate_config", { config }),
+  translateText: (provider: string, text: string, from: string, to: string) =>
+    invoke<TranslateResult>("translate_text", { provider, text, from, to }),
+  translateCompare: (providers: string[], text: string, from: string, to: string) =>
+    invoke<TranslateResult[]>("translate_compare", { providers, text, from, to }),
+  testTranslateProvider: (provider: string) =>
+    invoke<TranslateResult>("test_translate_provider", { provider }),
 };
