@@ -21,6 +21,7 @@ import {
   DialogContent,
   DialogFooter,
   DialogHeader,
+  DialogPanel,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -390,44 +391,38 @@ export function SnippetsPage() {
           if (!open) setDetailSnippet(null);
         }}
       >
-        <DialogContent
-          className="todo-create-dialog !flex max-h-[min(720px,calc(100vh-2rem))] w-[calc(100vw-2rem)] max-w-[720px] flex-col gap-0 overflow-hidden rounded-xl border-border/80 p-0 sm:max-w-[720px]"
-        >
+        <DialogPanel className="todo-create-dialog max-h-[min(720px,calc(100vh-2rem))] w-[calc(100vw-2rem)] max-w-[720px] sm:max-w-[720px]">
           {detailSnippet && (
             <>
-              <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-4 pr-12">
-                <div className="flex min-w-0 items-start gap-3 pr-2">
-                  <div className="min-w-0 flex-1">
-                    <DialogTitle className="truncate text-[18px] font-bold">
-                      {detailSnippet.title}
-                    </DialogTitle>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{detailSnippet.group_name || "未分组"}</span>
-                      {detailSnippet.shortcut && (
-                        <span className="rounded-md bg-foreground/6 px-1.5 py-0.5 font-mono text-[11px]">
-                          {detailSnippet.shortcut}
-                        </span>
-                      )}
-                      {detailSnippet.language && detailSnippet.language !== "plain" && (
-                        <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
-                          {SNIPPET_LANGUAGE_OPTIONS.find(
-                            (option) => option.value === detailSnippet.language
-                          )?.label || detailSnippet.language}
-                        </span>
-                      )}
-                      <span>使用 {detailSnippet.use_count} 次</span>
-                      {detailSnippet.pinned && (
-                        <span className="inline-flex items-center gap-1 text-primary">
-                          <Pin className="h-3 w-3 fill-current" />
-                          已置顶
-                        </span>
-                      )}
-                    </div>
-                  </div>
+              <DialogHeader>
+                <DialogTitle className="min-w-0 text-[18px] font-bold">
+                  <span className="truncate">{detailSnippet.title}</span>
+                </DialogTitle>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span>{detailSnippet.group_name || "未分组"}</span>
+                  {detailSnippet.shortcut && (
+                    <span className="rounded-md bg-foreground/6 px-1.5 py-0.5 font-mono text-[11px]">
+                      {detailSnippet.shortcut}
+                    </span>
+                  )}
+                  {detailSnippet.language && detailSnippet.language !== "plain" && (
+                    <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                      {SNIPPET_LANGUAGE_OPTIONS.find(
+                        (option) => option.value === detailSnippet.language
+                      )?.label || detailSnippet.language}
+                    </span>
+                  )}
+                  <span>使用 {detailSnippet.use_count} 次</span>
+                  {detailSnippet.pinned && (
+                    <span className="inline-flex items-center gap-1 text-primary">
+                      <Pin className="size-3 fill-current" />
+                      已置顶
+                    </span>
+                  )}
                 </div>
               </DialogHeader>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 py-5">
+              <DialogContent className="flex flex-col gap-4 overflow-hidden">
                 {detailSnippet.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {detailSnippet.tags.map((tag) => (
@@ -459,9 +454,9 @@ export function SnippetsPage() {
                     </div>
                   )}
                 </ScrollArea>
-              </div>
+              </DialogContent>
 
-              <DialogFooter className="mx-0 mb-0 flex w-full shrink-0 flex-row items-center gap-3 rounded-none border-t border-border/60 bg-foreground/[0.018] px-6 py-4 sm:space-x-0">
+              <DialogFooter className="sm:justify-between">
                 <Button
                   className="h-9"
                   variant="outline"
@@ -479,21 +474,21 @@ export function SnippetsPage() {
                       openEdit(snippet);
                     }}
                   >
-                    <Pencil className="h-3.5 w-3.5" />
+                    <Pencil className="size-3.5" />
                     编辑
                   </Button>
                   <Button
                     className="h-9"
                     onClick={() => void useSnippet(detailSnippet)}
                   >
-                    <Copy className="h-3.5 w-3.5" />
+                    <Copy className="size-3.5" />
                     使用
                   </Button>
                 </div>
               </DialogFooter>
             </>
           )}
-        </DialogContent>
+        </DialogPanel>
       </Dialog>
 
       <Dialog
@@ -504,11 +499,11 @@ export function SnippetsPage() {
         }}
         modal={moreSettingsOpen ? "trap-focus" : true}
       >
-        <DialogContent className="flex flex-col !h-[80vh] !max-h-[calc(100vh-2rem)] !w-[80vw] !max-w-[calc(100vw-2rem)] gap-0 overflow-hidden p-0">
-          <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-4 pr-12">
+        <DialogPanel className="!h-[80vh] !max-h-[calc(100vh-2rem)] !w-[80vw] !max-w-[calc(100vw-2rem)]">
+          <DialogHeader>
             <DialogTitle>{editor.id ? "编辑短语" : "新建短语"}</DialogTitle>
           </DialogHeader>
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 py-4">
+          <DialogContent className="flex flex-col gap-4 overflow-hidden py-4">
             <div className="grid shrink-0 gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="snippet-title">标题</Label>
@@ -563,8 +558,8 @@ export function SnippetsPage() {
                 onChange={(content) => setEditor((state) => ({ ...state, content }))}
               />
             </div>
-          </div>
-          <DialogFooter className="mx-0 mb-0 flex w-full shrink-0 flex-row items-center gap-3 rounded-none border-t border-border/60 bg-foreground/[0.018] px-6 py-4 sm:space-x-0">
+          </DialogContent>
+          <DialogFooter className="sm:justify-between">
             <SnippetMoreSettings
               open={moreSettingsOpen}
               onOpenChange={setMoreSettingsOpen}
@@ -585,15 +580,15 @@ export function SnippetsPage() {
               </Button>
             </div>
           </DialogFooter>
-        </DialogContent>
+        </DialogPanel>
       </Dialog>
 
       <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogPanel className="max-w-md">
           <DialogHeader>
             <DialogTitle>短语分组</DialogTitle>
           </DialogHeader>
-          <div className="flex flex-col gap-3">
+          <DialogContent className="flex flex-col gap-3">
             <div className="flex gap-2">
               <Input
                 value={newGroupName}
@@ -622,24 +617,24 @@ export function SnippetsPage() {
                     className="flex items-center justify-between gap-2 rounded-lg border border-border/60 px-3 py-2"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <Folder className="h-4 w-4 text-muted-foreground" />
+                      <Folder className="size-4 text-muted-foreground" />
                       <span className="truncate text-[13px] font-medium">{group.name}</span>
                     </div>
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-8 w-8 text-destructive"
+                      className="size-8 text-destructive"
                       title="删除分组"
                       onClick={() => void deleteGroup(group)}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="size-3.5" />
                     </Button>
                   </div>
                 ))
               )}
             </div>
-          </div>
-        </DialogContent>
+          </DialogContent>
+        </DialogPanel>
       </Dialog>
     </div>
   );
@@ -871,17 +866,17 @@ function SnippetMoreSettings({
       </Button>
 
       <Dialog open={open} onOpenChange={onOpenChange} modal="trap-focus">
-        <DialogContent
+        <DialogPanel
           showOverlay={false}
-          className="todo-create-dialog max-h-[min(520px,85vh)] max-w-[440px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
+          className="todo-create-dialog max-h-[min(520px,85vh)] max-w-[440px]"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
-          <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
-            <DialogTitle className="text-[18px] font-bold">更多配置</DialogTitle>
+          <DialogHeader>
+            <DialogTitle>更多配置</DialogTitle>
           </DialogHeader>
 
-          <div className="no-scrollbar max-h-[min(380px,60vh)] space-y-5 overflow-y-auto px-5 py-5">
-            <div className="space-y-2">
+          <DialogContent className="no-scrollbar flex max-h-[min(380px,60vh)] flex-col gap-5">
+            <div className="flex flex-col gap-2">
               <Label>分组</Label>
               <Select
                 items={[
@@ -907,7 +902,7 @@ function SnippetMoreSettings({
               </Select>
             </div>
 
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="snippet-more-shortcut">快捷词</Label>
               <Input
                 id="snippet-more-shortcut"
@@ -917,7 +912,7 @@ function SnippetMoreSettings({
               />
             </div>
 
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="snippet-more-tags">标签</Label>
               <Input
                 id="snippet-more-tags"
@@ -926,14 +921,14 @@ function SnippetMoreSettings({
                 placeholder="逗号分隔，例如：客服, 售后"
               />
             </div>
-          </div>
+          </DialogContent>
 
-          <DialogFooter className="mx-0 mb-0 rounded-none border-t border-border/60 bg-foreground/[0.018] px-5 py-3 sm:justify-end">
+          <DialogFooter>
             <Button type="button" className="h-9 min-w-20" onClick={() => onOpenChange(false)}>
               完成
             </Button>
           </DialogFooter>
-        </DialogContent>
+        </DialogPanel>
       </Dialog>
     </>
   );

@@ -84,7 +84,7 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
                 crate::clipboard_db::purge_clipboard_history_by_retention(&conn, &retention);
             }
 
-            if let Some(app_info) = get_foreground_app().filter(|app| !is_tempo_app(app)) {
+            if let Some(app_info) = get_foreground_app() {
                 let mut runtime = state.clipboard.lock();
                 runtime.last_source_app = Some(app_info.name.clone());
                 runtime.last_source_process = Some(app_info.process_name.clone());
@@ -916,7 +916,7 @@ pub(crate) fn resolve_clipboard_source(
     fallback_app: Option<&str>,
     fallback_process: Option<&str>,
 ) -> (Option<String>, Option<String>) {
-    if let Some(app) = current.filter(|app| !is_tempo_app(app)) {
+    if let Some(app) = current {
         if is_system_clipboard_source(&app.name, &app.process_name) {
             return (
                 fallback_app.map(str::to_string),
@@ -930,12 +930,6 @@ pub(crate) fn resolve_clipboard_source(
         fallback_app.map(str::to_string),
         fallback_process.map(str::to_string),
     )
-}
-
-fn is_tempo_app(app: &ForegroundApp) -> bool {
-    let name = app.name.to_ascii_lowercase();
-    let process = app.process_name.to_ascii_lowercase();
-    name.contains("tempo") || process.contains("tempo")
 }
 
 fn is_system_clipboard_source(name: &str, process: &str) -> bool {

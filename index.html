@@ -4,9 +4,6 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <title>Tempo</title>
     <style>
       html,
@@ -17,7 +14,7 @@
         overflow: hidden;
         background: #f3f8f5;
         color: #24352c;
-        font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+        font-family: ui-sans-serif, system-ui, "Plus Jakarta Sans", sans-serif;
       }
 
       html.dark,
@@ -191,6 +188,15 @@
         root.classList.toggle("dark", prefersDark);
       })();
     </script>
+    <!-- Non-blocking fonts: do not delay first splash paint -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+    />
   </head>
   <body>
     <div id="boot-splash" aria-busy="true" aria-live="polite">
@@ -206,6 +212,42 @@
       </div>
     </div>
     <div id="root"></div>
+    <script>
+      // Show the (initially hidden) main window only after the splash has painted,
+      // so WebView's default white frame is never visible.
+      (function () {
+        var view = new URLSearchParams(location.search).get("view");
+        if (view) return;
+
+        var attempts = 0;
+        function showMain() {
+          var tauri = window.__TAURI__;
+          var invoke = tauri && tauri.core && tauri.core.invoke;
+          if (!invoke) {
+            if (attempts++ < 120) window.setTimeout(showMain, 16);
+            return;
+          }
+
+          try {
+            var dark = document.documentElement.classList.contains("dark");
+            var getCurrent =
+              tauri.webviewWindow && tauri.webviewWindow.getCurrentWebviewWindow;
+            if (getCurrent) {
+              var win = getCurrent();
+              if (win && win.setBackgroundColor) {
+                void win.setBackgroundColor(dark ? "#12151a" : "#f3f8f5");
+              }
+            }
+          } catch (_) {}
+
+          void invoke("show_window");
+        }
+
+        requestAnimationFrame(function () {
+          requestAnimationFrame(showMain);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

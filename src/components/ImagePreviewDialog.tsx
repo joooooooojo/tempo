@@ -3,6 +3,7 @@ import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogPanel,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -28,18 +29,20 @@ export function ImagePreviewDialog({
       onOpenChange={onOpenChange}
       modal={nested ? "trap-focus" : true}
     >
-      <DialogContent
+      <DialogPanel
         showOverlay={!nested}
         className={cn(
-          "!flex !h-[85vh] !max-h-[85vh] !w-[85vw] !max-w-[85vw] flex-col gap-3 overflow-hidden p-3",
+          "!h-[85vh] !max-h-[85vh] !w-[85vw] !max-w-[85vw]",
           nested && "todo-create-dialog"
         )}
       >
-        <DialogHeader className="shrink-0 px-1 pr-8">
-          <DialogTitle className="truncate text-[15px]">图片预览</DialogTitle>
+        <DialogHeader>
+          <DialogTitle className="truncate">图片预览</DialogTitle>
         </DialogHeader>
-        {image && <ImagePreviewViewport src={image.src} alt={image.alt} />}
-      </DialogContent>
+        <DialogContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 pt-0">
+          {image && <ImagePreviewViewport src={image.src} alt={image.alt} />}
+        </DialogContent>
+      </DialogPanel>
     </Dialog>
   );
 }

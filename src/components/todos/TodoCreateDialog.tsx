@@ -18,6 +18,7 @@ import {
   DialogContent,
   DialogFooter,
   DialogHeader,
+  DialogPanel,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -108,10 +109,7 @@ export function TodoCreateDialog({
 }: TodoCreateDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        showCloseButton={false}
-        className="todo-create-dialog !flex max-h-[min(680px,calc(100vh-2rem))] w-[calc(100vw-2rem)] max-w-[680px] flex-col gap-0 overflow-hidden rounded-xl border-border/80 p-0 sm:max-w-[680px]"
-      >
+      <DialogPanel className="todo-create-dialog max-h-[min(680px,calc(100vh-2rem))] w-[calc(100vw-2rem)] max-w-[680px] sm:max-w-[680px]">
         <TodoCreateFormPanel
           heading={heading}
           todoTitle={todoTitle}
@@ -149,7 +147,7 @@ export function TodoCreateDialog({
           onTagsChange={onTagsChange}
           onSubmit={onSubmit}
         />
-      </DialogContent>
+      </DialogPanel>
     </Dialog>
   );
 }
@@ -209,39 +207,36 @@ export function TodoCreateFormPanel({
     <>
       <DialogHeader
         data-tauri-drag-region={isWindowLayout ? "" : undefined}
+        showCloseButton={!isWindowLayout}
         className={cn(
-          "relative shrink-0 border-b border-border/60",
-          isWindowLayout ? "px-5 py-4 pr-12 select-none" : "px-7 py-5 pr-14"
+          isWindowLayout && "relative flex-row items-center justify-between px-5 select-none"
         )}
       >
         {titleElement ?? (
           <h1
             data-tauri-drag-region={isWindowLayout ? "" : undefined}
-            className="text-[18px] font-bold leading-tight tracking-tight"
+            className="flex min-h-7 items-center text-[15px] font-semibold leading-none tracking-tight"
           >
             {heading}
           </h1>
         )}
-        {onCancel && (
-          <button
+        {isWindowLayout && onCancel && (
+          <Button
             data-no-drag
-            type="button"
-            className={cn(
-              "absolute top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md opacity-60 transition-opacity hover:bg-black/5 hover:opacity-100 focus:outline-none dark:hover:bg-white/10",
-              isWindowLayout ? "right-3 size-8" : "right-5 size-9"
-            )}
+            variant="ghost"
+            size="icon-sm"
             aria-label="关闭"
             onClick={onCancel}
           >
-            <X className="block h-4 w-4 shrink-0" />
-          </button>
+            <X className="relative size-3.5" />
+          </Button>
         )}
       </DialogHeader>
       <form className="flex min-h-0 flex-1 flex-col overflow-hidden" autoComplete="off" onSubmit={onSubmit}>
-        <div
+        <DialogContent
           className={cn(
-            "no-scrollbar min-h-0 flex-1 overflow-y-auto",
-            isWindowLayout ? "flex flex-col gap-3.5 px-5 pb-4 pt-5" : "flex flex-col gap-4 px-7 py-5"
+            "no-scrollbar flex flex-col gap-4",
+            isWindowLayout && "gap-3.5 px-5"
           )}
         >
           <div className={cn(isWindowLayout && "shrink-0")}>
@@ -271,9 +266,9 @@ export function TodoCreateFormPanel({
             <TodoSubtaskDraftList items={subtasks} onChange={onSubtasksChange} />
           )}
           {bodyExtra}
-        </div>
+        </DialogContent>
 
-        <DialogFooter className="mx-0 mb-0 flex w-full shrink-0 flex-row items-center gap-3 rounded-none border-t border-border/60 bg-foreground/[0.018] px-7 py-4 sm:space-x-0">
+        <DialogFooter className={cn("sm:justify-between", isWindowLayout && "px-5")}>
           <MoreSettingsDialog
             tags={tags}
             tagSuggestions={tagSuggestions}
@@ -576,16 +571,16 @@ function MoreSettingsDialog({
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen} modal="trap-focus">
-        <DialogContent
+        <DialogPanel
           showOverlay={false}
-          className="todo-create-dialog max-h-[min(520px,85vh)] max-w-[440px] gap-0 overflow-hidden rounded-xl border-border/80 p-0"
+          className="todo-create-dialog max-h-[min(520px,85vh)] max-w-[440px]"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
-          <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12">
-            <DialogTitle className="text-[18px] font-bold">更多配置</DialogTitle>
+          <DialogHeader>
+            <DialogTitle>更多配置</DialogTitle>
           </DialogHeader>
 
-          <div className="no-scrollbar max-h-[min(380px,60vh)] space-y-5 overflow-y-auto px-5 py-5">
+          <DialogContent className="no-scrollbar flex max-h-[min(380px,60vh)] flex-col gap-5">
             {showTags && (
               <TodoTagDraftList
                 items={tags}
@@ -595,7 +590,7 @@ function MoreSettingsDialog({
             )}
 
             {showRecurrence && (
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 <p className="text-[12px] font-semibold text-muted-foreground">重复</p>
                 <div className="flex flex-wrap gap-1.5">
                   {recurrenceOptions.map((option) => (
@@ -610,7 +605,7 @@ function MoreSettingsDialog({
                       )}
                       onClick={() => onRecurrenceChange?.(option.value)}
                     >
-                      {option.value !== "none" && <Repeat className="h-3.5 w-3.5" />}
+                      {option.value !== "none" && <Repeat className="size-3.5" />}
                       {option.label}
                     </button>
                   ))}
@@ -619,7 +614,7 @@ function MoreSettingsDialog({
             )}
 
             {showDue && (
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 <p className="text-[12px] font-semibold text-muted-foreground">截止时间</p>
                 <DueDateField
                   value={dueAt}
@@ -636,14 +631,14 @@ function MoreSettingsDialog({
                 />
               </div>
             )}
-          </div>
+          </DialogContent>
 
-          <DialogFooter className="mx-0 mb-0 rounded-none border-t border-border/60 bg-foreground/[0.018] px-5 py-3 sm:justify-end">
+          <DialogFooter>
             <Button type="button" className="h-9 min-w-20" onClick={() => setOpen(false)}>
               完成
             </Button>
           </DialogFooter>
-        </DialogContent>
+        </DialogPanel>
       </Dialog>
     </>
   );

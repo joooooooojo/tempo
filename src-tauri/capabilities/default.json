@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "splashscreen", "eye-care-reminder*", "quick-todo", "pomodoro-float", "shelf-picker", "shelf-backdrop"],
+  "windows": ["main", "eye-care-reminder*", "quick-todo", "pomodoro-float", "shelf-picker", "shelf-backdrop"],
   "permissions": [
     "core:default",
     "core:window:allow-show",

@@ -1198,6 +1198,7 @@ pub fn categorize(name: &str, process: &str) -> &'static str {
         || s.contains("notion")
         || s.contains("teams")
         || s.contains("slack")
+        || s.contains("tempo")
     {
         "办公软件"
     } else if s.contains("steam")
@@ -1217,16 +1218,6 @@ pub fn categorize(name: &str, process: &str) -> &'static str {
 pub fn is_system_host_usage(name: &str, process: &str) -> bool {
     let app_name = name.trim().to_lowercase();
     let process_name = process.trim().to_ascii_lowercase();
-    let app_stem = app_name.strip_suffix(".exe").unwrap_or(&app_name);
-    let process_stem = process_name.strip_suffix(".exe").unwrap_or(&process_name);
-
-    if app_stem == "tempo"
-        || process_stem == "tempo"
-        || process_stem.ends_with("\\tempo")
-        || process_stem.ends_with("/tempo")
-    {
-        return true;
-    }
 
     if app_name.contains("windows 主进程")
         || app_name.contains("host process for windows")

@@ -10,6 +10,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogHeader,
+  DialogPanel,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
@@ -404,10 +405,10 @@ function PomodoroSettingsDialog({
           配置
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-[420px]">
+      <DialogPanel className="max-w-[420px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Settings2 className="h-4 w-4 text-primary" />
+            <Settings2 className="size-4 text-primary" />
             番茄配置
           </DialogTitle>
           <DialogDescription className="sr-only">
@@ -415,7 +416,7 @@ function PomodoroSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
+        <DialogContent className="flex flex-col gap-5">
           <PomodoroSlider
             label="专注时长"
             value={settings.pomodoro_work_minutes}
@@ -452,8 +453,8 @@ function PomodoroSettingsDialog({
             suffix="轮"
             onChange={(value) => onChange({ pomodoro_sessions_per_cycle: value })}
           />
-        </div>
-      </DialogContent>
+        </DialogContent>
+      </DialogPanel>
     </Dialog>
   );
 }

@@ -189,7 +189,10 @@ function SelectContent({
             data-slot="select-content"
             data-align-trigger={searchable ? false : alignItemWithTrigger}
             className={cn(
-              "relative isolate flex w-[calc(var(--anchor-width)+0.75rem)] max-w-[calc(var(--anchor-width)+0.75rem)] min-w-0 origin-(--transform-origin) flex-col overflow-hidden rounded-xl bg-popover text-[13px] text-popover-foreground shadow-lg ring-1 ring-border duration-100 data-[align-trigger=true]:animate-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+              "relative isolate flex w-[calc(var(--anchor-width)+0.75rem)] max-w-[calc(var(--anchor-width)+0.75rem)] min-w-0 origin-(--transform-origin) flex-col overflow-hidden rounded-xl bg-popover text-[13px] text-popover-foreground shadow-lg ring-1 ring-border outline-none duration-150",
+              "data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+              "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
+              "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
               searchable
                 ? "max-h-[min(var(--available-height),20rem)] p-0"
                 : "max-h-[min(var(--available-height),16rem)] overflow-x-hidden overflow-y-auto overscroll-contain p-1.5",

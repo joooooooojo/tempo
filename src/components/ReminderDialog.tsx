@@ -4,6 +4,7 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
+  DialogPanel,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -23,15 +24,17 @@ export function ReminderDialog({ event, onDismiss }: ReminderDialogProps) {
 
   return (
     <Dialog open onOpenChange={(open) => !open && onDismiss()}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogPanel className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>{config.title}</DialogTitle>
-          <DialogDescription>{config.description}</DialogDescription>
         </DialogHeader>
+        <DialogContent className="flex-none py-4">
+          <DialogDescription>{config.description}</DialogDescription>
+        </DialogContent>
         <DialogFooter>
           <Button onClick={onDismiss}>{config.action}</Button>
         </DialogFooter>
-      </DialogContent>
+      </DialogPanel>
     </Dialog>
   );
 }
@@ -51,7 +54,11 @@ function getConfig(event: DialogReminderEvent) {
   }
 }
 
-function getTodoDueConfig(event: { title: string; lead: "1d" | "1h" | "due" | "custom"; hours?: number }) {
+function getTodoDueConfig(event: {
+  title: string;
+  lead: "1d" | "1h" | "due" | "custom";
+  hours?: number;
+}) {
   if (event.lead === "1d") {
     return {
       title: "待办即将截止",
@@ -80,7 +87,10 @@ function getTodoDueConfig(event: { title: string; lead: "1d" | "1h" | "due" | "c
   };
 }
 
-function getPomodoroConfig(event: { phase: "work" | "short_break" | "long_break"; skipped: boolean }) {
+function getPomodoroConfig(event: {
+  phase: "work" | "short_break" | "long_break";
+  skipped: boolean;
+}) {
   switch (event.phase) {
     case "work":
       return {

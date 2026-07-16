@@ -35,10 +35,6 @@ pub fn show_window(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|e| e.to_string())?;
     }
 
-    if let Some(splash) = app.get_webview_window("splashscreen") {
-        crate::logging::debug_if_err(splash.close(), "close splashscreen window");
-    }
-
     Ok(())
 }
 

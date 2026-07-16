@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 let revealed = false;
 
-/** Show the main window; Rust closes the splashscreen window. */
+/** Fade out the in-page boot splash once settings are ready (window already shown after first paint). */
 export async function revealAppShell() {
   if (revealed) return;
   revealed = true;

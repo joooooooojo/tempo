@@ -26,8 +26,9 @@ import { TodoSubtaskList } from "@/components/todos/TodoSubtasks";
 import { TodoTagList } from "@/components/todos/TodoTags";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
+  DialogHeader,
+  DialogPanel,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -817,105 +818,79 @@ export function TodoPage() {
           }
         }}
       >
-        <DialogContent
-          showCloseButton={false}
-          className="todo-create-dialog !flex !h-[66.666vh] !max-h-[calc(100vh-2rem)] !w-[66.666vw] !max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden rounded-xl border-border/80 p-0"
+        <DialogPanel
+          className="todo-create-dialog !h-[66.666vh] !max-h-[calc(100vh-2rem)] !w-[66.666vw] !max-w-[calc(100vw-2rem)]"
         >
           {detailTodo && (
             <>
-              <div className="flex shrink-0 items-center gap-3 border-b border-border/60 px-7 py-4">
+              <DialogHeader>
                 <DialogTitle
-                  className="m-0 flex h-9 min-w-0 flex-1 items-center overflow-hidden p-0 text-left text-[20px] font-bold leading-none"
+                  className="min-w-0 p-0 text-[20px] font-bold"
                   title={detailTodo.title}
                 >
-                  <span className="block w-full truncate leading-none">
+                  <span className="truncate">
                     <HighlightText value={detailTodo.title} query={searchQuery} />
                   </span>
                 </DialogTitle>
-                {!detailTodo.completed && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-9 shrink-0 gap-1.5 border-emerald-500/30 bg-emerald-500/8 px-3 text-[13px] text-emerald-700 shadow-none transition-[background,border-color,box-shadow,color] hover:border-emerald-500/60 hover:bg-emerald-500/28 hover:text-emerald-900 hover:shadow-[0_0_0_3px_rgba(16,185,129,0.18)] dark:border-emerald-400/30 dark:bg-emerald-500/12 dark:text-emerald-300 dark:hover:border-emerald-300/55 dark:hover:bg-emerald-500/35 dark:hover:text-emerald-100 dark:hover:shadow-[0_0_0_3px_rgba(52,211,153,0.2)]"
-                    onClick={() => {
-                      setDetailId(null);
-                      void startFocusForTodo(detailTodo);
-                    }}
-                  >
-                    <Timer className="h-3.5 w-3.5" />
-                    专注
-                  </Button>
-                )}
-                <DialogClose asChild>
-                  <button
-                    type="button"
-                    className="group relative inline-flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground opacity-55 transition-opacity hover:opacity-100 focus:outline-none"
-                    aria-label="关闭"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="absolute left-1/2 top-1/2 h-[26px] w-[26px] -translate-x-1/2 -translate-y-1/2 rounded-md bg-transparent transition-[background,transform] duration-150 group-hover:scale-90 group-hover:bg-foreground/10 dark:group-hover:bg-white/12"
-                    />
-                    <X className="relative h-3.5 w-3.5" />
-                  </button>
-                </DialogClose>
-              </div>
-              <ScrollArea className="min-h-0 flex-1" aria-label="待办详情">
-                <div className="px-7 py-5">
-                  <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                    <span>
-                      {detailTodo.completed && detailTodo.completed_at
-                        ? `完成于 ${formatTodoDate(detailTodo.completed_at)}`
-                        : `创建于 ${formatTodoDate(detailTodo.created_at)}`}
-                    </span>
-                    {detailTodo.due_at && (
-                      <span className={cn("rounded-md px-1.5 py-0.5 font-medium", dueBadgeClass(detailTodo))}>
-                        截止 {formatTodoDate(detailTodo.due_at)}
+              </DialogHeader>
+              <DialogContent className="p-0">
+                <ScrollArea className="h-full" aria-label="待办详情">
+                  <div className="px-6 py-5">
+                    <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>
+                        {detailTodo.completed && detailTodo.completed_at
+                          ? `完成于 ${formatTodoDate(detailTodo.completed_at)}`
+                          : `创建于 ${formatTodoDate(detailTodo.created_at)}`}
                       </span>
-                    )}
-                    {detailTodo.recurrence !== "none" && (
-                      <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
-                        {recurrenceLabel(detailTodo.recurrence)}
-                      </span>
-                    )}
-                    {todoReminderLabel(detailTodo) && (
-                      <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">
-                        {todoReminderLabel(detailTodo)}
-                      </span>
-                    )}
-                  </div>
-
-                  {detailTodo.tags.length > 0 && (
-                    <div className="mb-4">
-                      <TodoTagList tags={detailTodo.tags} />
+                      {detailTodo.due_at && (
+                        <span className={cn("rounded-md px-1.5 py-0.5 font-medium", dueBadgeClass(detailTodo))}>
+                          截止 {formatTodoDate(detailTodo.due_at)}
+                        </span>
+                      )}
+                      {detailTodo.recurrence !== "none" && (
+                        <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+                          {recurrenceLabel(detailTodo.recurrence)}
+                        </span>
+                      )}
+                      {todoReminderLabel(detailTodo) && (
+                        <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">
+                          {todoReminderLabel(detailTodo)}
+                        </span>
+                      )}
                     </div>
-                  )}
 
-                  {detailFocusSummary && detailFocusSummary.sessions_all > 0 && (
-                    <TodoFocusStats summary={detailFocusSummary} />
-                  )}
+                    {detailTodo.tags.length > 0 && (
+                      <div className="mb-4">
+                        <TodoTagList tags={detailTodo.tags} />
+                      </div>
+                    )}
 
-                  <MarkdownPreview
-                    value={detailTodo.content}
-                    onImagePreview={(src, alt) => setPreviewImage({ src, alt })}
-                  />
+                    {detailFocusSummary && detailFocusSummary.sessions_all > 0 && (
+                      <TodoFocusStats summary={detailFocusSummary} />
+                    )}
 
-                  <TodoSubtaskList subtasks={detailTodo.subtasks} readOnly />
+                    <MarkdownPreview
+                      value={detailTodo.content}
+                      onImagePreview={(src, alt) => setPreviewImage({ src, alt })}
+                    />
 
-                  <TodoImages
-                    images={detailTodo.images}
-                    onPreview={(image) => setPreviewImage({ src: image.data_url, alt: detailTodo.title })}
-                  />
-                  <TodoNotes
-                    notes={detailTodo.notes}
-                    searchQuery={searchQuery}
-                    onPreview={(image) => setPreviewImage({ src: image.data_url, alt: detailTodo.title })}
-                  />
-                </div>
-              </ScrollArea>
+                    <TodoSubtaskList subtasks={detailTodo.subtasks} readOnly />
+
+                    <TodoImages
+                      images={detailTodo.images}
+                      onPreview={(image) => setPreviewImage({ src: image.data_url, alt: detailTodo.title })}
+                    />
+                    <TodoNotes
+                      notes={detailTodo.notes}
+                      searchQuery={searchQuery}
+                      onPreview={(image) => setPreviewImage({ src: image.data_url, alt: detailTodo.title })}
+                    />
+                  </div>
+                </ScrollArea>
+              </DialogContent>
             </>
           )}
-        </DialogContent>
+        </DialogPanel>
       </Dialog>
 
       <ImagePreviewDialog

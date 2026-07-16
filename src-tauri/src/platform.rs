@@ -216,33 +216,12 @@ pub fn get_foreground_app() -> Option<ForegroundApp> {
     }
 }
 
-fn is_ignored_foreground_app(name: &str, process: &str, bundle_id: Option<&str>) -> bool {
+fn is_ignored_foreground_app(name: &str, process: &str, _bundle_id: Option<&str>) -> bool {
     let lower = format!("{} {}", name, process).to_lowercase();
-    if lower.contains("lockapp")
+    lower.contains("lockapp")
         || lower.contains("lock screen")
         || lower.contains("screen saver")
         || lower.contains("screensaver")
-    {
-        return true;
-    }
-
-    let name_lower = name.trim().to_lowercase();
-    let process_lower = process.trim().to_ascii_lowercase();
-    let name_stem = name_lower.strip_suffix(".exe").unwrap_or(&name_lower);
-    let process_stem = process_lower.strip_suffix(".exe").unwrap_or(&process_lower);
-    if name_stem == "tempo"
-        || process_stem == "tempo"
-        || process_stem.ends_with("\\tempo")
-        || process_stem.ends_with("/tempo")
-    {
-        return true;
-    }
-
-    if bundle_id == Some("com.zekun.tempo") {
-        return true;
-    }
-
-    false
 }
 
 #[cfg(target_os = "macos")]

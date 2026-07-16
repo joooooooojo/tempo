@@ -10,7 +10,7 @@ fn app(name: &str, process_name: &str) -> ForegroundApp {
 }
 
 #[test]
-fn resolve_clipboard_source_uses_current_non_tempo_app() {
+fn resolve_clipboard_source_uses_current_app() {
     let (name, process) = resolve_clipboard_source(
         Some(app("Code", "Code.exe")),
         Some("Fallback"),
@@ -22,15 +22,15 @@ fn resolve_clipboard_source_uses_current_non_tempo_app() {
 }
 
 #[test]
-fn resolve_clipboard_source_falls_back_for_tempo_and_system_sources() {
+fn resolve_clipboard_source_attributes_tempo_and_falls_back_for_system_sources() {
     let (name, process) = resolve_clipboard_source(
         Some(app("Tempo", "tempo.exe")),
         Some("Browser"),
         Some("browser.exe"),
     );
 
-    assert_eq!(name.as_deref(), Some("Browser"));
-    assert_eq!(process.as_deref(), Some("browser.exe"));
+    assert_eq!(name.as_deref(), Some("Tempo"));
+    assert_eq!(process.as_deref(), Some("tempo.exe"));
 
     let (name, process) = resolve_clipboard_source(
         Some(app("SnippingTool", "SnippingTool.exe")),
