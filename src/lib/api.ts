@@ -29,7 +29,8 @@ export interface TodoImageInput {
 export const api = {
   getDailyReport: (date?: string) =>
     invoke<DailyReport>("get_daily_report", { date }),
-  getWeeklyReport: () => invoke<WeeklyReport>("get_weekly_report"),
+  getWeeklyReport: (endDate?: string) =>
+    invoke<WeeklyReport>("get_weekly_report", { endDate }),
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Partial<Settings>) =>
     invoke<void>("update_settings", { settings }),

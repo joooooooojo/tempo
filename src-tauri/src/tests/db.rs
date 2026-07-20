@@ -1,4 +1,8 @@
-use crate::db::{add_screen_time, get_daily_total, init_db, load_settings, MAX_HOURLY_SECONDS};
+use crate::db::{
+    add_screen_time, get_daily_total, init_db, load_settings, save_settings, set_setting,
+    DEFAULT_CLIPBOARD_PICKER_SHORTCUT, DEFAULT_QUICK_TODO_SHORTCUT,
+    DEFAULT_SNIPPET_PICKER_SHORTCUT, MAX_HOURLY_SECONDS,
+};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +27,15 @@ fn init_db_creates_schema_and_is_idempotent() {
         let conn = init_db(&path).expect("init db");
         let settings = load_settings(&conn);
         assert_eq!(settings.clipboard_max_entries, 200);
+        assert_eq!(settings.shortcut_quick_todo, DEFAULT_QUICK_TODO_SHORTCUT);
+        assert_eq!(
+            settings.shortcut_clipboard_picker,
+            DEFAULT_CLIPBOARD_PICKER_SHORTCUT
+        );
+        assert_eq!(
+            settings.shortcut_snippet_picker,
+            DEFAULT_SNIPPET_PICKER_SHORTCUT
+        );
     }
     {
         let conn = init_db(&path).expect("init db again");
@@ -34,6 +47,36 @@ fn init_db_creates_schema_and_is_idempotent() {
             )
             .expect("query sqlite schema");
         assert_eq!(count, 1);
+    }
+
+    if let Some(parent) = path.parent() {
+        drop(std::fs::remove_dir_all(parent));
+    }
+}
+
+#[test]
+fn shortcut_settings_migrate_old_defaults_and_preserve_empty_bindings() {
+    let path = temp_db_path("shortcut-settings");
+    {
+        let conn = init_db(&path).expect("init db");
+        set_setting(&conn, "shortcut_quick_todo", "F2");
+        set_setting(&conn, "shortcut_clipboard_picker", "F4");
+        set_setting(&conn, "shortcut_snippet_picker", "F5");
+
+        let mut settings = load_settings(&conn);
+        assert_eq!(settings.shortcut_quick_todo, DEFAULT_QUICK_TODO_SHORTCUT);
+        assert_eq!(
+            settings.shortcut_clipboard_picker,
+            DEFAULT_CLIPBOARD_PICKER_SHORTCUT
+        );
+        assert_eq!(
+            settings.shortcut_snippet_picker,
+            DEFAULT_SNIPPET_PICKER_SHORTCUT
+        );
+
+        settings.shortcut_quick_todo.clear();
+        save_settings(&conn, &settings);
+        assert_eq!(load_settings(&conn).shortcut_quick_todo, "");
     }
 
     if let Some(parent) = path.parent() {

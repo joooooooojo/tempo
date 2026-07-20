@@ -1,14 +1,26 @@
-import { useEffect, useState } from "react";
+import {
+  memo,
+  startTransition,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { addDays, format, isToday, isYesterday, parseISO } from "date-fns";
+import { zhCN } from "date-fns/locale";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppIcon } from "@/components/AppIcon";
 import { TrackingStatus } from "@/components/TrackingStatus";
 import { api } from "@/lib/api";
 import { formatDuration, formatDurationShort } from "@/lib/utils";
-import type { DailyReport, WeeklyReport } from "@/types";
+import type { AppUsage, DailyReport, WeeklyReport } from "@/types";
 
 const ACCENT_DEEP = "#10b981";
 const AXIS = "#6b7f78";
@@ -16,83 +28,80 @@ const GRID = "rgba(42, 84, 70, 0.1)";
 const HOUR_AXIS_TICKS = [0, 900, 1800, 2700, 3600];
 
 export function ReportsPage() {
+  const prefersReducedMotion = usePrefersReducedMotion();
   const [activeTab, setActiveTab] = useState<"daily" | "weekly">("daily");
+  const [selectedDate, setSelectedDate] = useState(getTodayKey);
+  const [selectedWeekEndDate, setSelectedWeekEndDate] = useState(getTodayKey);
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
-  const [iconsReady, setIconsReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
-      api.getDailyReport()
+      api.getDailyReport(selectedDate)
         .then((report) => {
-          if (!cancelled) setDaily(report);
+          if (!cancelled) startTransition(() => setDaily(report));
         })
         .catch(console.error);
     };
 
     refresh();
-    const timer = window.setInterval(refresh, 60_000);
+    const timer = selectedDate === getTodayKey()
+      ? window.setInterval(refresh, 60_000)
+      : null;
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== null) window.clearInterval(timer);
     };
-  }, []);
+  }, [selectedDate]);
 
   useEffect(() => {
     if (activeTab !== "weekly") return;
 
     let cancelled = false;
     const refresh = () => {
-      api.getWeeklyReport()
+      api.getWeeklyReport(selectedWeekEndDate)
         .then((report) => {
-          if (!cancelled) setWeekly(report);
+          if (!cancelled) startTransition(() => setWeekly(report));
         })
         .catch(console.error);
     };
 
     refresh();
-    const timer = window.setInterval(refresh, 60_000);
+    const timer = selectedWeekEndDate === getTodayKey()
+      ? window.setInterval(refresh, 60_000)
+      : null;
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== null) window.clearInterval(timer);
     };
-  }, [activeTab]);
+  }, [activeTab, selectedWeekEndDate]);
 
-  const reportIconKey = activeTab === "daily"
-    ? daily && `daily:${daily.date}:${daily.top_apps.length}`
-    : weekly && `weekly:${weekly.days[0]?.date ?? ""}:${weekly.days[weekly.days.length - 1]?.date ?? ""}:${weekly.top_apps.length}`;
+  const todayKey = getTodayKey();
+  const isViewingToday = selectedDate >= todayKey;
+  const isViewingCurrentWeek = selectedWeekEndDate >= todayKey;
 
-  useEffect(() => {
-    if (!reportIconKey) {
-      setIconsReady(false);
-      return;
-    }
-
-    setIconsReady(false);
-    const timer = window.setTimeout(() => setIconsReady(true), 180);
-    return () => window.clearTimeout(timer);
-  }, [reportIconKey]);
-
-  const appIconUrl = (url?: string | null) => (iconsReady ? url : null);
-
-  const hourlyChart = daily?.hourly.map((h) => ({
+  const hourlyChart = useMemo(() => daily?.hourly.map((h) => ({
     hour: h.hour,
     label: `${String(h.hour).padStart(2, "0")}:00`,
     seconds: h.seconds,
     isPeak: h.seconds > 0 && h.hour === daily.peak_hour,
-  })) ?? [];
-  const weeklyChart = weekly?.days.map((d) => ({
+  })) ?? [], [daily]);
+  const weeklyChart = useMemo(() => weekly?.days.map((d, slot) => ({
+    slot,
     date: d.date.slice(5),
     label: d.date.slice(5),
     seconds: d.seconds,
     isOverLimit: d.is_over_limit,
-  })) ?? [];
-  const weeklyPeak = weeklyChart.reduce(
+  })) ?? [], [weekly]);
+  const weeklyPeak = useMemo(() => weeklyChart.reduce(
     (peak, day) => (day.seconds > peak.seconds ? day : peak),
     { date: "", label: "", seconds: 0, isOverLimit: false }
+  ), [weeklyChart]);
+  const weeklyAxis = useMemo(
+    () => getWeeklyAxis(weeklyChart.map((day) => day.seconds)),
+    [weeklyChart]
   );
-  const weeklyAxis = getWeeklyAxis(weeklyChart.map((day) => day.seconds));
 
   return (
     <div>
@@ -109,10 +118,21 @@ export function ReportsPage() {
           {!daily ? <EmptyState /> : (
             <div className="space-y-4">
               <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-0">
-                  <CardTitle>每小时趋势</CardTitle>
+                <CardHeader className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 pb-0 max-[640px]:grid-cols-[auto_1fr]">
+                  <CardTitle className="justify-self-start">每小时趋势</CardTitle>
+                  <ReportPeriodNavigation
+                    label={formatReportDate(selectedDate)}
+                    dateTime={selectedDate}
+                    groupLabel="日报日期切换"
+                    previousLabel="前一天"
+                    nextLabel="后一天"
+                    nextDisabledLabel="已是今天"
+                    nextDisabled={isViewingToday}
+                    onPrevious={() => setSelectedDate((date) => shiftDate(date, -1))}
+                    onNext={() => setSelectedDate((date) => shiftDate(date, 1))}
+                  />
                   {daily.peak_seconds > 0 && (
-                    <span className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                    <span className="justify-self-end rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary max-[640px]:col-start-2 max-[640px]:row-start-1">
                       峰值 {String(daily.peak_hour).padStart(2, "0")}:00 · {formatDurationShort(daily.peak_seconds)}
                     </span>
                   )}
@@ -160,8 +180,9 @@ export function ReportsPage() {
                           <Bar
                             dataKey="seconds"
                             radius={[5, 5, 3, 3]}
-                            animationBegin={80}
-                            animationDuration={720}
+                            isAnimationActive={!prefersReducedMotion}
+                            animationBegin={0}
+                            animationDuration={420}
                             animationEasing="ease-out"
                           >
                             {hourlyChart.map((entry) => (
@@ -178,28 +199,7 @@ export function ReportsPage() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader className="pb-0"><CardTitle>应用排名</CardTitle></CardHeader>
-                <CardContent className="p-0 pt-2">
-                  {daily.top_apps.length === 0 ? <div className="px-4 pb-4"><EmptyState /></div> : (
-                    daily.top_apps.map((app, i) => (
-                      <div key={app.app_name} className="list-row">
-                        <span className="flex min-w-0 items-center gap-3 text-[13px]">
-                          <span className="w-5 text-[11px] font-bold text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
-                          <AppIcon
-                            name={app.app_name}
-                            iconDataUrl={appIconUrl(app.icon_data_url)}
-                            size="sm"
-                            fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
-                          />
-                          <span className="truncate">{app.app_name}</span>
-                        </span>
-                        <span className="stat-value shrink-0 text-[13px] font-semibold text-primary">{formatDurationShort(app.seconds)}</span>
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
+              <AppRankingCard apps={daily.top_apps} periodKey={daily.date} />
             </div>
           )}
         </TabsContent>
@@ -208,10 +208,21 @@ export function ReportsPage() {
           {!weekly ? <EmptyState /> : (
             <div className="space-y-4">
               <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-0">
-                  <CardTitle>7 日对比</CardTitle>
+                <CardHeader className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 pb-0 max-[640px]:grid-cols-[auto_1fr]">
+                  <CardTitle className="justify-self-start">7 日对比</CardTitle>
+                  <ReportPeriodNavigation
+                    label={formatWeekRange(selectedWeekEndDate)}
+                    dateTime={selectedWeekEndDate}
+                    groupLabel="周报日期切换"
+                    previousLabel="前 7 天"
+                    nextLabel="后 7 天"
+                    nextDisabledLabel="已是当前周期"
+                    nextDisabled={isViewingCurrentWeek}
+                    onPrevious={() => setSelectedWeekEndDate((date) => shiftDate(date, -7))}
+                    onNext={() => setSelectedWeekEndDate((date) => shiftDate(date, 7))}
+                  />
                   {weeklyPeak.seconds > 0 && (
-                    <span className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                    <span className="justify-self-end rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary max-[640px]:col-start-2 max-[640px]:row-start-1">
                       峰值 {weeklyPeak.label} · {formatDurationShort(weeklyPeak.seconds)}
                     </span>
                   )}
@@ -251,13 +262,14 @@ export function ReportsPage() {
                             <Bar
                               dataKey="seconds"
                               radius={[5, 5, 3, 3]}
-                              animationBegin={80}
-                              animationDuration={720}
+                              isAnimationActive={!prefersReducedMotion}
+                              animationBegin={0}
+                              animationDuration={420}
                               animationEasing="ease-out"
                             >
                               {weeklyChart.map((entry) => (
                                 <Cell
-                                  key={entry.date}
+                                  key={entry.slot}
                                   fill={entry.seconds === 0 ? "transparent" : entry.date === weeklyPeak.date ? "url(#weekBarPeak)" : "url(#weekBar)"}
                                 />
                               ))}
@@ -279,28 +291,10 @@ export function ReportsPage() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader className="pb-0"><CardTitle>应用排名</CardTitle></CardHeader>
-                <CardContent className="p-0 pt-2">
-                  {weekly.top_apps.length === 0 ? <div className="px-4 pb-4"><EmptyState /></div> : (
-                    weekly.top_apps.map((app, i) => (
-                      <div key={app.app_name} className="list-row">
-                        <span className="flex min-w-0 items-center gap-3 text-[13px]">
-                          <span className="w-5 text-[11px] font-bold text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
-                          <AppIcon
-                            name={app.app_name}
-                            iconDataUrl={appIconUrl(app.icon_data_url)}
-                            size="sm"
-                            fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
-                          />
-                          <span className="truncate">{app.app_name}</span>
-                        </span>
-                        <span className="stat-value shrink-0 text-[13px] font-semibold text-primary">{formatDurationShort(app.seconds)}</span>
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
+              <AppRankingCard
+                apps={weekly.top_apps}
+                periodKey={`${weekly.days[0]?.date ?? ""}:${weekly.days[weekly.days.length - 1]?.date ?? ""}`}
+              />
             </div>
           )}
         </TabsContent>
@@ -308,6 +302,170 @@ export function ReportsPage() {
     </div>
   );
 }
+
+interface ReportPeriodNavigationProps {
+  label: string;
+  dateTime: string;
+  groupLabel: string;
+  previousLabel: string;
+  nextLabel: string;
+  nextDisabledLabel: string;
+  nextDisabled: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}
+
+function ReportPeriodNavigation({
+  label,
+  dateTime,
+  groupLabel,
+  previousLabel,
+  nextLabel,
+  nextDisabledLabel,
+  nextDisabled,
+  onPrevious,
+  onNext,
+}: ReportPeriodNavigationProps) {
+  return (
+    <div
+      className="flex items-center gap-1 justify-self-center rounded-lg border border-border/70 bg-muted/45 p-0.5 max-[640px]:col-span-2 max-[640px]:col-start-1 max-[640px]:row-start-2"
+      role="group"
+      aria-label={groupLabel}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`查看${previousLabel}`}
+        title={previousLabel}
+        onClick={onPrevious}
+      >
+        <ChevronLeft />
+      </Button>
+      <time
+        dateTime={dateTime}
+        className="w-[132px] text-center text-[12px] font-semibold tabular-nums text-foreground"
+        aria-live="polite"
+      >
+        {label}
+      </time>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`查看${nextLabel}`}
+        title={nextDisabled ? nextDisabledLabel : nextLabel}
+        disabled={nextDisabled}
+        onClick={onNext}
+      >
+        <ChevronRight />
+      </Button>
+    </div>
+  );
+}
+
+interface AppRankingCardProps {
+  apps: AppUsage[];
+  periodKey: string;
+}
+
+const AppRankingCard = memo(function AppRankingCard({
+  apps,
+  periodKey,
+}: AppRankingCardProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const previousPositionsRef = useRef<Map<string, DOMRect>>(new Map());
+  const previousPeriodRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    const rows = Array.from(content.querySelectorAll<HTMLElement>("[data-app-key]"));
+    const nextPositions = new Map(
+      rows.map((row) => [row.dataset.appKey ?? "", row.getBoundingClientRect()])
+    );
+    const shouldAnimate = previousPeriodRef.current !== null
+      && previousPeriodRef.current !== periodKey
+      && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const animations: Animation[] = [];
+
+    if (shouldAnimate) {
+      rows.forEach((row, index) => {
+        const appKey = row.dataset.appKey ?? "";
+        const previousRect = previousPositionsRef.current.get(appKey);
+        const nextRect = nextPositions.get(appKey);
+        const delay = Math.min(index * 22, 110);
+
+        if (previousRect && nextRect) {
+          const deltaX = previousRect.left - nextRect.left;
+          const deltaY = previousRect.top - nextRect.top;
+
+          if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+            animations.push(row.animate(
+              [
+                { transform: `translate(${deltaX}px, ${deltaY}px)` },
+                { transform: "translate(0, 0)" },
+              ],
+              {
+                duration: 420,
+                delay,
+                easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+              }
+            ));
+          }
+          return;
+        }
+
+        animations.push(row.animate(
+          [
+            { opacity: 0, transform: "translateY(8px) scale(0.985)" },
+            { opacity: 1, transform: "translateY(0) scale(1)" },
+          ],
+          {
+            duration: 300,
+            delay,
+            easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          }
+        ));
+      });
+    }
+
+    previousPositionsRef.current = nextPositions;
+    previousPeriodRef.current = periodKey;
+
+    return () => animations.forEach((animation) => animation.cancel());
+  }, [apps, periodKey]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-0"><CardTitle>应用排名</CardTitle></CardHeader>
+      <CardContent ref={contentRef} className="p-0 pt-2">
+        {apps.length === 0 ? <div className="px-4 pb-4"><EmptyState /></div> : (
+          apps.map((app, index) => (
+            <div key={app.app_name} data-app-key={app.app_name} className="list-row">
+              <span className="flex min-w-0 items-center gap-3 text-[13px]">
+                <span className="w-5 text-[11px] font-bold text-muted-foreground">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <AppIcon
+                  name={app.app_name}
+                  iconDataUrl={app.icon_data_url}
+                  size="sm"
+                  fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
+                />
+                <span className="truncate">{app.app_name}</span>
+              </span>
+              <span className="stat-value shrink-0 text-[13px] font-semibold text-primary">
+                {formatDurationShort(app.seconds)}
+              </span>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+});
 
 interface DurationTooltipProps {
   active?: boolean;
@@ -369,6 +527,61 @@ function formatWeeklyAxisTick(seconds: number, axisMax: number) {
   if (axisMax <= 3600) return formatHourAxisTick(seconds);
   if (seconds <= 0) return "0h";
   return `${Math.round(seconds / 3600)}h`;
+}
+
+function getTodayKey() {
+  return format(new Date(), "yyyy-MM-dd");
+}
+
+function shiftDate(date: string, amount: number) {
+  return format(addDays(parseISO(date), amount), "yyyy-MM-dd");
+}
+
+function formatReportDate(date: string) {
+  const parsedDate = parseISO(date);
+  const monthAndDay = format(parsedDate, "M月d日", { locale: zhCN });
+
+  if (isToday(parsedDate)) return `今天 · ${monthAndDay}`;
+  if (isYesterday(parsedDate)) return `昨天 · ${monthAndDay}`;
+  if (parsedDate.getFullYear() !== new Date().getFullYear()) {
+    return format(parsedDate, "yyyy/MM/dd");
+  }
+
+  return `${monthAndDay} · ${format(parsedDate, "EEE", { locale: zhCN })}`;
+}
+
+function formatWeekRange(endDate: string) {
+  const end = parseISO(endDate);
+  const start = addDays(end, -6);
+
+  if (start.getFullYear() !== end.getFullYear()) {
+    return `${format(start, "yyyy/M/d")}–${format(end, "yyyy/M/d")}`;
+  }
+  if (end.getFullYear() !== new Date().getFullYear()) {
+    return `${format(start, "yyyy/M/d")}–${format(end, "M/d")}`;
+  }
+  if (start.getMonth() === end.getMonth()) {
+    return `${format(start, "M月d日")}–${format(end, "d日")}`;
+  }
+
+  return `${format(start, "M月d日")}–${format(end, "M月d日")}`;
+}
+
+function usePrefersReducedMotion() {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
+    typeof window !== "undefined"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handleChange = () => setPrefersReducedMotion(mediaQuery.matches);
+
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  return prefersReducedMotion;
 }
 
 function EmptyState() {

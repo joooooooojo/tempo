@@ -58,7 +58,7 @@ export function formatShortcutLabel(shortcut: string): string {
 }
 
 export const DEFAULT_SHORTCUTS = {
-  shortcut_quick_todo: "F2",
-  shortcut_clipboard_picker: "F4",
-  shortcut_snippet_picker: "F5",
+  shortcut_quick_todo: "Control+Shift+T",
+  shortcut_clipboard_picker: "Control+Shift+V",
+  shortcut_snippet_picker: "Control+Shift+S",
 } as const;

@@ -202,6 +202,9 @@ pub fn hide_shelf_picker_window(app: &AppHandle) -> tauri::Result<()> {
     SHELF_VISIBLE_TAB.store(SHELF_TAB_NONE, Ordering::Relaxed);
     #[cfg(target_os = "windows")]
     SHELF_OUTSIDE_CLOSE_TOKEN.fetch_add(1, Ordering::Relaxed);
+    if let Err(error) = crate::unregister_shelf_escape_shortcut(app) {
+        tracing::warn!(error = %error, "failed to unregister shelf Escape shortcut");
+    }
     Ok(())
 }
 
@@ -351,6 +354,9 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
         start_windows_shelf_outside_click_watcher(app, &window);
     }
     on_shelf_picker_shown(app, &window, tab);
+    if let Err(error) = crate::register_shelf_escape_shortcut(app) {
+        tracing::warn!(error = %error, "failed to register shelf Escape shortcut");
+    }
     emit_to_debug(app, SHELF_PICKER_LABEL, "shelf-picker:open", &payload);
     Ok(())
 }

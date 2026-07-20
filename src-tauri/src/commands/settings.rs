@@ -12,6 +12,72 @@ use super::markdown::{
     markdown_image_reference, markdown_image_sources, markdown_image_url_for_path,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShortcutSetting {
+    QuickTodo,
+    ClipboardPicker,
+    SnippetPicker,
+}
+
+const SHORTCUT_SETTINGS: [(ShortcutSetting, &str); 3] = [
+    (ShortcutSetting::QuickTodo, "shortcut_quick_todo"),
+    (
+        ShortcutSetting::ClipboardPicker,
+        "shortcut_clipboard_picker",
+    ),
+    (ShortcutSetting::SnippetPicker, "shortcut_snippet_picker"),
+];
+
+fn shortcut_value(settings: &Settings, shortcut: ShortcutSetting) -> &str {
+    match shortcut {
+        ShortcutSetting::QuickTodo => &settings.shortcut_quick_todo,
+        ShortcutSetting::ClipboardPicker => &settings.shortcut_clipboard_picker,
+        ShortcutSetting::SnippetPicker => &settings.shortcut_snippet_picker,
+    }
+}
+
+fn set_shortcut_value(settings: &mut Settings, shortcut: ShortcutSetting, value: String) {
+    match shortcut {
+        ShortcutSetting::QuickTodo => settings.shortcut_quick_todo = value,
+        ShortcutSetting::ClipboardPicker => settings.shortcut_clipboard_picker = value,
+        ShortcutSetting::SnippetPicker => settings.shortcut_snippet_picker = value,
+    }
+}
+
+pub(crate) fn apply_shortcut_updates(current: &mut Settings, updates: &serde_json::Value) -> bool {
+    let mut changed = false;
+
+    for (shortcut, key) in SHORTCUT_SETTINGS {
+        let Some(value) = updates.get(key).and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let value = value.trim().to_string();
+        let normalized = (!value.is_empty()).then(|| crate::normalize_shortcut_key(&value));
+
+        if let Some(normalized) = normalized {
+            for (other_shortcut, _) in SHORTCUT_SETTINGS {
+                if other_shortcut == shortcut {
+                    continue;
+                }
+                let other_value = shortcut_value(current, other_shortcut);
+                if !other_value.is_empty()
+                    && crate::normalize_shortcut_key(other_value) == normalized
+                {
+                    set_shortcut_value(current, other_shortcut, String::new());
+                    changed = true;
+                }
+            }
+        }
+
+        if shortcut_value(current, shortcut) != value {
+            set_shortcut_value(current, shortcut, value);
+            changed = true;
+        }
+    }
+
+    changed
+}
+
 #[tauri::command]
 pub fn get_settings(app: AppHandle, state: tauri::State<AppState>) -> Settings {
     let conn = state.db.lock();
@@ -154,34 +220,7 @@ pub fn update_settings(
         })
         .unwrap_or(false);
 
-    let mut shortcuts_changed = false;
-    if let Some(v) = settings
-        .get("shortcut_quick_todo")
-        .and_then(|v| v.as_str())
-    {
-        if current.shortcut_quick_todo != v {
-            current.shortcut_quick_todo = v.into();
-            shortcuts_changed = true;
-        }
-    }
-    if let Some(v) = settings
-        .get("shortcut_clipboard_picker")
-        .and_then(|v| v.as_str())
-    {
-        if current.shortcut_clipboard_picker != v {
-            current.shortcut_clipboard_picker = v.into();
-            shortcuts_changed = true;
-        }
-    }
-    if let Some(v) = settings
-        .get("shortcut_snippet_picker")
-        .and_then(|v| v.as_str())
-    {
-        if current.shortcut_snippet_picker != v {
-            current.shortcut_snippet_picker = v.into();
-            shortcuts_changed = true;
-        }
-    }
+    let shortcuts_changed = apply_shortcut_updates(&mut current, &settings);
 
     let mut mcp_changed = false;
     if let Some(v) = settings.get("mcp_enabled").and_then(|v| v.as_bool()) {

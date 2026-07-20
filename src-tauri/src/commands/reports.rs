@@ -2,7 +2,7 @@ use crate::db::{
     get_daily_total, today_str, AppState, AppUsage, DailyReport, HourlyData, WeeklyDay,
     WeeklyReport, MAX_DAILY_SECONDS, MAX_HOURLY_SECONDS,
 };
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use rusqlite::{params, Connection, Error as SqliteError};
 
 pub(crate) const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
@@ -78,10 +78,11 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
 }
 
 #[tauri::command]
-pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
+pub fn get_weekly_report(state: tauri::State<AppState>, end_date: Option<String>) -> WeeklyReport {
     let today = Local::now().date_naive();
-    let today_text = today.format("%Y-%m-%d").to_string();
-    let start_text = (today - chrono::Duration::days(6))
+    let end_date = resolve_week_end_date(end_date.as_deref(), today);
+    let end_text = end_date.format("%Y-%m-%d").to_string();
+    let start_text = (end_date - chrono::Duration::days(6))
         .format("%Y-%m-%d")
         .to_string();
     let (mut days, average, mut top_apps) = {
@@ -90,7 +91,7 @@ pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
         let mut total = 0i64;
 
         for i in (0..7).rev() {
-            let d = today - chrono::Duration::days(i);
+            let d = end_date - chrono::Duration::days(i);
             let ds = d.format("%Y-%m-%d").to_string();
             let secs = get_daily_total(&conn, &ds);
             total += secs;
@@ -104,7 +105,7 @@ pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
         (
             days,
             total / 7,
-            weekly_top_apps(&conn, &start_text, &today_text),
+            weekly_top_apps(&conn, &start_text, &end_text),
         )
     };
 
@@ -118,6 +119,13 @@ pub fn get_weekly_report(state: tauri::State<AppState>) -> WeeklyReport {
         daily_limit_seconds: DAILY_RECOMMENDED_LIMIT_SECONDS,
         top_apps,
     }
+}
+
+fn resolve_week_end_date(value: Option<&str>, today: NaiveDate) -> NaiveDate {
+    value
+        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+        .map(|date| date.min(today))
+        .unwrap_or(today)
 }
 
 fn weekly_top_apps(conn: &Connection, start_date: &str, end_date: &str) -> Vec<AppUsage> {
@@ -186,4 +194,21 @@ pub fn get_known_apps(state: tauri::State<AppState>) -> Vec<AppUsage> {
     };
     hydrate_app_icons(&mut apps);
     apps
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_week_end_date;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn week_end_date_keeps_history_and_rejects_invalid_or_future_dates() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 20).expect("valid date");
+        let history = NaiveDate::from_ymd_opt(2026, 7, 13).expect("valid date");
+
+        assert_eq!(resolve_week_end_date(Some("2026-07-13"), today), history);
+        assert_eq!(resolve_week_end_date(Some("2026-07-27"), today), today);
+        assert_eq!(resolve_week_end_date(Some("not-a-date"), today), today);
+        assert_eq!(resolve_week_end_date(None, today), today);
+    }
 }

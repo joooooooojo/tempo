@@ -40,6 +40,18 @@ const THEME_OPTIONS: Array<{ value: Settings["theme"]; label: string }> = [
   { value: "dark", label: "深色" },
 ];
 
+const SHORTCUT_SETTING_KEYS = [
+  "shortcut_quick_todo",
+  "shortcut_clipboard_picker",
+  "shortcut_snippet_picker",
+] as const;
+
+type ShortcutSettingKey = (typeof SHORTCUT_SETTING_KEYS)[number];
+
+function normalizeShortcutForComparison(shortcut: string) {
+  return shortcut.trim().toLowerCase().replace(/^ctrl\+/, "control+");
+}
+
 function clipboardRetentionIndex(value: Settings["clipboard_history_retention"]) {
   const index = CLIPBOARD_RETENTION_OPTIONS.findIndex((option) => option.value === value);
   return index >= 0 ? index : 0;
@@ -108,6 +120,24 @@ export function SettingsPage() {
     }
   };
 
+  const updateShortcut = (key: ShortcutSettingKey, value: string) => {
+    if (!settings) return Promise.resolve();
+
+    const patch: Partial<Settings> = { [key]: value };
+    const normalized = normalizeShortcutForComparison(value);
+    if (normalized) {
+      for (const otherKey of SHORTCUT_SETTING_KEYS) {
+        if (
+          otherKey !== key &&
+          normalizeShortcutForComparison(settings[otherKey]) === normalized
+        ) {
+          patch[otherKey] = "";
+        }
+      }
+    }
+    return update(patch);
+  };
+
   const changeStorageDir = async () => {
     if (migratingStorage) return;
 
@@ -143,7 +173,8 @@ export function SettingsPage() {
       }
       toast.success(`v${result.version} 已下载，点击「安装更新」完成更新`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      console.error("check update failed", error);
+      toast.error("检查更新失败，请检查网络后重试");
     }
   };
 
@@ -163,7 +194,8 @@ export function SettingsPage() {
         toast.success("已是最新版本");
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      console.error("install update failed", error);
+      toast.error("安装更新失败，请稍后重试");
     }
   };
 
@@ -373,29 +405,19 @@ export function SettingsPage() {
             label="快速添加待办"
             desc="全局唤起快速待办输入"
             value={settings.shortcut_quick_todo}
-            otherValues={[settings.shortcut_clipboard_picker, settings.shortcut_snippet_picker]}
-            onChange={(value) => update({ shortcut_quick_todo: value })}
-            onReset={() => update({ shortcut_quick_todo: DEFAULT_SHORTCUTS.shortcut_quick_todo })}
+            onChange={(value) => updateShortcut("shortcut_quick_todo", value)}
           />
           <ShortcutRow
             label="剪贴板货架"
             desc="全局打开剪贴板历史"
             value={settings.shortcut_clipboard_picker}
-            otherValues={[settings.shortcut_quick_todo, settings.shortcut_snippet_picker]}
-            onChange={(value) => update({ shortcut_clipboard_picker: value })}
-            onReset={() =>
-              update({ shortcut_clipboard_picker: DEFAULT_SHORTCUTS.shortcut_clipboard_picker })
-            }
+            onChange={(value) => updateShortcut("shortcut_clipboard_picker", value)}
           />
           <ShortcutRow
             label="快捷短语货架"
             desc="全局打开快捷短语"
             value={settings.shortcut_snippet_picker}
-            otherValues={[settings.shortcut_quick_todo, settings.shortcut_clipboard_picker]}
-            onChange={(value) => update({ shortcut_snippet_picker: value })}
-            onReset={() =>
-              update({ shortcut_snippet_picker: DEFAULT_SHORTCUTS.shortcut_snippet_picker })
-            }
+            onChange={(value) => updateShortcut("shortcut_snippet_picker", value)}
           />
           <div className="border-t border-border/50 px-4 py-3">
             <Button
@@ -672,16 +694,12 @@ function ShortcutRow({
   label,
   desc,
   value,
-  otherValues,
   onChange,
-  onReset,
 }: {
   label: string;
   desc?: string;
   value: string;
-  otherValues: string[];
   onChange: (value: string) => Promise<void>;
-  onReset: () => Promise<void>;
 }) {
   const [recording, setRecording] = useState(false);
 
@@ -700,20 +718,13 @@ function ShortcutRow({
       const next = shortcutFromKeyboardEvent(event);
       if (!next) return;
 
-      const normalized = next.toLowerCase();
-      if (otherValues.some((item) => item.trim().toLowerCase() === normalized)) {
-        toast.error("与其他快捷键冲突");
-        setRecording(false);
-        return;
-      }
-
       setRecording(false);
       void onChange(next).catch(() => undefined);
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [recording, otherValues, onChange]);
+  }, [recording, onChange]);
 
   return (
     <div className="list-row">
@@ -729,10 +740,7 @@ function ShortcutRow({
           className="min-w-28 font-mono text-[12px]"
           onClick={() => setRecording((prev) => !prev)}
         >
-          {recording ? "按下快捷键…" : formatShortcutLabel(value)}
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => void onReset()}>
-          默认
+          {recording ? "按下快捷键" : value ? formatShortcutLabel(value) : "未设置"}
         </Button>
       </div>
     </div>

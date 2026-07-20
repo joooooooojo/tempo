@@ -10,11 +10,11 @@ mod clipboard_db;
 mod clipboard_images;
 mod clipboard_watcher;
 mod logging;
-mod mcp;
 #[cfg(target_os = "macos")]
 mod macos_dock;
 #[cfg(target_os = "macos")]
 mod macos_overlay_panel;
+mod mcp;
 mod todo_images;
 mod tray_menu;
 
@@ -25,7 +25,10 @@ mod tests;
 #[macro_use]
 extern crate objc;
 
-use db::{db_path, init_db, AppState, PomodoroRuntime, TrackerState};
+use db::{
+    db_path, init_db, AppState, PomodoroRuntime, TrackerState, DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
+    DEFAULT_QUICK_TODO_SHORTCUT, DEFAULT_SNIPPET_PICKER_SHORTCUT,
+};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -38,9 +41,6 @@ const ACTION_QUICK_TODO: &str = "quick_todo";
 const ACTION_CLIPBOARD_PICKER: &str = "clipboard_picker";
 const ACTION_SNIPPET_PICKER: &str = "snippet_picker";
 const ACTION_SHELF_ESCAPE: &str = "shelf_escape";
-const DEFAULT_QUICK_TODO_SHORTCUT: &str = "F2";
-const DEFAULT_CLIPBOARD_PICKER_SHORTCUT: &str = "F4";
-const DEFAULT_SNIPPET_PICKER_SHORTCUT: &str = "F5";
 const SHELF_ESCAPE_SHORTCUT: &str = "Escape";
 
 #[derive(Default)]
@@ -105,58 +105,59 @@ pub fn run() {
                     let id = shortcut.to_string();
                     let dispatch_id = id.clone();
                     let app = app.clone();
-                    let app_for_main = app.clone();
-                    if let Err(error) = app.run_on_main_thread(move || {
-                        let action = app_for_main
-                            .try_state::<Mutex<ShortcutActionMap>>()
-                            .and_then(|map| {
-                                map.lock()
-                                    .by_shortcut
-                                    .get(&normalize_shortcut_key(&dispatch_id))
-                                    .copied()
-                            });
-                        let result = match action {
-                            Some(ACTION_QUICK_TODO) => {
-                                auxiliary_windows::show_quick_todo(&app_for_main)
-                            }
-                            Some(ACTION_CLIPBOARD_PICKER) => {
-                                auxiliary_windows::show_clipboard_picker_window(&app_for_main)
-                            }
-                            Some(ACTION_SNIPPET_PICKER) => {
-                                auxiliary_windows::show_snippet_picker_window(&app_for_main)
-                            }
-                            Some(ACTION_SHELF_ESCAPE) => {
-                                if auxiliary_windows::is_shelf_picker_visible(&app_for_main) {
-                                    auxiliary_windows::hide_shelf_picker_window(&app_for_main)
-                                } else {
-                                    Ok(())
+                    // The plugin holds its shortcut registry lock while invoking this handler.
+                    // Dispatch from another thread so dynamic Esc registration can only run after
+                    // the handler returns and releases that lock.
+                    logging::spawn_named("tempo-global-shortcut-dispatch", move || {
+                        let app_for_main = app.clone();
+                        if let Err(error) = app.run_on_main_thread(move || {
+                            let action = app_for_main
+                                .try_state::<Mutex<ShortcutActionMap>>()
+                                .and_then(|map| {
+                                    map.lock()
+                                        .by_shortcut
+                                        .get(&normalize_shortcut_key(&dispatch_id))
+                                        .copied()
+                                });
+                            let result = match action {
+                                Some(ACTION_QUICK_TODO) => {
+                                    auxiliary_windows::show_quick_todo(&app_for_main)
                                 }
+                                Some(ACTION_CLIPBOARD_PICKER) => {
+                                    auxiliary_windows::show_clipboard_picker_window(&app_for_main)
+                                }
+                                Some(ACTION_SNIPPET_PICKER) => {
+                                    auxiliary_windows::show_snippet_picker_window(&app_for_main)
+                                }
+                                Some(ACTION_SHELF_ESCAPE) => {
+                                    auxiliary_windows::hide_shelf_picker_window(&app_for_main)
+                                }
+                                _ => Ok(()),
+                            };
+                            if let Err(error) = result {
+                                tracing::warn!(
+                                    shortcut = %dispatch_id,
+                                    error = %error,
+                                    "global shortcut action failed"
+                                );
+                                logging::debug_if_err(
+                                    app_for_main.emit(
+                                        "toast",
+                                        serde_json::json!({
+                                            "message": format!("快捷键窗口打开失败: {error}")
+                                        }),
+                                    ),
+                                    "emit shortcut failure toast",
+                                );
                             }
-                            _ => Ok(()),
-                        };
-                        if let Err(error) = result {
+                        }) {
                             tracing::warn!(
-                                shortcut = %dispatch_id,
+                                shortcut = %id,
                                 error = %error,
-                                "global shortcut action failed"
-                            );
-                            logging::debug_if_err(
-                                app_for_main.emit(
-                                    "toast",
-                                    serde_json::json!({
-                                        "message": format!("快捷键窗口打开失败: {error}")
-                                    }),
-                                ),
-                                "emit shortcut failure toast",
+                                "failed to dispatch global shortcut action to main thread"
                             );
                         }
-                    }) {
-                        tracing::warn!(
-                            shortcut = %id,
-                            error = %error,
-                            "failed to dispatch global shortcut action to main thread"
-                        );
-                    }
+                    });
                 })
                 .build(),
         )
@@ -401,7 +402,8 @@ pub fn run() {
             app.run(|app_handle, event| {
                 #[cfg(target_os = "macos")]
                 if let tauri::RunEvent::Reopen {
-                    has_visible_windows, ..
+                    has_visible_windows,
+                    ..
                 } = &event
                 {
                     // Dock icon click while minimized to tray: restore main window.
@@ -422,26 +424,68 @@ pub fn run() {
     }
 }
 
-fn normalize_shortcut_key(value: &str) -> String {
+pub(crate) fn normalize_shortcut_key(value: &str) -> String {
     match Shortcut::from_str(value.trim()) {
         Ok(shortcut) => shortcut.to_string(),
         Err(_) => value.trim().to_string(),
     }
 }
 
-fn validate_shortcut_binding(value: &str) -> Result<String, String> {
+fn validate_shortcut_binding(value: &str) -> Result<Option<String>, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err("快捷键不能为空".into());
+        return Ok(None);
     }
     if trimmed.eq_ignore_ascii_case(SHELF_ESCAPE_SHORTCUT) {
         return Err("Esc 已用于关闭货架，请选择其他快捷键".into());
     }
     let shortcut = Shortcut::from_str(trimmed).map_err(|error| format!("无效快捷键: {error}"))?;
-    Ok(shortcut.to_string())
+    Ok(Some(shortcut.to_string()))
 }
 
-/// Apply and register the three configurable shortcuts (+ fixed Esc).
+pub(crate) fn register_shelf_escape_shortcut(app: &tauri::AppHandle) -> Result<(), String> {
+    let normalized = normalize_shortcut_key(SHELF_ESCAPE_SHORTCUT);
+    let map_state = app
+        .try_state::<Mutex<ShortcutActionMap>>()
+        .ok_or_else(|| "shortcut state is not initialized".to_string())?;
+    let mut map = map_state.lock();
+
+    if map.by_shortcut.get(&normalized).copied() == Some(ACTION_SHELF_ESCAPE) {
+        return Ok(());
+    }
+    if map.by_shortcut.contains_key(&normalized) {
+        return Err("Escape is already assigned to another action".into());
+    }
+
+    app.global_shortcut()
+        .register(SHELF_ESCAPE_SHORTCUT)
+        .map_err(|error| format!("failed to register {SHELF_ESCAPE_SHORTCUT}: {error}"))?;
+    map.registered.push(SHELF_ESCAPE_SHORTCUT.to_string());
+    map.by_shortcut.insert(normalized, ACTION_SHELF_ESCAPE);
+    Ok(())
+}
+
+pub(crate) fn unregister_shelf_escape_shortcut(app: &tauri::AppHandle) -> Result<(), String> {
+    let normalized = normalize_shortcut_key(SHELF_ESCAPE_SHORTCUT);
+    let map_state = app
+        .try_state::<Mutex<ShortcutActionMap>>()
+        .ok_or_else(|| "shortcut state is not initialized".to_string())?;
+    let mut map = map_state.lock();
+
+    if map.by_shortcut.get(&normalized).copied() != Some(ACTION_SHELF_ESCAPE) {
+        return Ok(());
+    }
+
+    app.global_shortcut()
+        .unregister(SHELF_ESCAPE_SHORTCUT)
+        .map_err(|error| format!("failed to unregister {SHELF_ESCAPE_SHORTCUT}: {error}"))?;
+    map.registered
+        .retain(|raw| normalize_shortcut_key(raw) != normalized);
+    map.by_shortcut.remove(&normalized);
+    Ok(())
+}
+
+/// Apply the configurable shortcuts, preserving Esc only while the shelf is visible.
 pub fn apply_global_shortcuts(
     app: &tauri::AppHandle,
     quick_todo: &str,
@@ -456,7 +500,10 @@ pub fn apply_global_shortcuts(
     let clipboard_norm = validate_shortcut_binding(clipboard_raw)?;
     let snippet_norm = validate_shortcut_binding(snippet_raw)?;
 
-    if quick_norm == clipboard_norm || quick_norm == snippet_norm || clipboard_norm == snippet_norm {
+    if shortcut_bindings_conflict(&quick_norm, &clipboard_norm)
+        || shortcut_bindings_conflict(&quick_norm, &snippet_norm)
+        || shortcut_bindings_conflict(&clipboard_norm, &snippet_norm)
+    {
         return Err("快捷键不能重复".into());
     }
 
@@ -479,13 +526,23 @@ pub fn apply_global_shortcuts(
         map.by_shortcut.clear();
     }
 
-    let escape_norm = normalize_shortcut_key(SHELF_ESCAPE_SHORTCUT);
-    let bindings: Vec<(&str, String, &'static str)> = vec![
-        (quick_raw, quick_norm, ACTION_QUICK_TODO),
-        (clipboard_raw, clipboard_norm, ACTION_CLIPBOARD_PICKER),
-        (snippet_raw, snippet_norm, ACTION_SNIPPET_PICKER),
-        (SHELF_ESCAPE_SHORTCUT, escape_norm, ACTION_SHELF_ESCAPE),
-    ];
+    let mut bindings: Vec<(&str, String, &'static str)> = Vec::new();
+    if let Some(normalized) = quick_norm {
+        bindings.push((quick_raw, normalized, ACTION_QUICK_TODO));
+    }
+    if let Some(normalized) = clipboard_norm {
+        bindings.push((clipboard_raw, normalized, ACTION_CLIPBOARD_PICKER));
+    }
+    if let Some(normalized) = snippet_norm {
+        bindings.push((snippet_raw, normalized, ACTION_SNIPPET_PICKER));
+    }
+    if auxiliary_windows::is_shelf_picker_visible(app) {
+        bindings.push((
+            SHELF_ESCAPE_SHORTCUT,
+            normalize_shortcut_key(SHELF_ESCAPE_SHORTCUT),
+            ACTION_SHELF_ESCAPE,
+        ));
+    }
 
     let mut registered: Vec<String> = Vec::new();
     let mut by_shortcut: HashMap<String, &'static str> = HashMap::new();
@@ -522,7 +579,10 @@ pub fn validate_shortcut_bindings(
     let quick = validate_shortcut_binding(quick_todo)?;
     let clipboard = validate_shortcut_binding(clipboard_picker)?;
     let snippet = validate_shortcut_binding(snippet_picker)?;
-    if quick == clipboard || quick == snippet || clipboard == snippet {
+    if shortcut_bindings_conflict(&quick, &clipboard)
+        || shortcut_bindings_conflict(&quick, &snippet)
+        || shortcut_bindings_conflict(&clipboard, &snippet)
+    {
         return Err("快捷键不能重复".into());
     }
     Ok((
@@ -530,4 +590,8 @@ pub fn validate_shortcut_bindings(
         clipboard_picker.trim().to_string(),
         snippet_picker.trim().to_string(),
     ))
+}
+
+fn shortcut_bindings_conflict(left: &Option<String>, right: &Option<String>) -> bool {
+    matches!((left, right), (Some(left), Some(right)) if left == right)
 }

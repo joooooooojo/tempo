@@ -161,6 +161,10 @@ pub struct Settings {
     pub mcp_token: String,
 }
 
+pub const DEFAULT_QUICK_TODO_SHORTCUT: &str = "Control+Shift+T";
+pub const DEFAULT_CLIPBOARD_PICKER_SHORTCUT: &str = "Control+Shift+V";
+pub const DEFAULT_SNIPPET_PICKER_SHORTCUT: &str = "Control+Shift+S";
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -186,9 +190,9 @@ impl Default for Settings {
             clipboard_paste_mode: "clipboard".into(),
             clipboard_plain_text_only: true,
             clipboard_history_retention: "days".into(),
-            shortcut_quick_todo: "F2".into(),
-            shortcut_clipboard_picker: "F4".into(),
-            shortcut_snippet_picker: "F5".into(),
+            shortcut_quick_todo: DEFAULT_QUICK_TODO_SHORTCUT.into(),
+            shortcut_clipboard_picker: DEFAULT_CLIPBOARD_PICKER_SHORTCUT.into(),
+            shortcut_snippet_picker: DEFAULT_SNIPPET_PICKER_SHORTCUT.into(),
             storage_dir: String::new(),
             mcp_enabled: true,
             mcp_port: DEFAULT_MCP_PORT,
@@ -817,6 +821,39 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) {
 }
 
 pub fn load_settings(conn: &Connection) -> Settings {
+    let mut shortcut_quick_todo = normalize_shortcut_setting(&get_setting(
+        conn,
+        "shortcut_quick_todo",
+        DEFAULT_QUICK_TODO_SHORTCUT,
+    ));
+    let mut shortcut_clipboard_picker = normalize_shortcut_setting(&get_setting(
+        conn,
+        "shortcut_clipboard_picker",
+        DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
+    ));
+    let mut shortcut_snippet_picker = normalize_shortcut_setting(&get_setting(
+        conn,
+        "shortcut_snippet_picker",
+        DEFAULT_SNIPPET_PICKER_SHORTCUT,
+    ));
+
+    // Upgrade the previous default trio while leaving customized bindings untouched.
+    if shortcut_quick_todo.eq_ignore_ascii_case("F2")
+        && shortcut_clipboard_picker.eq_ignore_ascii_case("F4")
+        && shortcut_snippet_picker.eq_ignore_ascii_case("F5")
+    {
+        shortcut_quick_todo = DEFAULT_QUICK_TODO_SHORTCUT.into();
+        shortcut_clipboard_picker = DEFAULT_CLIPBOARD_PICKER_SHORTCUT.into();
+        shortcut_snippet_picker = DEFAULT_SNIPPET_PICKER_SHORTCUT.into();
+        set_setting(conn, "shortcut_quick_todo", &shortcut_quick_todo);
+        set_setting(
+            conn,
+            "shortcut_clipboard_picker",
+            &shortcut_clipboard_picker,
+        );
+        set_setting(conn, "shortcut_snippet_picker", &shortcut_snippet_picker);
+    }
+
     Settings {
         autostart: get_setting(conn, "autostart", "false") == "true",
         sound_enabled: get_setting(conn, "sound_enabled", "false") == "true",
@@ -895,18 +932,9 @@ pub fn load_settings(conn: &Connection) -> Settings {
             "clipboard_history_retention",
             "days",
         )),
-        shortcut_quick_todo: normalize_shortcut_setting(
-            &get_setting(conn, "shortcut_quick_todo", "F2"),
-            "F2",
-        ),
-        shortcut_clipboard_picker: normalize_shortcut_setting(
-            &get_setting(conn, "shortcut_clipboard_picker", "F4"),
-            "F4",
-        ),
-        shortcut_snippet_picker: normalize_shortcut_setting(
-            &get_setting(conn, "shortcut_snippet_picker", "F5"),
-            "F5",
-        ),
+        shortcut_quick_todo,
+        shortcut_clipboard_picker,
+        shortcut_snippet_picker,
         storage_dir: String::new(),
         mcp_enabled: get_setting(conn, "mcp_enabled", "true") == "true",
         mcp_port: normalize_mcp_port(
@@ -1033,12 +1061,8 @@ pub fn normalize_clipboard_paste_mode(value: &str) -> String {
     }
 }
 
-pub fn normalize_shortcut_setting(value: &str, fallback: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return fallback.to_string();
-    }
-    trimmed.to_string()
+pub fn normalize_shortcut_setting(value: &str) -> String {
+    value.trim().to_string()
 }
 
 pub fn normalize_clipboard_history_retention(value: &str) -> String {
