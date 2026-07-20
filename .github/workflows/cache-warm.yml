@@ -17,18 +17,20 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Job name must stay "publish" to match release.yml — rust-cache includes the
-  # job name in the cache key, so a mismatch defeats restore fallback.
+  # Keep the same matrix shape as Release so each platform warms its shared cache.
   publish:
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
+            cache_key: macos-aarch64
             args: --target aarch64-apple-darwin
           - platform: macos-latest
+            cache_key: macos-x86_64
             args: --target x86_64-apple-darwin
           - platform: windows-latest
+            cache_key: windows
             args: ""
 
     runs-on: ${{ matrix.platform }}
@@ -54,8 +56,9 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ./src-tauri -> target
-          # Distinguish the two macOS targets that share the same runner OS.
-          key: ${{ matrix.args }}
+          # Must match Release so tag runs can restore this default-branch cache.
+          shared-key: ${{ matrix.cache_key }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           cache-on-failure: true
 
       - run: pnpm install --frozen-lockfile
