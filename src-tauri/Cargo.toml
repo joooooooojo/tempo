@@ -1,6 +1,6 @@
 [package]
 name = "tempo"
-version = "1.1.1"
+version = "1.1.2"
 description = "Tempo - screen time and focus timer"
 authors = ["zekun"]
 edition = "2021"
