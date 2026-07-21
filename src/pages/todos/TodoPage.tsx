@@ -23,7 +23,7 @@ import { ImagePreviewDialog, type ImagePreviewSource } from "@/components/ImageP
 import { MarkdownPreview } from "@/components/todos/MarkdownPreview";
 import { TodoCreateDialog } from "@/components/todos/TodoCreateDialog";
 import { TodoSubtaskList } from "@/components/todos/TodoSubtasks";
-import { TodoTagList } from "@/components/todos/TodoTags";
+import { TagList } from "@/components/ui/tag";
 import {
   Dialog,
   DialogContent,
@@ -861,7 +861,7 @@ export function TodoPage() {
 
                     {detailTodo.tags.length > 0 && (
                       <div className="mb-4">
-                        <TodoTagList tags={detailTodo.tags} />
+                        <TagList items={detailTodo.tags} />
                       </div>
                     )}
 
@@ -1119,7 +1119,7 @@ export function TodoPage() {
                               </span>
                             )}
                             {todo.tags.length > 0 && (
-                              <TodoTagList tags={todo.tags} compact />
+                              <TagList items={todo.tags} size="sm" />
                             )}
                             {todo.notes.length > 0 && (
                               <span className="rounded-md bg-foreground/5 px-1.5 py-0.5 font-medium">

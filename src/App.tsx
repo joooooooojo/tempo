@@ -19,6 +19,7 @@ import { QuickTodoPage } from "@/pages/QuickTodoPage";
 import { ToolsLayout } from "@/pages/tools/ToolsLayout";
 import { ToolsHubPage } from "@/pages/tools/ToolsHubPage";
 import { HostsPage } from "@/pages/tools/hosts/HostsPage";
+import { PortManagerPage } from "@/pages/tools/port-manager/PortManagerPage";
 import { TranslatePage } from "@/pages/tools/translate/TranslatePage";
 import { api } from "@/lib/api";
 import { revealAppShell } from "@/lib/boot";
@@ -145,6 +146,7 @@ function MainApp() {
             <Route path="tools" element={<ToolsLayout />}>
               <Route index element={<ToolsHubPage />} />
               <Route path="hosts" element={<HostsPage />} />
+              <Route path="port-manager" element={<PortManagerPage />} />
               <Route path="translate" element={<TranslatePage />} />
             </Route>
             <Route path="settings" element={<SettingsPage />} />

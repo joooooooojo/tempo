@@ -350,6 +350,8 @@ pub fn run() {
             commands::pomodoro_cmds::pause_pomodoro,
             commands::pomodoro_cmds::stop_pomodoro,
             commands::pomodoro_cmds::skip_pomodoro_phase,
+            commands::port_manager::get_port_records,
+            commands::port_manager::terminate_port_process,
             auxiliary_windows::show_eye_care_overlay,
             auxiliary_windows::hide_eye_care_overlay,
             auxiliary_windows::sync_eye_care_window_background,

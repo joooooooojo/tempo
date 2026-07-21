@@ -219,6 +219,29 @@ export interface HostsBackup {
   preview: string;
 }
 
+export interface PortRecord {
+  protocol: "TCP" | "UDP";
+  localAddress: string;
+  localPort: number;
+  remoteAddress?: string | null;
+  remotePort?: number | null;
+  state: string;
+  pid?: number | null;
+  processName: string;
+  processPath?: string | null;
+  processStartedAt?: number | null;
+  canTerminate: boolean;
+  protectedReason?: string | null;
+}
+
+export interface TerminatePortProcessRequest {
+  protocol: PortRecord["protocol"];
+  localAddress: string;
+  localPort: number;
+  pid: number;
+  processStartedAt: number;
+}
+
 export type TranslateProviderId = "youdao" | "baidu" | "tencent" | "google" | "deepl";
 
 export interface TranslateProviderCreds {

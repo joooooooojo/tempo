@@ -7,6 +7,7 @@ import type {
   HostsBackup,
   HostsProfile,
   HostsWorkspace,
+  PortRecord,
   PomodoroState,
   Settings,
   Snippet,
@@ -16,6 +17,7 @@ import type {
   TodoItem,
   TodoNote,
   TodoRecurrence,
+  TerminatePortProcessRequest,
   TranslateConfig,
   TranslateResult,
   WeeklyReport,
@@ -208,6 +210,12 @@ export const api = {
   flushDns: () => invoke<void>("flush_dns"),
   listHostsBackups: () => invoke<HostsBackup[]>("list_hosts_backups"),
   restoreHostsBackup: (id: string) => invoke<HostsWorkspace>("restore_hosts_backup", { id }),
+
+  // Tools - Port manager
+  getPortRecords: (includeActiveConnections = false) =>
+    invoke<PortRecord[]>("get_port_records", { includeActiveConnections }),
+  terminatePortProcess: (request: TerminatePortProcessRequest) =>
+    invoke<void>("terminate_port_process", { request }),
 
   // Tools — Translate
   getTranslateConfig: () => invoke<TranslateConfig>("get_translate_config"),

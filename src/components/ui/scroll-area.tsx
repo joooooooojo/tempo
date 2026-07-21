@@ -7,6 +7,7 @@ type ScrollAreaProps = ScrollAreaPrimitive.Root.Props & {
   scrollbarClassName?: string
   scrollbars?: "vertical" | "horizontal" | "both" | "none"
   thumbClassName?: string
+  verticalScrollbarInsetTop?: React.CSSProperties["top"]
   viewportClassName?: string
   viewportRef?: React.Ref<HTMLDivElement>
 }
@@ -17,6 +18,7 @@ function ScrollArea({
   scrollbarClassName,
   scrollbars = "vertical",
   thumbClassName,
+  verticalScrollbarInsetTop,
   viewportClassName,
   viewportRef,
   ...props
@@ -38,7 +40,15 @@ function ScrollArea({
         {children}
       </ScrollAreaPrimitive.Viewport>
       {(scrollbars === "vertical" || scrollbars === "both") && (
-        <ScrollBar className={scrollbarClassName} thumbClassName={thumbClassName} />
+        <ScrollBar
+          className={scrollbarClassName}
+          thumbClassName={thumbClassName}
+          style={
+            verticalScrollbarInsetTop === undefined
+              ? undefined
+              : { top: verticalScrollbarInsetTop }
+          }
+        />
       )}
       {(scrollbars === "horizontal" || scrollbars === "both") && (
         <ScrollBar
@@ -64,7 +74,7 @@ function ScrollBar({
       data-orientation={orientation}
       orientation={orientation}
       className={cn(
-        "flex touch-none p-px transition-opacity select-none data-horizontal:h-2.5 data-horizontal:flex-col data-vertical:h-full data-vertical:w-2.5",
+        "flex touch-none p-px transition-opacity select-none data-horizontal:h-2.5 data-horizontal:flex-col data-vertical:w-2.5",
         "pointer-events-none opacity-0 duration-150",
         "data-hovering:pointer-events-auto data-hovering:opacity-100",
         "data-scrolling:pointer-events-auto data-scrolling:opacity-100 data-scrolling:duration-0",

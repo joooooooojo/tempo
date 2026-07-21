@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, FileCode2, Languages } from "lucide-react";
+import { ArrowRight, Cable, FileCode2, Languages } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const tools = [
@@ -14,6 +14,12 @@ const tools = [
     title: "聚合翻译",
     description: "对接有道、百度、腾讯、Google、DeepL 等翻译 API，密钥由你本地配置。",
     icon: Languages,
+  },
+  {
+    to: "/tools/port-manager",
+    title: "端口管理器",
+    description: "查看本机 TCP / UDP 端口与占用进程，并快速释放端口。",
+    icon: Cable,
   },
 ] as const;
 

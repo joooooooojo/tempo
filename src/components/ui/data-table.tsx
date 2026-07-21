@@ -12,6 +12,7 @@ type DataTableProps = React.HTMLAttributes<HTMLDivElement> & {
   loadingContent?: React.ReactNode;
   scrollAreaLabel?: string;
   scrollContentClassName?: string;
+  verticalScrollbarInsetTop?: React.CSSProperties["top"];
 };
 
 function DataTable({
@@ -24,6 +25,7 @@ function DataTable({
   loadingContent,
   scrollAreaLabel = "数据表格",
   scrollContentClassName,
+  verticalScrollbarInsetTop,
   ...props
 }: DataTableProps) {
   return (
@@ -44,6 +46,7 @@ function DataTable({
           <ScrollArea
             className="relative min-h-0 flex-1 overflow-hidden"
             scrollbars="both"
+            verticalScrollbarInsetTop={verticalScrollbarInsetTop}
             aria-label={scrollAreaLabel}
           >
             <div className={cn("min-w-full", scrollContentClassName)}>{children}</div>

@@ -28,7 +28,7 @@ import { clipboardHasImages, insertTextAtSelection, markdownImagesFromClipboard 
 import { cn } from "@/lib/utils";
 import type { TodoRecurrence } from "@/types";
 import { TodoSubtaskDraftList } from "@/components/todos/TodoSubtasks";
-import { TodoTagDraftList } from "@/components/todos/TodoTags";
+import { TagDraftList } from "@/components/ui/tag";
 
 export interface DraftTodoImage extends TodoImageInput {
   local_id: string;
@@ -582,7 +582,7 @@ function MoreSettingsDialog({
 
           <DialogContent className="no-scrollbar flex max-h-[min(380px,60vh)] flex-col gap-5">
             {showTags && (
-              <TodoTagDraftList
+              <TagDraftList
                 items={tags}
                 suggestions={tagSuggestions}
                 onChange={onTagsChange!}

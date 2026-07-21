@@ -5,11 +5,15 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Tag, X } from "lucide-react";
+import { Tag as TagIcon, X } from "lucide-react";
 import { getTagHistory, mergeTagSuggestions, recordTag } from "@/lib/tagHistory";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const TAG_PALETTE = [
   "bg-sky-500/12 text-sky-700 ring-sky-500/20 dark:text-sky-300",
@@ -20,7 +24,21 @@ const TAG_PALETTE = [
   "bg-orange-500/12 text-orange-700 ring-orange-500/20 dark:text-orange-300",
 ] as const;
 
+const TAG_SIZE_CLASSES = {
+  sm: "px-1.5 py-0.5 text-[10px]",
+  default: "px-2 py-1 text-[11px]",
+  lg: "px-2 py-1 text-[12px]",
+} as const;
+
+const TAG_ICON_SIZE_CLASSES = {
+  sm: "size-2.5",
+  default: "size-3",
+  lg: "size-3",
+} as const;
+
 const MAX_VISIBLE_OPTIONS = 3;
+
+export type TagSize = keyof typeof TAG_SIZE_CLASSES;
 
 export function tagColorClass(name: string) {
   let hash = 0;
@@ -28,6 +46,87 @@ export function tagColorClass(name: string) {
     hash = (hash + name.charCodeAt(index) * (index + 1)) % TAG_PALETTE.length;
   }
   return TAG_PALETTE[hash];
+}
+
+export type TagProps = {
+  value: string;
+  size?: TagSize;
+  active?: boolean;
+  className?: string;
+  trailing?: ReactNode;
+  onClick?: (value: string, event: MouseEvent<HTMLButtonElement>) => void;
+};
+
+export function Tag({
+  value,
+  size = "default",
+  active = false,
+  className,
+  trailing,
+  onClick,
+}: TagProps) {
+  const classes = cn(
+    "inline-flex items-center gap-1 rounded-md font-medium ring-1 ring-inset transition-colors",
+    TAG_SIZE_CLASSES[size],
+    tagColorClass(value),
+    onClick && "cursor-pointer hover:brightness-95",
+    active && "ring-2 ring-primary/40",
+    className
+  );
+  const content = (
+    <>
+      <TagIcon className={cn(TAG_ICON_SIZE_CLASSES[size], "shrink-0 opacity-70")} />
+      {value}
+      {trailing}
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button type="button" className={classes} onClick={(event) => onClick(value, event)}>
+        {content}
+      </button>
+    );
+  }
+
+  return <span className={classes}>{content}</span>;
+}
+
+export function TagList({
+  items,
+  size = "default",
+  interactive = false,
+  activeItem,
+  onItemClick,
+}: {
+  items: string[];
+  size?: TagSize;
+  interactive?: boolean;
+  activeItem?: string | null;
+  onItemClick?: (item: string) => void;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className={cn("flex flex-wrap", size === "sm" ? "gap-1" : "gap-1.5")}>
+      {items.map((item) => (
+        <Tag
+          key={item}
+          value={item}
+          size={size}
+          active={activeItem?.toLocaleLowerCase() === item.toLocaleLowerCase()}
+          onClick={
+            interactive && onItemClick
+              ? (value, event) => {
+                  event.stopPropagation();
+                  onItemClick(value);
+                }
+              : undefined
+          }
+        />
+      ))}
+    </div>
+  );
 }
 
 function normalizeTagInput(value: string) {
@@ -40,13 +139,23 @@ type MenuPosition = {
   width: number;
 };
 
-export function TodoTagDraftList({
+export function TagDraftList({
   items,
   suggestions = [],
+  label = "标签",
+  inputName = "tag-draft",
+  placeholder = "搜索或输入新标签，回车添加",
+  maxItems = 10,
+  maxLength = 32,
   onChange,
 }: {
   items: string[];
   suggestions?: string[];
+  label?: string;
+  inputName?: string;
+  placeholder?: string;
+  maxItems?: number;
+  maxLength?: number;
   onChange: (items: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -121,8 +230,7 @@ export function TodoTagDraftList({
 
   const addItem = (raw: string) => {
     const next = normalizeTagInput(raw);
-    if (!next) return;
-    if (items.length >= 10) return;
+    if (!next || items.length >= maxItems) return;
     if (items.some((item) => item.toLocaleLowerCase() === next.toLocaleLowerCase())) {
       setDraft("");
       setSuppressMenu(false);
@@ -180,41 +288,40 @@ export function TodoTagDraftList({
   };
 
   return (
-    <div className="space-y-2">
-      <p className="text-[12px] font-semibold text-muted-foreground">标签</p>
+    <div className="flex flex-col gap-2">
+      <Label htmlFor={inputName} className="text-[12px] font-semibold text-muted-foreground">
+        {label}
+      </Label>
       {items.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {items.map((item) => (
-            <span
+            <Tag
               key={item}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium ring-1 ring-inset",
-                tagColorClass(item)
-              )}
-            >
-              <Tag className="h-3 w-3 opacity-70" />
-              {item}
-              <button
-                type="button"
-                className="rounded-sm p-0.5 opacity-70 transition-opacity hover:opacity-100"
-                aria-label={`删除标签 ${item}`}
-                onClick={() => onChange(items.filter((tag) => tag !== item))}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
+              value={item}
+              size="lg"
+              trailing={
+                <button
+                  type="button"
+                  className="rounded-sm p-0.5 opacity-70 transition-opacity hover:opacity-100"
+                  aria-label={`删除标签 ${item}`}
+                  onClick={() => onChange(items.filter((tag) => tag !== item))}
+                >
+                  <X className="size-3" />
+                </button>
+              }
+            />
           ))}
         </div>
       )}
 
-      <input
+      <Input
         ref={inputRef}
+        id={inputName}
         value={draft}
-        maxLength={32}
-        name="tempo-tag-draft"
+        maxLength={maxLength}
+        name={inputName}
         autoComplete="off"
-        placeholder="搜索或输入新标签，回车添加"
-        className="h-9 w-full rounded-lg border border-border/70 bg-[var(--todo-field-bg)] px-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/45 focus:ring-2 focus:ring-primary/20"
+        placeholder={placeholder}
         onChange={(event) => {
           setDraft(event.target.value);
           setSuppressMenu(false);
@@ -251,68 +358,13 @@ export function TodoTagDraftList({
                 }}
                 onMouseEnter={() => setActiveIndex(index)}
               >
-                <Tag className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                <TagIcon className="size-3.5 shrink-0 opacity-60" />
                 <span className="truncate">{item}</span>
               </button>
             ))}
           </div>,
           document.body
         )}
-    </div>
-  );
-}
-
-export function TodoTagList({
-  tags,
-  compact = false,
-  interactive = false,
-  activeTag,
-  onTagClick,
-}: {
-  tags: string[];
-  compact?: boolean;
-  interactive?: boolean;
-  activeTag?: string | null;
-  onTagClick?: (tag: string) => void;
-}) {
-  if (tags.length === 0) return null;
-
-  return (
-    <div className={cn("flex flex-wrap gap-1.5", compact ? "gap-1" : "gap-1.5")}>
-      {tags.map((tag) => {
-        const isActive = activeTag?.toLocaleLowerCase() === tag.toLocaleLowerCase();
-        const className = cn(
-          "inline-flex items-center gap-1 rounded-md font-medium ring-1 ring-inset transition-colors",
-          compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-[11px]",
-          tagColorClass(tag),
-          interactive && "cursor-pointer hover:brightness-95",
-          isActive && "ring-2 ring-primary/40"
-        );
-
-        if (interactive && onTagClick) {
-          return (
-            <button
-              key={tag}
-              type="button"
-              className={className}
-              onClick={(event) => {
-                event.stopPropagation();
-                onTagClick(tag);
-              }}
-            >
-              <Tag className={cn(compact ? "h-2.5 w-2.5" : "h-3 w-3", "opacity-70")} />
-              {tag}
-            </button>
-          );
-        }
-
-        return (
-          <span key={tag} className={className}>
-            <Tag className={cn(compact ? "h-2.5 w-2.5" : "h-3 w-3", "opacity-70")} />
-            {tag}
-          </span>
-        );
-      })}
     </div>
   );
 }
