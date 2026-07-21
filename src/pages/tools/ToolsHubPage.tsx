@@ -20,11 +20,6 @@ const tools = [
 export function ToolsHubPage() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">小工具</h1>
-        <p className="text-[13px] text-muted-foreground">本地实用工具合集，按需使用，不影响核心功能。</p>
-      </header>
-
       <div className="grid gap-3 sm:grid-cols-2">
         {tools.map(({ to, title, description, icon: Icon }) => (
           <Link
