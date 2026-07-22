@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -16,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { useOptionalBuiltinAppNavigation } from "@/apps/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -81,7 +81,7 @@ const filters: Array<{ value: TodoFilter; label: string }> = [
 ];
 
 export function TodoPage() {
-  const navigate = useNavigate();
+  const appNav = useOptionalBuiltinAppNavigation();
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -291,11 +291,11 @@ export function TodoPage() {
       const current = await api.getPomodoroState();
       if (current.status !== "idle") {
         toast.error("已有进行中的番茄钟");
-        navigate("/pomodoro");
+        appNav?.openApp("pomodoro");
         return;
       }
       await api.startPomodoro(todo.id);
-      navigate("/pomodoro");
+      appNav?.openApp("pomodoro");
     } catch (error) {
       console.error(error);
       toast.error(error instanceof Error ? error.message : "无法开始专注");

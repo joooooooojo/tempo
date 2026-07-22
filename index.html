@@ -156,12 +156,12 @@
         var view = new URLSearchParams(location.search).get("view");
         var root = document.documentElement;
 
-        if (view === "quick-todo" || view === "pomodoro-float" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
-          root.style.background = "transparent";
+        if (view === "command-palette" || view === "pomodoro-float" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
+          var isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || "");
+          root.style.background = view === "command-palette" && !isMac ? "#f7f9f8" : "transparent";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           root.classList.toggle("dark", prefersDark);
           if (view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
-            var isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || "");
             root.classList.add("shelf-picker-window");
             root.classList.add(isMac ? "shelf-picker-window--mac" : "shelf-picker-window--css-shadow");
             document.body.style.background = "transparent";
@@ -213,38 +213,19 @@
     </div>
     <div id="root"></div>
     <script>
-      // Show the (initially hidden) main window only after the splash has painted,
-      // so WebView's default white frame is never visible.
+      // Main window stays hidden; entry is the command palette (tray / shortcut).
       (function () {
         var view = new URLSearchParams(location.search).get("view");
         if (view) return;
 
-        var attempts = 0;
-        function showMain() {
-          var tauri = window.__TAURI__;
-          var invoke = tauri && tauri.core && tauri.core.invoke;
-          if (!invoke) {
-            if (attempts++ < 120) window.setTimeout(showMain, 16);
-            return;
+        document.addEventListener("DOMContentLoaded", function () {
+          var splash = document.getElementById("boot-splash");
+          if (splash) {
+            splash.classList.add("is-leaving");
+            window.setTimeout(function () {
+              splash.remove();
+            }, 240);
           }
-
-          try {
-            var dark = document.documentElement.classList.contains("dark");
-            var getCurrent =
-              tauri.webviewWindow && tauri.webviewWindow.getCurrentWebviewWindow;
-            if (getCurrent) {
-              var win = getCurrent();
-              if (win && win.setBackgroundColor) {
-                void win.setBackgroundColor(dark ? "#12151a" : "#f3f8f5");
-              }
-            }
-          } catch (_) {}
-
-          void invoke("show_window");
-        }
-
-        requestAnimationFrame(function () {
-          requestAnimationFrame(showMain);
         });
       })();
     </script>

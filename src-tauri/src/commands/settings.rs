@@ -14,13 +14,13 @@ use super::markdown::{
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShortcutSetting {
-    QuickTodo,
+    CommandPalette,
     ClipboardPicker,
     SnippetPicker,
 }
 
 const SHORTCUT_SETTINGS: [(ShortcutSetting, &str); 3] = [
-    (ShortcutSetting::QuickTodo, "shortcut_quick_todo"),
+    (ShortcutSetting::CommandPalette, "shortcut_command_palette"),
     (
         ShortcutSetting::ClipboardPicker,
         "shortcut_clipboard_picker",
@@ -30,7 +30,7 @@ const SHORTCUT_SETTINGS: [(ShortcutSetting, &str); 3] = [
 
 fn shortcut_value(settings: &Settings, shortcut: ShortcutSetting) -> &str {
     match shortcut {
-        ShortcutSetting::QuickTodo => &settings.shortcut_quick_todo,
+        ShortcutSetting::CommandPalette => &settings.shortcut_command_palette,
         ShortcutSetting::ClipboardPicker => &settings.shortcut_clipboard_picker,
         ShortcutSetting::SnippetPicker => &settings.shortcut_snippet_picker,
     }
@@ -38,7 +38,7 @@ fn shortcut_value(settings: &Settings, shortcut: ShortcutSetting) -> &str {
 
 fn set_shortcut_value(settings: &mut Settings, shortcut: ShortcutSetting, value: String) {
     match shortcut {
-        ShortcutSetting::QuickTodo => settings.shortcut_quick_todo = value,
+        ShortcutSetting::CommandPalette => settings.shortcut_command_palette = value,
         ShortcutSetting::ClipboardPicker => settings.shortcut_clipboard_picker = value,
         ShortcutSetting::SnippetPicker => settings.shortcut_snippet_picker = value,
     }
@@ -245,17 +245,17 @@ pub fn update_settings(
     }
 
     if shortcuts_changed {
-        let (quick, clipboard, snippet) = crate::validate_shortcut_bindings(
-            &current.shortcut_quick_todo,
+        let (palette, clipboard, snippet) = crate::validate_shortcut_bindings(
+            &current.shortcut_command_palette,
             &current.shortcut_clipboard_picker,
             &current.shortcut_snippet_picker,
         )?;
-        current.shortcut_quick_todo = quick;
+        current.shortcut_command_palette = palette;
         current.shortcut_clipboard_picker = clipboard;
         current.shortcut_snippet_picker = snippet;
         crate::apply_global_shortcuts(
             &app,
-            &current.shortcut_quick_todo,
+            &current.shortcut_command_palette,
             &current.shortcut_clipboard_picker,
             &current.shortcut_snippet_picker,
         )?;

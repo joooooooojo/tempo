@@ -1,7 +1,5 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
-  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   CircleStop,
@@ -109,7 +107,6 @@ function recordKey(record: PortRecord, index: number) {
 }
 
 export function PortManagerPage() {
-  const navigate = useNavigate();
   const requestId = useRef(0);
   const inFlightScopes = useRef(new Set<ViewScope>());
   const manualRefreshStartedAt = useRef(new Map<ViewScope, number>());
@@ -303,34 +300,60 @@ export function PortManagerPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 flex-col gap-3 border-b border-border/60 px-4 py-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => navigate("/tools")}
-            aria-label="返回小工具"
-            title="返回小工具"
-          >
-            <ArrowLeft />
-          </Button>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-[15px] font-semibold">端口管理器</h1>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {listeningCount} 个监听端口 · {processCount} 个进程
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="port-manager-auto-refresh" className="text-[12px] text-muted-foreground">
-              自动刷新
-            </Label>
-            <Switch
-              id="port-manager-auto-refresh"
-              checked={autoRefresh}
-              onCheckedChange={setAutoRefresh}
-              aria-label="自动刷新"
-            />
-          </div>
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-3">
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索端口、PID 或进程"
+          aria-label="搜索端口、PID 或进程"
+          className="min-w-52 flex-1 sm:max-w-sm"
+        />
+        <Select
+          items={SCOPE_ITEMS}
+          value={scope}
+          onValueChange={(value) => value && setScope(value as ViewScope)}
+        >
+          <SelectTrigger className="w-28" aria-label="端口范围">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {SCOPE_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select
+          items={PROTOCOL_ITEMS}
+          value={protocol}
+          onValueChange={(value) => value && setProtocol(value as ProtocolFilter)}
+        >
+          <SelectTrigger className="w-28" aria-label="网络协议">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {PROTOCOL_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <div className="ml-auto flex items-center gap-2">
+          <Label htmlFor="port-manager-auto-refresh" className="text-[12px] text-muted-foreground">
+            自动刷新
+          </Label>
+          <Switch
+            id="port-manager-auto-refresh"
+            checked={autoRefresh}
+            onCheckedChange={setAutoRefresh}
+            aria-label="自动刷新"
+          />
           <Button
             variant="outline"
             size="icon-sm"
@@ -341,52 +364,6 @@ export function PortManagerPage() {
           >
             <RefreshCw className={cn(refreshing && "animate-spin")} />
           </Button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索端口、PID 或进程"
-            aria-label="搜索端口、PID 或进程"
-            className="min-w-52 flex-1 sm:max-w-sm"
-          />
-          <Select
-            items={SCOPE_ITEMS}
-            value={scope}
-            onValueChange={(value) => value && setScope(value as ViewScope)}
-          >
-            <SelectTrigger className="w-28" aria-label="端口范围">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {SCOPE_ITEMS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Select
-            items={PROTOCOL_ITEMS}
-            value={protocol}
-            onValueChange={(value) => value && setProtocol(value as ProtocolFilter)}
-          >
-            <SelectTrigger className="w-28" aria-label="网络协议">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {PROTOCOL_ITEMS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
         </div>
       </header>
 
@@ -406,7 +383,9 @@ export function PortManagerPage() {
           verticalScrollbarInsetTop="2.5rem"
           footer={
             <div className="flex items-center justify-between gap-3 border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-              <span>{filteredRecords.length} 条记录</span>
+              <span>
+                {listeningCount} 个监听端口 · {processCount} 个进程
+              </span>
               <div className="flex items-center gap-1">
                 <Button
                   variant="ghost"

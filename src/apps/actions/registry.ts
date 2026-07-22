@@ -1,0 +1,84 @@
+import { BUILTIN_QUICK_ACTIONS } from "@/apps/actions/builtin";
+import type { QuickAction } from "@/apps/types";
+
+export const ACTION_USAGE_PREFIX = "action:";
+
+const actions: QuickAction[] = [...BUILTIN_QUICK_ACTIONS];
+const byId = new Map(actions.map((action) => [action.id, action]));
+
+export function quickActionUsageId(actionId: string) {
+  return `${ACTION_USAGE_PREFIX}${actionId}`;
+}
+
+export function listQuickActions(): QuickAction[] {
+  return actions.slice();
+}
+
+export function getQuickAction(id: string): QuickAction | undefined {
+  return byId.get(id);
+}
+
+export type QuickActionUsageHint = {
+  last_used_at?: string | null;
+  use_count: number;
+};
+
+function usageTimeMs(value: string | null | undefined): number {
+  if (!value) return 0;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * Actions visible for the current search query, sorted by last use (then use count).
+ * Unused actions keep registration order after used ones.
+ */
+export function listVisibleQuickActions(
+  query: string,
+  usageById?: Map<string, QuickActionUsageHint>
+): QuickAction[] {
+  const normalized = query.trim();
+  const visible = listQuickActions().filter((action) => {
+    if (action.requiresQuery !== false && !normalized) return false;
+    return true;
+  });
+
+  if (!usageById || usageById.size === 0) return visible;
+
+  return visible
+    .map((action, index) => ({ action, index }))
+    .sort((left, right) => {
+      const leftUsage = usageById.get(quickActionUsageId(left.action.id));
+      const rightUsage = usageById.get(quickActionUsageId(right.action.id));
+      const leftTime = usageTimeMs(leftUsage?.last_used_at);
+      const rightTime = usageTimeMs(rightUsage?.last_used_at);
+      if (rightTime !== leftTime) return rightTime - leftTime;
+      const leftCount = leftUsage?.use_count ?? 0;
+      const rightCount = rightUsage?.use_count ?? 0;
+      if (rightCount !== leftCount) return rightCount - leftCount;
+      return left.index - right.index;
+    })
+    .map((entry) => entry.action);
+}
+
+/**
+ * Register (or replace) a quick action. Intended for plugins;
+ * built-ins are registered at module load via `BUILTIN_QUICK_ACTIONS`.
+ */
+export function registerQuickAction(action: QuickAction): void {
+  const existingIndex = actions.findIndex((item) => item.id === action.id);
+  if (existingIndex >= 0) {
+    actions[existingIndex] = action;
+  } else {
+    actions.push(action);
+  }
+  byId.set(action.id, action);
+}
+
+export function unregisterQuickAction(id: string): boolean {
+  const index = actions.findIndex((item) => item.id === id);
+  if (index < 0) return false;
+  actions.splice(index, 1);
+  byId.delete(id);
+  return true;
+}

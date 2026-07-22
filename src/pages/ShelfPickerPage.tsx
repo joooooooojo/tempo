@@ -336,8 +336,11 @@ export function ShelfPickerPage() {
 
   const openSnippetsPage = useCallback(async (create = false) => {
     await api.hideShelfPicker();
-    await api.showWindow();
-    await emit(create ? "snippets:create-request" : "snippets:manage-request", {});
+    await api.showCommandPalette();
+    await emit("command-palette:open-app", {
+      appId: "snippets",
+      createSnippet: create,
+    });
   }, []);
 
   const itemCount = tab === "clipboard" ? entries.length : snippets.length;

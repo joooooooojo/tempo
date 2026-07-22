@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
-  ArrowLeft,
   ArrowLeftRight,
   Copy,
   Eye,
@@ -10,6 +8,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { BuiltinAppProps } from "@/apps/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -111,10 +110,9 @@ function emptyConfig(): TranslateConfig {
   };
 }
 
-export function TranslatePage() {
-  const navigate = useNavigate();
+export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
   const [config, setConfig] = useState<TranslateConfig>(emptyConfig);
-  const [source, setSource] = useState("");
+  const [source, setSource] = useState(() => initialTranslateText?.trim() ?? "");
   const [from, setFrom] = useState("auto");
   const [to, setTo] = useState("zh");
   const [provider, setProvider] = useState("youdao");
@@ -138,6 +136,17 @@ export function TranslatePage() {
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, [source]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const el = sourceRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      const end = el.value.length;
+      el.setSelectionRange(end, end);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => {
     const el = resultRef.current;
@@ -497,9 +506,6 @@ export function TranslatePage() {
 
       <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 px-4 py-3">
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => navigate("/tools")}>
-            <ArrowLeft />
-          </Button>
           <Button variant="outline" onClick={openConfig}>
             <Settings2 />
             配置密钥

@@ -18,7 +18,7 @@
 @import "./components/ui.css";
 @import "./components/shelf-card.css";
 @import "./overlays/eye-care.css";
-@import "./overlays/quick-todo.css";
+@import "./overlays/command-palette.css";
 @import "./overlays/pomodoro-float.css";
 @import "./overlays/shelf-picker.css";
 @import "@platform-styles";

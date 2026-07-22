@@ -1,21 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
-
-let revealed = false;
-
-/** Fade out the in-page boot splash once settings are ready (window already shown after first paint). */
-export async function revealAppShell() {
-  if (revealed) return;
-  revealed = true;
-
+/** Fade out the in-page boot splash. Does not show the main window. */
+export function dismissBootSplash() {
   const splash = document.getElementById("boot-splash");
-  if (splash) {
-    splash.classList.add("is-leaving");
-    window.setTimeout(() => splash.remove(), 240);
-  }
+  if (!splash || splash.classList.contains("is-leaving")) return;
+  splash.classList.add("is-leaving");
+  window.setTimeout(() => splash.remove(), 240);
+}
 
-  try {
-    await invoke("show_window");
-  } catch (error) {
-    console.error("Failed to reveal main window", error);
-  }
+/** @deprecated Use dismissBootSplash — main window is no longer revealed on boot. */
+export async function revealAppShell() {
+  dismissBootSplash();
 }

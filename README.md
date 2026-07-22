@@ -20,7 +20,7 @@
 - 久坐护眼提醒、夜间作息提醒
 
 ### 快捷操作
-- **F2** 全局快捷键：快速添加待办
+- **Alt + Space** 全局快捷键（macOS 为 **⌥ + Space**）：打开快捷面板
 - 系统托盘驻留，关闭窗口默认最小化到托盘
 - 本地自动更新
 
@@ -109,7 +109,7 @@ screen-time-app/
 │   │   ├── PomodoroPage.tsx
 │   │   ├── ReportsPage.tsx
 │   │   ├── SettingsPage.tsx
-│   │   └── QuickTodoPage.tsx     # F2 快速待办浮窗
+│   │   └── CommandPalettePage.tsx # 应用搜索与快捷操作面板
 │   └── lib/                      # API 封装、主题、通知等
 └── src-tauri/                    # Rust 后端
     └── src/

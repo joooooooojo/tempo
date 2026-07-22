@@ -3,7 +3,6 @@ use crate::clipboard_db::{
     list_clipboard_entries, set_clipboard_entry_pinned, ClipboardEntry,
 };
 use crate::clipboard_images::{hydrate_clipboard_image_urls, maybe_delete_clipboard_image_file};
-use rusqlite::{Connection, Error as SqliteError};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -16,12 +15,7 @@ use crate::clipboard_watcher::prewarm_clipboard_image_cache;
 use crate::clipboard_watcher::{copy_clipboard_entry_by_id, write_clipboard_text};
 use crate::db::AppState;
 
-#[cfg(not(target_os = "windows"))]
-fn hydrate_clipboard_icons(
-    app: &tauri::AppHandle,
-    _conn: &Connection,
-    entries: &mut [ClipboardEntry],
-) {
+fn hydrate_clipboard_icons(entries: &mut [ClipboardEntry]) {
     for entry in entries.iter_mut() {
         let app_name = entry.source_app.as_deref().unwrap_or("").trim();
         if app_name.is_empty() {
@@ -33,67 +27,7 @@ fn hydrate_clipboard_icons(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(app_name);
         entry.source_icon_data_url =
-            crate::app_icons::resolve_app_icon_protocol_url(app, app_name, process_name);
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn hydrate_clipboard_icons(
-    _app: &tauri::AppHandle,
-    conn: &Connection,
-    entries: &mut [ClipboardEntry],
-) {
-    use std::collections::HashMap;
-
-    let mut icon_cache = HashMap::<(String, String), Option<String>>::new();
-    for entry in entries.iter_mut() {
-        let app_name = entry.source_app.as_deref().unwrap_or("").trim();
-        if app_name.is_empty() {
-            continue;
-        }
-        let process_name = entry
-            .source_process
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(app_name)
-            .trim();
-
-        let cache_key = (
-            app_name.to_ascii_lowercase(),
-            process_name.to_ascii_lowercase(),
-        );
-        let icon_value = icon_cache
-            .entry(cache_key)
-            .or_insert_with(|| lookup_existing_app_icon(conn, app_name, process_name));
-        entry.source_icon_data_url = icon_value
-            .as_deref()
-            .and_then(crate::app_icons::hydrate_app_icon_url);
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn lookup_existing_app_icon(
-    conn: &Connection,
-    app_name: &str,
-    process_name: &str,
-) -> Option<String> {
-    match conn.query_row(
-        "SELECT icon_data_url
-         FROM app_usage
-         WHERE icon_data_url IS NOT NULL
-           AND icon_data_url <> ''
-           AND (app_name = ?1 OR process_name = ?1 OR app_name = ?2 OR process_name = ?2)
-         ORDER BY date DESC
-         LIMIT 1",
-        rusqlite::params![app_name, process_name],
-        |row| row.get::<_, String>(0),
-    ) {
-        Ok(icon) => Some(icon),
-        Err(SqliteError::QueryReturnedNoRows) => None,
-        Err(error) => {
-            tracing::debug!(error = %error, "failed to lookup existing app icon");
-            None
-        }
+            crate::app_icons::AppIconService::global().icon_url(app_name, process_name);
     }
 }
 
@@ -110,7 +44,7 @@ pub fn get_clipboard_history(
     let offset = offset.unwrap_or(0);
     let total = count_clipboard_entries(&conn, query.as_deref());
     let mut entries = list_clipboard_entries(&conn, query.as_deref(), limit, offset);
-    hydrate_clipboard_icons(&app, &conn, &mut entries);
+    hydrate_clipboard_icons(&mut entries);
     hydrate_clipboard_image_urls(&app, &conn, &mut entries);
     drop(conn);
     let image_contents = entries
@@ -165,7 +99,7 @@ pub fn pin_clipboard_history_entry(
     let conn = state.db.lock();
     let mut entry =
         set_clipboard_entry_pinned(&conn, id, pinned).ok_or("记录不存在".to_string())?;
-    hydrate_clipboard_icons(&app, &conn, std::slice::from_mut(&mut entry));
+    hydrate_clipboard_icons(std::slice::from_mut(&mut entry));
     hydrate_clipboard_image_urls(&app, &conn, std::slice::from_mut(&mut entry));
     drop(conn);
     Ok(entry)

@@ -7,6 +7,8 @@ import type {
   HostsBackup,
   HostsProfile,
   HostsWorkspace,
+  LauncherApp,
+  LauncherUsageItem,
   PortRecord,
   PomodoroState,
   Settings,
@@ -112,6 +114,18 @@ export const api = {
   deleteTodo: (id: number) => invoke<void>("delete_todo", { id }),
   restoreTodo: (todo: TodoItem) => invoke<TodoItem>("restore_todo", { todo }),
   getKnownApps: () => invoke<AppUsage[]>("get_known_apps"),
+  getLauncherApps: () => invoke<LauncherApp[]>("get_launcher_apps"),
+  refreshLauncherApps: () => invoke<LauncherApp[]>("refresh_launcher_apps"),
+  launchIndexedApp: (id: string) => invoke<void>("launch_indexed_app", { id }),
+  setLauncherAppPinned: (id: string, pinned: boolean) =>
+    invoke<void>("set_launcher_app_pinned", { id, pinned }),
+  getLauncherUsage: () => invoke<LauncherUsageItem[]>("get_launcher_usage"),
+  recordLauncherUsage: (id: string) => invoke<void>("record_launcher_usage", { id }),
+  setCommandPaletteHeight: (height: number) =>
+    invoke<void>("set_command_palette_height", { height }),
+  setCommandPaletteSize: (width: number | null, height: number) =>
+    invoke<void>("set_command_palette_size", { width, height }),
+  showCommandPalette: () => invoke<void>("show_command_palette_window"),
   exportTodosBackup: (path: string) =>
     invoke<void>("export_todos_backup", { path }),
   importTodosBackup: (path: string) =>

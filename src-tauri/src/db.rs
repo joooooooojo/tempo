@@ -1,6 +1,6 @@
 use chrono::Local;
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, Error as SqliteError};
+use rusqlite::{params, Connection, Error as SqliteError, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -152,7 +152,7 @@ pub struct Settings {
     pub clipboard_paste_mode: String,
     pub clipboard_plain_text_only: bool,
     pub clipboard_history_retention: String,
-    pub shortcut_quick_todo: String,
+    pub shortcut_command_palette: String,
     pub shortcut_clipboard_picker: String,
     pub shortcut_snippet_picker: String,
     pub storage_dir: String,
@@ -161,9 +161,10 @@ pub struct Settings {
     pub mcp_token: String,
 }
 
-pub const DEFAULT_QUICK_TODO_SHORTCUT: &str = "Control+Shift+T";
+pub const DEFAULT_COMMAND_PALETTE_SHORTCUT: &str = "Alt+Space";
 pub const DEFAULT_CLIPBOARD_PICKER_SHORTCUT: &str = "Control+Shift+V";
 pub const DEFAULT_SNIPPET_PICKER_SHORTCUT: &str = "Control+Shift+S";
+const PREVIOUS_COMMAND_PALETTE_SHORTCUT: &str = "Control+Shift+T";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -190,7 +191,7 @@ impl Default for Settings {
             clipboard_paste_mode: "clipboard".into(),
             clipboard_plain_text_only: true,
             clipboard_history_retention: "days".into(),
-            shortcut_quick_todo: DEFAULT_QUICK_TODO_SHORTCUT.into(),
+            shortcut_command_palette: DEFAULT_COMMAND_PALETTE_SHORTCUT.into(),
             shortcut_clipboard_picker: DEFAULT_CLIPBOARD_PICKER_SHORTCUT.into(),
             shortcut_snippet_picker: DEFAULT_SNIPPET_PICKER_SHORTCUT.into(),
             storage_dir: String::new(),
@@ -481,7 +482,6 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             process_name TEXT NOT NULL DEFAULT '',
             category TEXT NOT NULL DEFAULT '系统程序',
             seconds INTEGER NOT NULL DEFAULT 0,
-            icon_data_url TEXT,
             PRIMARY KEY (date, app_name)
         );
         CREATE TABLE IF NOT EXISTS settings (
@@ -584,8 +584,16 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             updated_at TEXT NOT NULL,
             FOREIGN KEY(group_id) REFERENCES snippet_groups(id) ON DELETE SET NULL
         );
+        CREATE TABLE IF NOT EXISTS launcher_usage (
+            item_id TEXT PRIMARY KEY,
+            pinned_at TEXT,
+            last_used_at TEXT,
+            use_count INTEGER NOT NULL DEFAULT 0
+        );
         CREATE INDEX IF NOT EXISTS idx_clipboard_history_created
             ON clipboard_history(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_launcher_usage_recent
+            ON launcher_usage(pinned_at DESC, last_used_at DESC, use_count DESC);
         ",
     )
     .map_err(|error| error.to_string())?;
@@ -609,10 +617,6 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             [],
         ),
         "add clipboard source process column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE app_usage ADD COLUMN icon_data_url TEXT", []),
-        "add app icon data column",
     );
     log_optional_migration(
         conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", []),
@@ -821,11 +825,25 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) {
 }
 
 pub fn load_settings(conn: &Connection) -> Settings {
-    let mut shortcut_quick_todo = normalize_shortcut_setting(&get_setting(
-        conn,
-        "shortcut_quick_todo",
-        DEFAULT_QUICK_TODO_SHORTCUT,
-    ));
+    let command_palette_value = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'shortcut_command_palette'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .unwrap_or(None);
+    let mut shortcut_command_palette = if let Some(value) = command_palette_value {
+        normalize_shortcut_setting(&value)
+    } else {
+        let migrated = normalize_shortcut_setting(&get_setting(
+            conn,
+            "shortcut_quick_todo",
+            DEFAULT_COMMAND_PALETTE_SHORTCUT,
+        ));
+        set_setting(conn, "shortcut_command_palette", &migrated);
+        migrated
+    };
     let mut shortcut_clipboard_picker = normalize_shortcut_setting(&get_setting(
         conn,
         "shortcut_clipboard_picker",
@@ -838,20 +856,25 @@ pub fn load_settings(conn: &Connection) -> Settings {
     ));
 
     // Upgrade the previous default trio while leaving customized bindings untouched.
-    if shortcut_quick_todo.eq_ignore_ascii_case("F2")
+    if shortcut_command_palette.eq_ignore_ascii_case("F2")
         && shortcut_clipboard_picker.eq_ignore_ascii_case("F4")
         && shortcut_snippet_picker.eq_ignore_ascii_case("F5")
     {
-        shortcut_quick_todo = DEFAULT_QUICK_TODO_SHORTCUT.into();
+        shortcut_command_palette = DEFAULT_COMMAND_PALETTE_SHORTCUT.into();
         shortcut_clipboard_picker = DEFAULT_CLIPBOARD_PICKER_SHORTCUT.into();
         shortcut_snippet_picker = DEFAULT_SNIPPET_PICKER_SHORTCUT.into();
-        set_setting(conn, "shortcut_quick_todo", &shortcut_quick_todo);
+        set_setting(conn, "shortcut_command_palette", &shortcut_command_palette);
         set_setting(
             conn,
             "shortcut_clipboard_picker",
             &shortcut_clipboard_picker,
         );
         set_setting(conn, "shortcut_snippet_picker", &shortcut_snippet_picker);
+    }
+
+    if shortcut_command_palette.eq_ignore_ascii_case(PREVIOUS_COMMAND_PALETTE_SHORTCUT) {
+        shortcut_command_palette = DEFAULT_COMMAND_PALETTE_SHORTCUT.into();
+        set_setting(conn, "shortcut_command_palette", &shortcut_command_palette);
     }
 
     Settings {
@@ -932,7 +955,7 @@ pub fn load_settings(conn: &Connection) -> Settings {
             "clipboard_history_retention",
             "days",
         )),
-        shortcut_quick_todo,
+        shortcut_command_palette,
         shortcut_clipboard_picker,
         shortcut_snippet_picker,
         storage_dir: String::new(),
@@ -1038,7 +1061,11 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         "clipboard_history_retention",
         &settings.clipboard_history_retention,
     );
-    set_setting(conn, "shortcut_quick_todo", &settings.shortcut_quick_todo);
+    set_setting(
+        conn,
+        "shortcut_command_palette",
+        &settings.shortcut_command_palette,
+    );
     set_setting(
         conn,
         "shortcut_clipboard_picker",
@@ -1306,28 +1333,20 @@ pub fn add_screen_time(conn: &Connection, date: &str, hour: u32, seconds: i64) -
     seconds
 }
 
-pub fn add_app_time(
-    conn: &Connection,
-    date: &str,
-    name: &str,
-    process: &str,
-    seconds: i64,
-    icon_data_url: Option<&str>,
-) {
+pub fn add_app_time(conn: &Connection, date: &str, name: &str, process: &str, seconds: i64) {
     if seconds <= 0 || is_system_host_usage(name, process) {
         return;
     }
 
     let category = categorize(name, process);
     if let Err(error) = conn.execute(
-        "INSERT INTO app_usage (date, app_name, process_name, category, seconds, icon_data_url)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO app_usage (date, app_name, process_name, category, seconds)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(date, app_name) DO UPDATE SET
            seconds = seconds + excluded.seconds,
            process_name = excluded.process_name,
-           category = excluded.category,
-           icon_data_url = COALESCE(excluded.icon_data_url, app_usage.icon_data_url)",
-        params![date, name, process, category, seconds, icon_data_url],
+           category = excluded.category",
+        params![date, name, process, category, seconds],
     ) {
         tracing::warn!(seconds = seconds, error = %error, "failed to upsert app usage");
     }
@@ -1335,7 +1354,7 @@ pub fn add_app_time(
 
 pub fn top_apps(conn: &Connection, date: &str, limit: i64) -> Vec<AppUsage> {
     let mut stmt = match conn.prepare(
-        "SELECT app_name, process_name, category, seconds, icon_data_url FROM app_usage
+        "SELECT app_name, process_name, category, seconds FROM app_usage
              WHERE date = ?1 ORDER BY seconds DESC",
     ) {
         Ok(stmt) => stmt,
@@ -1350,7 +1369,7 @@ pub fn top_apps(conn: &Connection, date: &str, limit: i64) -> Vec<AppUsage> {
             process_name: r.get(1)?,
             category: r.get(2)?,
             seconds: r.get(3)?,
-            icon_data_url: r.get(4)?,
+            icon_data_url: None,
         })
     }) {
         Ok(rows) => rows,

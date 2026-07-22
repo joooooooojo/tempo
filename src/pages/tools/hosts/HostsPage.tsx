@@ -1,7 +1,5 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
-  ArrowLeft,
   History,
   Loader2,
   Plus,
@@ -34,7 +32,6 @@ function sameTarget(a: EditorTarget, b: EditorTarget) {
 }
 
 export function HostsPage() {
-  const navigate = useNavigate();
   const [workspace, setWorkspace] = useState<HostsWorkspace | null>(null);
   const [editorTarget, setEditorTarget] = useState<EditorTarget>("public");
   const [content, setContent] = useState("");
@@ -512,9 +509,6 @@ export function HostsPage() {
 
       <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 px-4 py-3">
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => navigate("/tools")}>
-            <ArrowLeft />
-          </Button>
           <Button variant="outline" onClick={() => void openBackupDialog()}>
             <History />
             备份

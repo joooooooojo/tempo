@@ -29,7 +29,7 @@ pub fn sync_pomodoro_float_checked(app: &AppHandle, visible: bool) {
 }
 
 pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItem::with_id(app, "show", "打开首页", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "打开快捷面板", true, None::<&str>)?;
     let pomodoro_float = CheckMenuItem::with_id(
         app,
         "pomodoro_float",
@@ -57,7 +57,10 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("Tempo: 加载中...")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                crate::logging::warn_if_err(commands::show_window(app.clone()), "tray show window");
+                crate::logging::warn_if_err(
+                    auxiliary_windows::show_command_palette(app),
+                    "tray show command palette",
+                );
             }
             "pomodoro_float" => {
                 crate::logging::warn_if_err(
@@ -96,8 +99,8 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             {
                 let app = tray.app_handle();
                 crate::logging::warn_if_err(
-                    commands::show_window(app.clone()),
-                    "tray click show window",
+                    auxiliary_windows::show_command_palette(app),
+                    "tray click show command palette",
                 );
             }
         })

@@ -9,10 +9,8 @@ pub(crate) const DAILY_RECOMMENDED_LIMIT_SECONDS: i64 = 8 * 60 * 60;
 
 fn hydrate_app_icons(apps: &mut [AppUsage]) {
     for app_usage in apps.iter_mut() {
-        app_usage.icon_data_url = app_usage
-            .icon_data_url
-            .as_deref()
-            .and_then(crate::app_icons::hydrate_app_icon_url);
+        app_usage.icon_data_url = crate::app_icons::AppIconService::global()
+            .icon_url(&app_usage.app_name, &app_usage.process_name);
     }
 }
 
@@ -133,8 +131,7 @@ fn weekly_top_apps(conn: &Connection, start_date: &str, end_date: &str) -> Vec<A
         "SELECT app_name,
                 COALESCE(MAX(process_name), ''),
                 COALESCE(MAX(category), ''),
-                COALESCE(SUM(seconds), 0),
-                MAX(icon_data_url)
+                COALESCE(SUM(seconds), 0)
          FROM app_usage
          WHERE date >= ?1 AND date <= ?2
          GROUP BY app_name
@@ -153,7 +150,7 @@ fn weekly_top_apps(conn: &Connection, start_date: &str, end_date: &str) -> Vec<A
             process_name: r.get(1)?,
             category: r.get(2)?,
             seconds: r.get(3)?,
-            icon_data_url: r.get(4)?,
+            icon_data_url: None,
         })
     }) {
         Ok(rows) => rows,

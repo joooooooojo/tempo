@@ -41,7 +41,7 @@ const THEME_OPTIONS: Array<{ value: Settings["theme"]; label: string }> = [
 ];
 
 const SHORTCUT_SETTING_KEYS = [
-  "shortcut_quick_todo",
+  "shortcut_command_palette",
   "shortcut_clipboard_picker",
   "shortcut_snippet_picker",
 ] as const;
@@ -402,10 +402,10 @@ export function SettingsPage() {
       <Section title="快捷键">
         <Card>
           <ShortcutRow
-            label="快速添加待办"
-            desc="全局唤起快速待办输入"
-            value={settings.shortcut_quick_todo}
-            onChange={(value) => updateShortcut("shortcut_quick_todo", value)}
+            label="快捷面板"
+            desc="全局搜索应用并执行快捷操作"
+            value={settings.shortcut_command_palette}
+            onChange={(value) => updateShortcut("shortcut_command_palette", value)}
           />
           <ShortcutRow
             label="剪贴板货架"
@@ -425,7 +425,7 @@ export function SettingsPage() {
                 size="sm"
                 onClick={() =>
                     void update({
-                      shortcut_quick_todo: DEFAULT_SHORTCUTS.shortcut_quick_todo,
+                      shortcut_command_palette: DEFAULT_SHORTCUTS.shortcut_command_palette,
                       shortcut_clipboard_picker: DEFAULT_SHORTCUTS.shortcut_clipboard_picker,
                       shortcut_snippet_picker: DEFAULT_SHORTCUTS.shortcut_snippet_picker,
                     })

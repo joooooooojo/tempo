@@ -6,7 +6,7 @@ use serde_json::json;
 #[test]
 fn assigning_an_existing_shortcut_clears_its_previous_owner() {
     let mut settings = Settings {
-        shortcut_quick_todo: "Control+Shift+F".into(),
+        shortcut_command_palette: "Control+Shift+F".into(),
         shortcut_clipboard_picker: "Control+Shift+V".into(),
         shortcut_snippet_picker: "Control+Shift+S".into(),
         ..Settings::default()
@@ -18,7 +18,7 @@ fn assigning_an_existing_shortcut_clears_its_previous_owner() {
     );
 
     assert!(changed);
-    assert_eq!(settings.shortcut_quick_todo, "");
+    assert_eq!(settings.shortcut_command_palette, "");
     assert_eq!(settings.shortcut_clipboard_picker, "Control+Shift+F");
     assert_eq!(settings.shortcut_snippet_picker, "Control+Shift+S");
 }

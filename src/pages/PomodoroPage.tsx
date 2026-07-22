@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { Pause, PictureInPicture2, Play, RotateCcw, Settings2, SkipForward, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
@@ -50,7 +49,6 @@ const phaseMeta = {
 } as const;
 
 export function PomodoroPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
   const [state, setState] = useState<PomodoroState | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -111,26 +109,6 @@ export function PomodoroPage() {
       void unlisten.then((fn) => fn());
     };
   }, []);
-
-  useEffect(() => {
-    const todoParam = searchParams.get("todo");
-    if (!todoParam || !state || state.status !== "idle") return;
-
-    const todoId = Number(todoParam);
-    if (!Number.isFinite(todoId)) return;
-
-    void (async () => {
-      try {
-        const nextState = await api.setPomodoroTodo(todoId);
-        setState(nextState);
-      } catch (error) {
-        console.error(error);
-        toast.error(error instanceof Error ? error.message : "绑定待办失败");
-      } finally {
-        setSearchParams({}, { replace: true });
-      }
-    })();
-  }, [searchParams, setSearchParams, state?.status]);
 
   if (!state || !settings) {
     return (

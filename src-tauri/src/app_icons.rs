@@ -1,196 +1,198 @@
-use crate::asset_protocol::{
-    asset_dir, asset_protocol_response, asset_url_for_file_name, storage_key_from_protocol_url,
+use parking_lot::{Mutex, RwLock};
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
+use std::sync::OnceLock;
+use std::time::UNIX_EPOCH;
+use tauri::http::{
+    header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE},
+    Method, Request, Response, StatusCode,
 };
-use crate::clipboard_db::hash_bytes;
-use base64::Engine as _;
-use rusqlite::Connection;
-use std::path::Path;
-use tauri::http::{Request, Response};
-use tauri::AppHandle;
 
 pub const APP_ICON_PROTOCOL: &str = "tempo-app-icon";
-pub const APP_ICON_SUBDIR: &str = "app-icons";
+const MAX_MEMORY_ICONS: usize = 128;
+const OBSOLETE_DISK_CACHE_SUBDIR: &str = "app-icons";
 
-pub fn app_icons_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    asset_dir(app, APP_ICON_SUBDIR)
+#[derive(Clone)]
+struct AppIconSource {
+    app_name: String,
+    source: String,
 }
 
-pub fn is_app_icon_storage_key(value: &str) -> bool {
-    let Some(file_name) = value.strip_prefix(&format!("{APP_ICON_SUBDIR}/")) else {
-        return false;
-    };
-    is_valid_app_icon_file_name(file_name)
+#[derive(Default)]
+struct AppIconLru {
+    values: HashMap<String, Vec<u8>>,
+    order: VecDeque<String>,
 }
 
-pub fn is_legacy_app_icon_data_url(value: &str) -> bool {
-    value.starts_with("data:image/")
-}
-
-pub fn save_app_icon_png(app: &AppHandle, png_bytes: &[u8]) -> Result<String, String> {
-    let hash = hash_bytes(png_bytes);
-    let file_name = format!("{hash}.png");
-    if !is_valid_app_icon_file_name(&file_name) {
-        return Err("图标文件名无效".into());
+impl AppIconLru {
+    fn get(&mut self, key: &str) -> Option<Vec<u8>> {
+        let value = self.values.get(key)?.clone();
+        self.touch(key);
+        Some(value)
     }
 
-    let dir = app_icons_dir(app)?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&file_name);
-    if !path.exists() {
-        std::fs::write(&path, png_bytes).map_err(|e| e.to_string())?;
-    }
-
-    Ok(format!("{APP_ICON_SUBDIR}/{file_name}"))
-}
-
-pub fn hydrate_app_icon_url(value: &str) -> Option<String> {
-    if is_app_icon_storage_key(value) {
-        let file_name = value.strip_prefix(&format!("{APP_ICON_SUBDIR}/"))?;
-        return Some(asset_url_for_file_name(APP_ICON_PROTOCOL, file_name));
-    }
-    if storage_key_from_protocol_url(APP_ICON_PROTOCOL, APP_ICON_SUBDIR, value).is_some() {
-        return Some(value.to_string());
-    }
-    if is_legacy_app_icon_data_url(value) {
-        return Some(value.to_string());
-    }
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn resolve_app_icon_protocol_url(
-    app: &AppHandle,
-    app_name: &str,
-    process_name: &str,
-) -> Option<String> {
-    let storage_key = resolve_app_icon_storage_key(app, app_name, process_name)?;
-    hydrate_app_icon_url(&storage_key)
-}
-
-pub fn resolve_app_icon_storage_key(
-    app: &AppHandle,
-    app_name: &str,
-    process_name: &str,
-) -> Option<String> {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-
-    static APP_ICON_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-    let key = format!("{}|{}", app_name.trim(), process_name.trim()).to_lowercase();
-    let cache = APP_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-
-    if let Ok(icons) = cache.lock() {
-        if let Some(storage_key) = icons.get(&key) {
-            return Some(storage_key.clone());
+    fn insert(&mut self, key: String, value: Vec<u8>) {
+        self.values.insert(key.clone(), value);
+        self.touch(&key);
+        while self.order.len() > MAX_MEMORY_ICONS {
+            if let Some(oldest) = self.order.pop_front() {
+                self.values.remove(&oldest);
+            }
         }
     }
 
-    let png_bytes = crate::platform::extract_icon_png_bytes(app_name, process_name)?;
-    let storage_key = match save_app_icon_png(app, &png_bytes) {
-        Ok(storage_key) => storage_key,
-        Err(error) => {
-            tracing::debug!(error = %error, "failed to save resolved app icon");
+    fn touch(&mut self, key: &str) {
+        if let Some(index) = self.order.iter().position(|cached| cached == key) {
+            self.order.remove(index);
+        }
+        self.order.push_back(key.to_string());
+    }
+}
+
+pub struct AppIconService {
+    sources: RwLock<HashMap<String, AppIconSource>>,
+    cache: Mutex<AppIconLru>,
+    extraction: Mutex<()>,
+}
+
+impl AppIconService {
+    pub fn global() -> &'static Self {
+        static SERVICE: OnceLock<AppIconService> = OnceLock::new();
+        SERVICE.get_or_init(|| AppIconService {
+            sources: RwLock::new(HashMap::new()),
+            cache: Mutex::new(AppIconLru::default()),
+            extraction: Mutex::new(()),
+        })
+    }
+
+    pub fn icon_url(&self, app_name: &str, source: &str) -> Option<String> {
+        let app_name = app_name.trim();
+        let source = source.trim();
+        if app_name.is_empty() || source.is_empty() {
             return None;
         }
-    };
-    if let Ok(mut icons) = cache.lock() {
-        icons.insert(key, storage_key.clone());
-    }
-    Some(storage_key)
-}
 
-pub fn migrate_legacy_app_icons(app: &AppHandle, conn: &Connection) {
-    let mut stmt = match conn.prepare(
-        "SELECT date, app_name, process_name, icon_data_url
-         FROM app_usage
-         WHERE icon_data_url LIKE 'data:image/%'",
-    ) {
-        Ok(stmt) => stmt,
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to prepare legacy app icon migration query");
-            return;
-        }
-    };
-    let rows = match stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
+        let key = icon_key(app_name, source);
+        self.sources.write().insert(
+            key.clone(),
+            AppIconSource {
+                app_name: app_name.to_string(),
+                source: source.to_string(),
+            },
+        );
+        Some(crate::asset_protocol::asset_url_for_file_name(
+            APP_ICON_PROTOCOL,
+            &format!("{key}.png"),
         ))
-    }) {
-        Ok(rows) => {
-            let mut values = Vec::new();
-            for row in rows {
-                match row {
-                    Ok(value) => values.push(value),
-                    Err(error) => {
-                        tracing::warn!(error = %error, "failed to read legacy app icon row");
-                    }
-                }
-            }
-            values
-        }
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to query legacy app icons");
-            return;
-        }
-    };
+    }
 
-    for (date, app_name, process_name, icon_data_url) in rows {
-        let Some(storage_key) = migrate_legacy_app_icon_value(app, &icon_data_url)
-            .or_else(|| resolve_app_icon_storage_key(app, &app_name, &process_name))
-        else {
-            tracing::debug!("failed to migrate legacy app icon value");
-            continue;
+    pub fn protocol_response(&self, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+        if request.method() != Method::GET && request.method() != Method::HEAD {
+            return icon_error(StatusCode::METHOD_NOT_ALLOWED);
+        }
+
+        let file_name = request.uri().path().trim_start_matches('/');
+        let Some(key) = file_name.strip_suffix(".png") else {
+            return icon_error(StatusCode::BAD_REQUEST);
         };
-        if let Err(error) = conn.execute(
-            "UPDATE app_usage SET icon_data_url = ?1 WHERE date = ?2 AND app_name = ?3",
-            rusqlite::params![storage_key, date, app_name],
-        ) {
-            tracing::warn!(error = %error, "failed to update migrated app icon row");
+        if key.len() != 24 || !key.chars().all(|character| character.is_ascii_hexdigit()) {
+            return icon_error(StatusCode::BAD_REQUEST);
         }
+
+        let Some(bytes) = self.icon_bytes(key) else {
+            return icon_error(StatusCode::NOT_FOUND);
+        };
+        let body = if request.method() == Method::HEAD {
+            Vec::new()
+        } else {
+            bytes.clone()
+        };
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "image/png")
+            .header(CONTENT_LENGTH, bytes.len())
+            .header(CACHE_CONTROL, "public, max-age=86400")
+            .body(body)
+            .unwrap()
+    }
+
+    fn icon_bytes(&self, key: &str) -> Option<Vec<u8>> {
+        if let Some(bytes) = self.cache.lock().get(key) {
+            return Some(bytes);
+        }
+
+        // macOS AppKit and sips are unreliable under concurrent extraction. The
+        // same serialization also prevents duplicate work for simultaneous views.
+        let _extraction_guard = self.extraction.lock();
+        if let Some(bytes) = self.cache.lock().get(key) {
+            return Some(bytes);
+        }
+
+        let source = self.sources.read().get(key).cloned()?;
+        let _icon_context = crate::platform::icon_extraction_thread_context();
+        let bytes = crate::platform::extract_icon_png_bytes(&source.app_name, &source.source)?;
+        self.cache.lock().insert(key.to_string(), bytes.clone());
+        Some(bytes)
     }
 }
 
-pub fn app_icon_protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    asset_protocol_response(
-        app,
-        APP_ICON_SUBDIR,
-        |_| "image/png",
-        is_valid_app_icon_file_name,
-        request,
-    )
-}
-
-fn migrate_legacy_app_icon_value(app: &AppHandle, value: &str) -> Option<String> {
-    let png_bytes = decode_legacy_png_data_url(value)?;
-    match save_app_icon_png(app, &png_bytes) {
-        Ok(storage_key) => Some(storage_key),
-        Err(error) => {
-            tracing::debug!(error = %error, "failed to save migrated app icon");
-            None
-        }
-    }
-}
-
-fn decode_legacy_png_data_url(data_url: &str) -> Option<Vec<u8>> {
-    let payload = data_url.strip_prefix("data:image/png;base64,")?;
-    match base64::engine::general_purpose::STANDARD.decode(payload) {
-        Ok(bytes) => Some(bytes),
-        Err(error) => {
-            tracing::debug!(error = %error, "failed to decode legacy app icon data url");
-            None
-        }
-    }
-}
-
-fn is_valid_app_icon_file_name(file_name: &str) -> bool {
-    let Some(stem) = Path::new(file_name)
-        .file_stem()
-        .and_then(|value| value.to_str())
-    else {
-        return false;
+pub fn remove_obsolete_disk_cache(app: &tauri::AppHandle) {
+    let Ok(directory) = crate::asset_protocol::asset_dir(app, OBSOLETE_DISK_CACHE_SUBDIR) else {
+        return;
     };
-    file_name.ends_with(".png") && stem.len() == 16 && stem.chars().all(|ch| ch.is_ascii_hexdigit())
+    if let Err(error) = std::fs::remove_dir_all(directory) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::debug!(error = %error, "failed to remove obsolete app icon disk cache");
+        }
+    }
+}
+
+fn icon_key(app_name: &str, source: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(app_name.trim().to_lowercase().as_bytes());
+    hasher.update([0]);
+    hasher.update(source.trim().to_lowercase().as_bytes());
+    if let Ok(metadata) = std::fs::metadata(source.trim()) {
+        hasher.update(metadata.len().to_le_bytes());
+        if let Ok(modified) = metadata.modified().and_then(|time| {
+            time.duration_since(UNIX_EPOCH)
+                .map_err(std::io::Error::other)
+        }) {
+            hasher.update(modified.as_secs().to_le_bytes());
+        }
+    }
+    hex::encode(&hasher.finalize()[..12])
+}
+
+fn icon_error(status: StatusCode) -> Response<Vec<u8>> {
+    Response::builder().status(status).body(Vec::new()).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{icon_key, AppIconLru, MAX_MEMORY_ICONS};
+
+    #[test]
+    fn icon_keys_are_stable_and_do_not_expose_sources() {
+        let source = r"C:\Program Files\Example\example.exe";
+        let key = icon_key("Example", source);
+        assert_eq!(key, icon_key("Example", source));
+        assert_eq!(key.len(), 24);
+        assert!(!key.contains("Example"));
+        assert!(!key.contains("Program Files"));
+    }
+
+    #[test]
+    fn memory_cache_evicts_the_least_recently_used_icon() {
+        let mut cache = AppIconLru::default();
+        for index in 0..MAX_MEMORY_ICONS {
+            cache.insert(index.to_string(), vec![index as u8]);
+        }
+        assert_eq!(cache.get("0"), Some(vec![0]));
+        cache.insert("new".into(), vec![255]);
+
+        assert!(cache.get("1").is_none());
+        assert_eq!(cache.get("0"), Some(vec![0]));
+        assert_eq!(cache.get("new"), Some(vec![255]));
+    }
 }

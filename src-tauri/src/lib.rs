@@ -27,7 +27,7 @@ extern crate objc;
 
 use db::{
     db_path, init_db, AppState, PomodoroRuntime, TrackerState, DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
-    DEFAULT_QUICK_TODO_SHORTCUT, DEFAULT_SNIPPET_PICKER_SHORTCUT,
+    DEFAULT_COMMAND_PALETTE_SHORTCUT, DEFAULT_SNIPPET_PICKER_SHORTCUT,
 };
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -37,7 +37,7 @@ use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-const ACTION_QUICK_TODO: &str = "quick_todo";
+const ACTION_COMMAND_PALETTE: &str = "command_palette";
 const ACTION_CLIPBOARD_PICKER: &str = "clipboard_picker";
 const ACTION_SNIPPET_PICKER: &str = "snippet_picker";
 const ACTION_SHELF_ESCAPE: &str = "shelf_escape";
@@ -63,7 +63,7 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             logging::warn_if_err(
-                commands::show_window(app.clone()),
+                auxiliary_windows::show_command_palette(app),
                 "focus existing window on second launch",
             );
         }));
@@ -84,8 +84,8 @@ pub fn run() {
         .register_uri_scheme_protocol(todo_images::TODO_IMAGE_PROTOCOL, |ctx, request| {
             todo_images::todo_image_protocol_response(ctx.app_handle(), request)
         })
-        .register_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |ctx, request| {
-            app_icons::app_icon_protocol_response(ctx.app_handle(), request)
+        .register_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |_ctx, request| {
+            app_icons::AppIconService::global().protocol_response(request)
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -120,8 +120,8 @@ pub fn run() {
                                         .copied()
                                 });
                             let result = match action {
-                                Some(ACTION_QUICK_TODO) => {
-                                    auxiliary_windows::show_quick_todo(&app_for_main)
+                                Some(ACTION_COMMAND_PALETTE) => {
+                                    auxiliary_windows::toggle_command_palette(&app_for_main)
                                 }
                                 Some(ACTION_CLIPBOARD_PICKER) => {
                                     auxiliary_windows::show_clipboard_picker_window(&app_for_main)
@@ -185,7 +185,7 @@ pub fn run() {
             })?;
             clipboard_images::migrate_legacy_clipboard_images(app.handle(), &conn);
             todo_images::migrate_legacy_todo_images(app.handle(), &conn);
-            app_icons::migrate_legacy_app_icons(app.handle(), &conn);
+            app_icons::remove_obsolete_disk_cache(app.handle());
             {
                 let settings = db::load_settings(&conn);
                 clipboard_db::purge_clipboard_history_by_retention(
@@ -203,6 +203,7 @@ pub fn run() {
             clipboard_watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
             app.manage(state.clone());
             app.manage(Mutex::new(ShortcutActionMap::default()));
+            commands::launcher::warm_launcher_index(app.handle().clone());
             let mcp_controller = mcp::McpController::new();
             app.manage(mcp_controller.clone());
             commands::check_pending_recurrences(app.handle(), &state);
@@ -216,7 +217,7 @@ pub fn run() {
                 };
                 if let Err(error) = apply_global_shortcuts(
                     app.handle(),
-                    &settings.shortcut_quick_todo,
+                    &settings.shortcut_command_palette,
                     &settings.shortcut_clipboard_picker,
                     &settings.shortcut_snippet_picker,
                 ) {
@@ -226,7 +227,7 @@ pub fn run() {
                     );
                     if let Err(fallback_error) = apply_global_shortcuts(
                         app.handle(),
-                        DEFAULT_QUICK_TODO_SHORTCUT,
+                        DEFAULT_COMMAND_PALETTE_SHORTCUT,
                         DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
                         DEFAULT_SNIPPET_PICKER_SHORTCUT,
                     ) {
@@ -318,6 +319,15 @@ pub fn run() {
             commands::settings::reset_today,
             commands::settings::reset_all,
             commands::reports::get_known_apps,
+            commands::launcher::get_launcher_apps,
+            commands::launcher::refresh_launcher_apps,
+            commands::launcher::launch_indexed_app,
+            commands::launcher::set_launcher_app_pinned,
+            commands::launcher::record_launcher_usage,
+            commands::launcher::get_launcher_usage,
+            auxiliary_windows::set_command_palette_height,
+            auxiliary_windows::set_command_palette_size,
+            auxiliary_windows::show_command_palette_window,
             commands::todos::get_todos,
             commands::todos::get_todo,
             commands::todos::add_todo,
@@ -408,11 +418,11 @@ pub fn run() {
                     ..
                 } = &event
                 {
-                    // Dock icon click while minimized to tray: restore main window.
+                    // Dock icon click while minimized to tray: open quick panel.
                     if !*has_visible_windows {
                         logging::warn_if_err(
-                            commands::show_window(app_handle.clone()),
-                            "show main window on macos reopen",
+                            auxiliary_windows::show_command_palette(app_handle),
+                            "show command palette on macos reopen",
                         );
                     }
                 }
@@ -490,20 +500,20 @@ pub(crate) fn unregister_shelf_escape_shortcut(app: &tauri::AppHandle) -> Result
 /// Apply the configurable shortcuts, preserving Esc only while the shelf is visible.
 pub fn apply_global_shortcuts(
     app: &tauri::AppHandle,
-    quick_todo: &str,
+    command_palette: &str,
     clipboard_picker: &str,
     snippet_picker: &str,
 ) -> Result<(), String> {
-    let quick_raw = quick_todo.trim();
+    let palette_raw = command_palette.trim();
     let clipboard_raw = clipboard_picker.trim();
     let snippet_raw = snippet_picker.trim();
 
-    let quick_norm = validate_shortcut_binding(quick_raw)?;
+    let palette_norm = validate_shortcut_binding(palette_raw)?;
     let clipboard_norm = validate_shortcut_binding(clipboard_raw)?;
     let snippet_norm = validate_shortcut_binding(snippet_raw)?;
 
-    if shortcut_bindings_conflict(&quick_norm, &clipboard_norm)
-        || shortcut_bindings_conflict(&quick_norm, &snippet_norm)
+    if shortcut_bindings_conflict(&palette_norm, &clipboard_norm)
+        || shortcut_bindings_conflict(&palette_norm, &snippet_norm)
         || shortcut_bindings_conflict(&clipboard_norm, &snippet_norm)
     {
         return Err("快捷键不能重复".into());
@@ -529,8 +539,8 @@ pub fn apply_global_shortcuts(
     }
 
     let mut bindings: Vec<(&str, String, &'static str)> = Vec::new();
-    if let Some(normalized) = quick_norm {
-        bindings.push((quick_raw, normalized, ACTION_QUICK_TODO));
+    if let Some(normalized) = palette_norm {
+        bindings.push((palette_raw, normalized, ACTION_COMMAND_PALETTE));
     }
     if let Some(normalized) = clipboard_norm {
         bindings.push((clipboard_raw, normalized, ACTION_CLIPBOARD_PICKER));
@@ -574,21 +584,21 @@ pub fn apply_global_shortcuts(
 
 /// Validate bindings before saving settings. Returns trimmed raw strings to persist.
 pub fn validate_shortcut_bindings(
-    quick_todo: &str,
+    command_palette: &str,
     clipboard_picker: &str,
     snippet_picker: &str,
 ) -> Result<(String, String, String), String> {
-    let quick = validate_shortcut_binding(quick_todo)?;
+    let palette = validate_shortcut_binding(command_palette)?;
     let clipboard = validate_shortcut_binding(clipboard_picker)?;
     let snippet = validate_shortcut_binding(snippet_picker)?;
-    if shortcut_bindings_conflict(&quick, &clipboard)
-        || shortcut_bindings_conflict(&quick, &snippet)
+    if shortcut_bindings_conflict(&palette, &clipboard)
+        || shortcut_bindings_conflict(&palette, &snippet)
         || shortcut_bindings_conflict(&clipboard, &snippet)
     {
         return Err("快捷键不能重复".into());
     }
     Ok((
-        quick_todo.trim().to_string(),
+        command_palette.trim().to_string(),
         clipboard_picker.trim().to_string(),
         snippet_picker.trim().to_string(),
     ))

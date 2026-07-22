@@ -1,6 +1,6 @@
-import { cn, isMacTarget } from "@/lib/utils";
-
-const macOS = isMacTarget;
+import { useEffect, useState } from "react";
+import { AppWindow } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const sizeStyles = {
   md: {
@@ -26,6 +26,7 @@ interface AppIconProps {
   className?: string;
   fallbackClassName?: string;
   size?: keyof typeof sizeStyles;
+  fallback?: "initial" | "application";
 }
 
 export function AppIcon({
@@ -34,70 +35,45 @@ export function AppIcon({
   className,
   fallbackClassName,
   size = "md",
+  fallback = "initial",
 }: AppIconProps) {
+  const [imageFailed, setImageFailed] = useState(false);
   const initial = name.trim().charAt(0).toUpperCase() || "?";
   const { slot, padding, fallbackText } = sizeStyles[size];
 
-  if (iconDataUrl) {
-    if (macOS) {
-      return (
-        <img
-          src={iconDataUrl}
-          alt=""
-          className={cn("shrink-0 object-contain", slot, className)}
-          loading="lazy"
-        />
-      );
-    }
+  useEffect(() => {
+    setImageFailed(false);
+  }, [iconDataUrl]);
 
-    return (
-      <span
-        className={cn(
-          "flex shrink-0 items-center justify-center rounded-lg bg-background/60 ring-1 ring-border/60",
-          slot,
-          padding,
-          className
-        )}
-      >
-        <img
-          src={iconDataUrl}
-          alt=""
-          className="h-full w-full rounded-md object-contain"
-          loading="lazy"
-        />
-      </span>
-    );
-  }
-
-  if (macOS) {
-    return (
-      <span
-        className={cn(
-          "flex shrink-0 items-center justify-center rounded-full font-bold text-white shadow-md",
-          slot,
-          fallbackText,
-          fallbackClassName,
-          className
-        )}
-        aria-hidden="true"
-      >
-        {initial}
-      </span>
-    );
-  }
+  const fallbackContent =
+    fallback === "application" ? <AppWindow className="size-4" aria-hidden="true" /> : initial;
+  const showImage = Boolean(iconDataUrl && !imageFailed);
 
   return (
     <span
+      data-slot="app-icon"
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-lg font-bold text-white shadow-md",
+        "flex shrink-0 items-center justify-center overflow-hidden rounded-[38.9%] bg-background/60 text-muted-foreground shadow-sm ring-1 ring-border/60",
         slot,
-        fallbackText,
-        fallbackClassName,
+        padding,
+        !showImage && "font-bold",
+        !showImage && fallback === "initial" && fallbackText,
+        !showImage && fallbackClassName,
         className
       )}
       aria-hidden="true"
     >
-      {initial}
+      {showImage ? (
+        <img
+          src={iconDataUrl ?? undefined}
+          alt=""
+          className="size-full rounded-[38.9%] object-contain"
+          loading="lazy"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        fallbackContent
+      )}
     </span>
   );
 }

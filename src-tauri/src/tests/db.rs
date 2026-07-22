@@ -1,6 +1,6 @@
 use crate::db::{
     add_screen_time, get_daily_total, init_db, load_settings, save_settings, set_setting,
-    DEFAULT_CLIPBOARD_PICKER_SHORTCUT, DEFAULT_QUICK_TODO_SHORTCUT,
+    DEFAULT_CLIPBOARD_PICKER_SHORTCUT, DEFAULT_COMMAND_PALETTE_SHORTCUT,
     DEFAULT_SNIPPET_PICKER_SHORTCUT, MAX_HOURLY_SECONDS,
 };
 use std::path::PathBuf;
@@ -27,7 +27,10 @@ fn init_db_creates_schema_and_is_idempotent() {
         let conn = init_db(&path).expect("init db");
         let settings = load_settings(&conn);
         assert_eq!(settings.clipboard_max_entries, 200);
-        assert_eq!(settings.shortcut_quick_todo, DEFAULT_QUICK_TODO_SHORTCUT);
+        assert_eq!(
+            settings.shortcut_command_palette,
+            DEFAULT_COMMAND_PALETTE_SHORTCUT
+        );
         assert_eq!(
             settings.shortcut_clipboard_picker,
             DEFAULT_CLIPBOARD_PICKER_SHORTCUT
@@ -64,7 +67,10 @@ fn shortcut_settings_migrate_old_defaults_and_preserve_empty_bindings() {
         set_setting(&conn, "shortcut_snippet_picker", "F5");
 
         let mut settings = load_settings(&conn);
-        assert_eq!(settings.shortcut_quick_todo, DEFAULT_QUICK_TODO_SHORTCUT);
+        assert_eq!(
+            settings.shortcut_command_palette,
+            DEFAULT_COMMAND_PALETTE_SHORTCUT
+        );
         assert_eq!(
             settings.shortcut_clipboard_picker,
             DEFAULT_CLIPBOARD_PICKER_SHORTCUT
@@ -74,9 +80,32 @@ fn shortcut_settings_migrate_old_defaults_and_preserve_empty_bindings() {
             DEFAULT_SNIPPET_PICKER_SHORTCUT
         );
 
-        settings.shortcut_quick_todo.clear();
+        settings.shortcut_command_palette.clear();
         save_settings(&conn, &settings);
-        assert_eq!(load_settings(&conn).shortcut_quick_todo, "");
+        assert_eq!(load_settings(&conn).shortcut_command_palette, "");
+    }
+
+    if let Some(parent) = path.parent() {
+        drop(std::fs::remove_dir_all(parent));
+    }
+}
+
+#[test]
+fn command_palette_previous_default_migrates_without_overwriting_custom_bindings() {
+    let path = temp_db_path("command-palette-shortcut-migration");
+    {
+        let conn = init_db(&path).expect("init db");
+        set_setting(&conn, "shortcut_command_palette", "Control+Shift+T");
+        assert_eq!(
+            load_settings(&conn).shortcut_command_palette,
+            DEFAULT_COMMAND_PALETTE_SHORTCUT
+        );
+
+        set_setting(&conn, "shortcut_command_palette", "Control+Alt+P");
+        assert_eq!(
+            load_settings(&conn).shortcut_command_palette,
+            "Control+Alt+P"
+        );
     }
 
     if let Some(parent) = path.parent() {

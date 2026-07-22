@@ -14,8 +14,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const EYE_CARE_PRIMARY_LABEL: &str = "eye-care-reminder";
 pub const POMODORO_FLOAT_LABEL: &str = "pomodoro-float";
 
-pub const QUICK_TODO_PANEL_WIDTH: f64 = 380.0;
-pub const QUICK_TODO_PANEL_HEIGHT: f64 = 44.0;
+pub const COMMAND_PALETTE_LABEL: &str = "command-palette";
+pub const COMMAND_PALETTE_WIDTH: f64 = 800.0;
+pub const COMMAND_PALETTE_APP_WIDTH: f64 = 920.0;
+pub const COMMAND_PALETTE_INITIAL_HEIGHT: f64 = 370.0;
+pub const COMMAND_PALETTE_MIN_HEIGHT: f64 = 58.0;
+pub const COMMAND_PALETTE_MAX_HEIGHT: f64 = 760.0;
 
 pub const POMODORO_FLOAT_PANEL_WIDTH: f64 = 300.0;
 pub const POMODORO_FLOAT_PANEL_HEIGHT: f64 = 56.0;
@@ -40,8 +44,8 @@ static SHELF_VISIBLE_TAB: AtomicU8 = AtomicU8::new(SHELF_TAB_NONE);
 #[cfg(target_os = "windows")]
 static SHELF_OUTSIDE_CLOSE_TOKEN: AtomicU64 = AtomicU64::new(0);
 
-pub fn quick_todo_window_size() -> (f64, f64) {
-    (QUICK_TODO_PANEL_WIDTH, QUICK_TODO_PANEL_HEIGHT)
+pub fn command_palette_window_size() -> (f64, f64) {
+    (COMMAND_PALETTE_WIDTH, COMMAND_PALETTE_INITIAL_HEIGHT)
 }
 
 pub fn pomodoro_float_window_size() -> (f64, f64) {
@@ -66,11 +70,11 @@ where
 }
 
 pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
-    if app.get_webview_window("quick-todo").is_none() {
-        let (width, height) = quick_todo_window_size();
-        let window = build_quick_todo_window(app, width, height)?;
-        polish_quick_todo_window(&window);
-        crate::logging::debug_if_err(window.hide(), "precache hide quick todo window");
+    if app.get_webview_window(COMMAND_PALETTE_LABEL).is_none() {
+        let (width, height) = command_palette_window_size();
+        let window = build_command_palette_window(app, width, height)?;
+        polish_command_palette_window(&window);
+        crate::logging::debug_if_err(window.hide(), "precache hide command palette window");
     }
 
     // Pre-create eye-care overlays during startup so the first reminder does not
@@ -137,30 +141,156 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn show_quick_todo(app: &AppHandle) -> tauri::Result<()> {
-    let (width, height) = quick_todo_window_size();
-    let window = if let Some(window) = app.get_webview_window("quick-todo") {
+pub fn show_command_palette(app: &AppHandle) -> tauri::Result<()> {
+    let (default_width, default_height) = command_palette_window_size();
+    let mut width = default_width;
+    let mut height = default_height;
+    let window = if let Some(window) = app.get_webview_window(COMMAND_PALETTE_LABEL) {
+        // Keep the last size so restoring an app session (or search height)
+        // does not flash through the default search dimensions.
+        if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+            width = size.width as f64 / scale;
+            height = size.height as f64 / scale;
+        }
         window
     } else {
-        let window = build_quick_todo_window(app, width, height)?;
-        polish_quick_todo_window(&window);
+        let window = build_command_palette_window(app, default_width, default_height)?;
+        polish_command_palette_window(&window);
         window
     };
 
-    crate::logging::debug_if_err(
-        window.set_size(LogicalSize::new(width, height)),
-        "size quick todo window",
-    );
-    crate::logging::debug_if_err(window.center(), "center quick todo window");
+    place_command_palette_window(app, &window, width, height, true)?;
     crate::logging::debug_if_err(
         window.set_always_on_top(true),
-        "set quick todo always on top",
+        "set command palette always on top",
     );
-    polish_quick_todo_window(&window);
-    window.show()?;
-    window.set_focus()?;
-    emit_to_debug(app, "quick-todo", "quick-todo:focus-title", ());
+    polish_command_palette_window(&window);
+
+    #[cfg(target_os = "macos")]
+    {
+        let config = crate::macos_overlay_panel::shelf_picker_config();
+        crate::macos_overlay_panel::ensure_input_panel(
+            app,
+            &window,
+            COMMAND_PALETTE_LABEL,
+            &config,
+        )?;
+        crate::macos_overlay_panel::show_input_overlay(app, COMMAND_PALETTE_LABEL)?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.show()?;
+        window.set_focus()?;
+    }
+
+    emit_to_debug(app, COMMAND_PALETTE_LABEL, "command-palette:open", ());
     Ok(())
+}
+
+pub fn is_command_palette_visible(app: &AppHandle) -> bool {
+    app.get_webview_window(COMMAND_PALETTE_LABEL)
+        .map(|window| window_is_visible(&window, "check command palette visibility"))
+        .unwrap_or(false)
+}
+
+pub fn hide_command_palette(app: &AppHandle) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window(COMMAND_PALETTE_LABEL) else {
+        return Ok(());
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        crate::macos_overlay_panel::hide_overlay(app, COMMAND_PALETTE_LABEL);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.hide()?;
+    }
+
+    emit_to_debug(app, COMMAND_PALETTE_LABEL, "command-palette:shortcut-hide", ());
+    Ok(())
+}
+
+pub fn toggle_command_palette(app: &AppHandle) -> tauri::Result<()> {
+    if is_command_palette_visible(app) {
+        hide_command_palette(app)
+    } else {
+        show_command_palette(app)
+    }
+}
+
+#[tauri::command]
+pub fn set_command_palette_height(app: AppHandle, height: f64) -> Result<(), String> {
+    set_command_palette_size(app, None, height)
+}
+
+#[tauri::command]
+pub fn set_command_palette_size(
+    app: AppHandle,
+    width: Option<f64>,
+    height: f64,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window(COMMAND_PALETTE_LABEL)
+        .ok_or_else(|| "未找到快捷面板窗口".to_string())?;
+    let requested_width = width.unwrap_or(COMMAND_PALETTE_WIDTH);
+    place_command_palette_window(&app, &window, requested_width, height, false)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn show_command_palette_window(app: AppHandle) -> Result<(), String> {
+    show_command_palette(&app).map_err(|error| error.to_string())
+}
+
+fn place_command_palette_window(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    requested_width: f64,
+    requested_height: f64,
+    follow_cursor: bool,
+) -> tauri::Result<()> {
+    let max_width = requested_width
+        .max(COMMAND_PALETTE_WIDTH)
+        .min(COMMAND_PALETTE_APP_WIDTH.max(COMMAND_PALETTE_WIDTH));
+    let cursor_monitor = || {
+        app.cursor_position().ok().and_then(|position| {
+            app.monitor_from_point(position.x, position.y)
+                .ok()
+                .flatten()
+        })
+    };
+    let monitor = follow_cursor
+        .then(cursor_monitor)
+        .flatten()
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(cursor_monitor)
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        let height = requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, COMMAND_PALETTE_MAX_HEIGHT);
+        let width = requested_width.clamp(320.0, max_width);
+        window.set_size(LogicalSize::new(width, height))?;
+        return window.center();
+    };
+
+    let scale = monitor.scale_factor();
+    let work_area = monitor.work_area();
+    let available_width = work_area.size.width as f64 / scale;
+    let available_height = work_area.size.height as f64 / scale;
+    let width = (available_width - 32.0).clamp(320.0, max_width.min(requested_width.max(320.0)));
+    let top_offset = ((available_height - COMMAND_PALETTE_MAX_HEIGHT) / 2.0).clamp(96.0, 320.0);
+    let max_height = COMMAND_PALETTE_MAX_HEIGHT
+        .min((available_height - top_offset - 24.0).max(COMMAND_PALETTE_MIN_HEIGHT));
+    let height = requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, max_height);
+
+    window.set_size(LogicalSize::new(width, height))?;
+    let physical_width = (width * scale).round() as i32;
+    let x = work_area.position.x + (work_area.size.width as i32 - physical_width) / 2;
+    let y = work_area.position.y + (top_offset * scale).round() as i32;
+    window.set_position(PhysicalPosition::new(x, y))
 }
 
 #[tauri::command]
@@ -1266,46 +1396,57 @@ fn close_extra_eye_care_windows(app: &AppHandle, active_count: usize) {
     }
 }
 
-pub fn polish_quick_todo_window(window: &WebviewWindow) {
-    crate::logging::debug_if_err(
-        window.set_background_color(Some(Color(0, 0, 0, 0))),
-        "set quick todo transparent background",
-    );
-
+pub fn polish_command_palette_window(window: &WebviewWindow) {
     #[cfg(target_os = "macos")]
     {
-        crate::logging::debug_if_err(window.set_shadow(true), "set quick todo shadow");
-        polish_macos_quick_todo_window(window);
+        crate::logging::debug_if_err(
+            window.set_background_color(Some(Color(0, 0, 0, 0))),
+            "set command palette transparent background",
+        );
+        crate::logging::debug_if_err(window.set_shadow(true), "set command palette shadow");
+        apply_macos_command_palette_vibrancy(window);
     }
 
     #[cfg(target_os = "windows")]
     {
-        crate::logging::debug_if_err(window.set_shadow(true), "set quick todo shadow");
+        let background = match window.theme() {
+            Ok(tauri::Theme::Dark) => Color(18, 20, 24, 255),
+            _ => Color(247, 249, 248, 255),
+        };
+        crate::logging::debug_if_err(
+            window.set_background_color(Some(background)),
+            "set command palette opaque background",
+        );
+        crate::logging::debug_if_err(window.set_shadow(true), "set command palette shadow");
         apply_windows_shelf_appearance(window);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        crate::logging::debug_if_err(window.set_shadow(false), "unset quick todo shadow");
+        crate::logging::debug_if_err(window.set_shadow(true), "set command palette shadow");
     }
 }
 
-pub fn build_quick_todo_window(
+pub fn build_command_palette_window(
     app: &AppHandle,
     width: f64,
     height: f64,
 ) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(
         app,
-        "quick-todo",
-        WebviewUrl::App("/?view=quick-todo".into()),
+        COMMAND_PALETTE_LABEL,
+        WebviewUrl::App("/?view=command-palette".into()),
     )
-    .title("快速待办")
+    .title("快捷面板")
     .inner_size(width, height)
     .resizable(false)
     .decorations(false)
-    .transparent(true)
-    .background_color(Color(0, 0, 0, 0))
+    .transparent(cfg!(target_os = "macos"))
+    .background_color(if cfg!(target_os = "macos") {
+        Color(0, 0, 0, 0)
+    } else {
+        Color(247, 249, 248, 255)
+    })
     .shadow(cfg!(any(target_os = "macos", target_os = "windows")))
     .always_on_top(true)
     .skip_taskbar(true)
@@ -1403,11 +1544,19 @@ unsafe fn apply_macos_native_overlay_window(ns_window: *mut std::ffi::c_void) {
 }
 
 #[cfg(target_os = "macos")]
-fn polish_macos_quick_todo_window(window: &WebviewWindow) {
+fn apply_macos_command_palette_vibrancy(window: &WebviewWindow) {
+    use window_vibrancy::{
+        apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+    };
+
+    crate::logging::debug_if_err(clear_vibrancy(window), "clear command palette vibrancy");
     crate::logging::debug_if_err(
-        window.with_webview(|webview| unsafe {
-            apply_macos_native_overlay_window(webview.ns_window());
-        }),
-        "apply quick todo macos native appearance",
+        apply_vibrancy(
+            window,
+            NSVisualEffectMaterial::HudWindow,
+            Some(NSVisualEffectState::Active),
+            Some(14.0),
+        ),
+        "apply command palette vibrancy",
     );
 }

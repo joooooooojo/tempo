@@ -44,5 +44,9 @@ Desktop.ini
 # Local overrides
 *.local
 
+# Local UI verification artifacts
+.playwright-cli/
+output/playwright/
+
 # Generated updater manifest (uploaded to GitHub Releases by CI)
 /latest.json

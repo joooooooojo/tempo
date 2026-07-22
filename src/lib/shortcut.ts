@@ -1,3 +1,5 @@
+import { isMacTarget } from "@/lib/utils";
+
 /** Convert a KeyboardEvent into a global-hotkey style shortcut string (e.g. `F2`, `Control+Shift+V`). */
 export function shortcutFromKeyboardEvent(event: KeyboardEvent): string | null {
   const key = event.key;
@@ -17,10 +19,10 @@ export function shortcutFromKeyboardEvent(event: KeyboardEvent): string | null {
   let main = key;
   if (/^F\d{1,2}$/i.test(key)) {
     main = key.toUpperCase();
-  } else if (key.length === 1) {
-    main = key.toUpperCase();
   } else if (key === " ") {
     main = "Space";
+  } else if (key.length === 1) {
+    main = key.toUpperCase();
   } else if (key === "ArrowUp") {
     main = "Up";
   } else if (key === "ArrowDown") {
@@ -50,7 +52,7 @@ export function formatShortcutLabel(shortcut: string): string {
       const lower = part.toLowerCase();
       if (lower === "control" || lower === "ctrl") return "Ctrl";
       if (lower === "super" || lower === "cmd" || lower === "command") return "⌘";
-      if (lower === "alt" || lower === "option") return "Alt";
+      if (lower === "alt" || lower === "option") return isMacTarget ? "⌥" : "Alt";
       if (lower === "shift") return "Shift";
       return part.toUpperCase() === part ? part : part;
     })
@@ -58,7 +60,7 @@ export function formatShortcutLabel(shortcut: string): string {
 }
 
 export const DEFAULT_SHORTCUTS = {
-  shortcut_quick_todo: "Control+Shift+T",
+  shortcut_command_palette: "Alt+Space",
   shortcut_clipboard_picker: "Control+Shift+V",
   shortcut_snippet_picker: "Control+Shift+S",
 } as const;

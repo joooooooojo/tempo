@@ -452,7 +452,7 @@ const AppRankingCard = memo(function AppRankingCard({
                   name={app.app_name}
                   iconDataUrl={app.icon_data_url}
                   size="sm"
-                  fallbackClassName="rounded-lg bg-gradient-to-br from-slate-400 to-slate-600"
+                  fallbackClassName="bg-gradient-to-br from-slate-400 to-slate-600 text-white"
                 />
                 <span className="truncate">{app.app_name}</span>
               </span>

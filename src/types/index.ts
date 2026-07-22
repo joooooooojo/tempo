@@ -6,6 +6,24 @@ export interface AppUsage {
   icon_data_url?: string | null;
 }
 
+export interface LauncherApp {
+  id: string;
+  name: string;
+  subtitle: string;
+  keywords: string[];
+  icon_data_url?: string | null;
+  pinned: boolean;
+  last_used_at?: string | null;
+  use_count: number;
+}
+
+export interface LauncherUsageItem {
+  id: string;
+  pinned: boolean;
+  last_used_at?: string | null;
+  use_count: number;
+}
+
 export interface HourlyData {
   hour: number;
   seconds: number;
@@ -113,7 +131,7 @@ export interface Settings {
   clipboard_paste_mode: "clipboard" | "active_app";
   clipboard_plain_text_only: boolean;
   clipboard_history_retention: "days" | "weeks" | "months" | "years" | "permanent";
-  shortcut_quick_todo: string;
+  shortcut_command_palette: string;
   shortcut_clipboard_picker: string;
   shortcut_snippet_picker: string;
   storage_dir: string;

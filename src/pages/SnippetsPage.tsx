@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useLocation, useNavigate } from "react-router-dom";
 import {
   Copy,
   Folder,
@@ -14,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { BuiltinAppProps } from "@/apps/types";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import {
@@ -80,9 +80,7 @@ const SORT_OPTIONS: Array<{ value: SortMode; label: string }> = [
   { value: "title", label: "按标题" },
 ];
 
-export function SnippetsPage() {
-  const location = useLocation();
-  const navigate = useNavigate();
+export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [groups, setGroups] = useState<SnippetGroup[]>([]);
   const [query, setQuery] = useState("");
@@ -146,11 +144,9 @@ export function SnippetsPage() {
   }, []);
 
   useEffect(() => {
-    const state = location.state as { createSnippet?: boolean } | null;
-    if (!state?.createSnippet) return;
+    if (!openCreateOnMount) return;
     openCreate();
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, location.state, navigate, openCreate]);
+  }, [openCreate, openCreateOnMount]);
 
   const openEdit = (snippet: Snippet) => {
     setEditor({

@@ -13,6 +13,36 @@ pub struct ForegroundApp {
     pub process_name: String,
 }
 
+#[cfg(windows)]
+pub struct IconExtractionThreadContext {
+    initialized: bool,
+}
+
+#[cfg(windows)]
+impl Drop for IconExtractionThreadContext {
+    fn drop(&mut self) {
+        if self.initialized {
+            unsafe { windows::Win32::System::Com::CoUninitialize() };
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn icon_extraction_thread_context() -> IconExtractionThreadContext {
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+    IconExtractionThreadContext { initialized }
+}
+
+#[cfg(not(windows))]
+pub struct IconExtractionThreadContext;
+
+#[cfg(not(windows))]
+pub fn icon_extraction_thread_context() -> IconExtractionThreadContext {
+    IconExtractionThreadContext
+}
+
 pub fn extract_icon_png_bytes(app_name: &str, process_name: &str) -> Option<Vec<u8>> {
     let candidates = icon_path_candidates(app_name, process_name);
     let candidate_count = candidates.len();
@@ -360,10 +390,20 @@ fn push_existing_path_candidate(candidates: &mut Vec<PathBuf>, value: &str) {
 fn icon_path_candidates(app_name: &str, process_name: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    push_existing_path_candidate(&mut candidates, process_name);
-    push_existing_path_candidate(&mut candidates, app_name);
+    push_windows_icon_candidate(&mut candidates, process_name);
+    push_windows_icon_candidate(&mut candidates, app_name);
 
     candidates
+}
+
+#[cfg(windows)]
+fn push_windows_icon_candidate(candidates: &mut Vec<PathBuf>, value: &str) {
+    let trimmed = value.trim();
+    if trimmed.to_ascii_lowercase().starts_with("shell:") {
+        candidates.push(PathBuf::from(trimmed));
+    } else {
+        push_existing_path_candidate(candidates, trimmed);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -411,7 +451,11 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC,
     };
     use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
-    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
+    use windows::Win32::System::Com::{CoTaskMemFree, IBindCtx};
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{
+        SHGetFileInfoW, SHParseDisplayName, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_PIDL,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, DrawIconEx, PrivateExtractIconsW, DI_NORMAL, HICON,
     };
@@ -419,8 +463,16 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
     const ICON_SIZE: i32 = 128;
 
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let icon = unsafe { resource_icon_from_path(&wide) }
-        .or_else(|| unsafe { shell_icon_from_path(PCWSTR(wide.as_ptr())) })?;
+    let is_shell_namespace = path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .starts_with("shell:");
+    let icon = if is_shell_namespace {
+        unsafe { shell_icon_from_display_name(PCWSTR(wide.as_ptr())) }
+    } else {
+        unsafe { resource_icon_from_path(&wide) }
+            .or_else(|| unsafe { shell_icon_from_path(PCWSTR(wide.as_ptr())) })
+    }?;
 
     unsafe {
         let hdc = CreateCompatibleDC(HDC::default());
@@ -500,6 +552,26 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
             SHGFI_ICON | SHGFI_LARGEICON,
         );
 
+        (result != 0 && !info.hIcon.0.is_null()).then_some(info.hIcon)
+    }
+
+    unsafe fn shell_icon_from_display_name(path: PCWSTR) -> Option<HICON> {
+        let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+        if SHParseDisplayName(path, None::<&IBindCtx>, &mut pidl, 0, None).is_err()
+            || pidl.is_null()
+        {
+            return None;
+        }
+
+        let mut info = SHFILEINFOW::default();
+        let result = SHGetFileInfoW(
+            PCWSTR(pidl.cast()),
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut info),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_PIDL | SHGFI_ICON | SHGFI_LARGEICON,
+        );
+        CoTaskMemFree(Some(pidl.cast()));
         (result != 0 && !info.hIcon.0.is_null()).then_some(info.hIcon)
     }
 
