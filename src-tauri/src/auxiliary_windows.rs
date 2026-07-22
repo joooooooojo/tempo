@@ -246,6 +246,34 @@ pub fn show_command_palette_window(app: AppHandle) -> Result<(), String> {
     show_command_palette(&app).map_err(|error| error.to_string())
 }
 
+/// Prepare overlay panels so macOS NSOpenPanel sheets are visible (ZTools uses modal-panel
+/// level; Status-level nonactivating panels hide / block the picker).
+#[tauri::command]
+pub fn prepare_native_file_dialog(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    crate::macos_overlay_panel::prepare_for_native_dialog(&app);
+    let _ = &app;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restore_after_native_file_dialog(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    crate::macos_overlay_panel::restore_after_native_dialog(&app);
+    let _ = &app;
+    Ok(())
+}
+
+/// Re-apply macOS vibrancy / native theme for the command palette after the frontend
+/// theme changes while the window is already open (ZTools-style light/dark frosted glass).
+#[tauri::command]
+pub fn sync_command_palette_appearance(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(COMMAND_PALETTE_LABEL) {
+        polish_command_palette_window(&window);
+    }
+    Ok(())
+}
+
 fn place_command_palette_window(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -914,10 +942,12 @@ fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
     };
 
     crate::logging::debug_if_err(clear_vibrancy(window), "clear shelf picker macos vibrancy");
+    // Popover follows the window's effective appearance (light/dark). HudWindow is a dark
+    // HUD material and stays unreadable under Tempo's light-theme foreground colors.
     crate::logging::debug_if_err(
         apply_vibrancy(
             window,
-            NSVisualEffectMaterial::HudWindow,
+            NSVisualEffectMaterial::Popover,
             Some(NSVisualEffectState::Active),
             Some(MACOS_SHELF_CORNER_RADIUS),
         ),
@@ -927,6 +957,7 @@ fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
 
 #[cfg(target_os = "macos")]
 fn polish_macos_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
+    sync_overlay_window_theme(window);
     apply_macos_shelf_vibrancy(window);
 
     crate::logging::debug_if_err(
@@ -1397,6 +1428,8 @@ fn close_extra_eye_care_windows(app: &AppHandle, active_count: usize) {
 }
 
 pub fn polish_command_palette_window(window: &WebviewWindow) {
+    sync_overlay_window_theme(window);
+
     #[cfg(target_os = "macos")]
     {
         crate::logging::debug_if_err(
@@ -1425,6 +1458,26 @@ pub fn polish_command_palette_window(window: &WebviewWindow) {
     {
         crate::logging::debug_if_err(window.set_shadow(true), "set command palette shadow");
     }
+}
+
+/// Keep native window appearance in sync with Tempo's theme setting so macOS vibrancy
+/// materials (Popover/Menu) and Windows solid fills match CSS light/dark tokens.
+fn sync_overlay_window_theme(window: &WebviewWindow) {
+    let theme = window
+        .app_handle()
+        .try_state::<crate::db::AppState>()
+        .map(|state| {
+            let conn = state.db.lock();
+            crate::db::get_setting(&conn, "theme", "system")
+        })
+        .unwrap_or_else(|| "system".into());
+
+    let native = match theme.as_str() {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    };
+    crate::logging::debug_if_err(window.set_theme(native), "sync overlay window theme");
 }
 
 pub fn build_command_palette_window(
@@ -1550,12 +1603,15 @@ fn apply_macos_command_palette_vibrancy(window: &WebviewWindow) {
     };
 
     crate::logging::debug_if_err(clear_vibrancy(window), "clear command palette vibrancy");
+    // Match ZTools / uTools style: Electron `vibrancy: 'fullscreen-ui'` + a light/dark CSS wash
+    // on top (see `styles/platform/macos/command-palette.css`). FullScreenUI follows the
+    // window appearance; HudWindow stays dark and washed out light-theme labels.
     crate::logging::debug_if_err(
         apply_vibrancy(
             window,
-            NSVisualEffectMaterial::HudWindow,
+            NSVisualEffectMaterial::FullScreenUI,
             Some(NSVisualEffectState::Active),
-            Some(14.0),
+            Some(16.0),
         ),
         "apply command palette vibrancy",
     );

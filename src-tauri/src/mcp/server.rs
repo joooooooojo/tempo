@@ -211,6 +211,19 @@ pub struct DailyReportArgs {
     pub date: Option<String>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CallPluginToolArgs {
+    #[schemars(description = "Plugin package id, e.g. com.example.hello (see tempo_list_exposed_plugin_tools)")]
+    pub plugin_id: String,
+    #[schemars(
+        description = "The tool's local name from contributes.mcpTools[].name (see tempo_list_exposed_plugin_tools)"
+    )]
+    pub tool_name: String,
+    #[serde(default)]
+    #[schemars(description = "Arguments matching the tool's inputSchema; defaults to {}")]
+    pub arguments: serde_json::Value,
+}
+
 #[derive(Clone)]
 pub struct TempoMcpServer {
     app: AppHandle,
@@ -684,6 +697,36 @@ impl TempoMcpServer {
         let report = crate::commands::reports::get_daily_report(state, args.date);
         json_result(report)
     }
+
+    #[tool(
+        description = "List Tempo plugin tools the user has explicitly exposed to MCP/AI (design: plugins never auto-expose tools — this reflects only what each plugin's settings toggle currently allows). Call this before tempo_call_plugin_tool to discover valid plugin_id/tool_name pairs and their input schemas. Returns an empty list if no plugin has opted in."
+    )]
+    fn tempo_list_exposed_plugin_tools(&self) -> Result<CallToolResult, McpError> {
+        match crate::plugins::mcp_bridge::list_exposed_tools(&self.app) {
+            Ok(tools) => json_result(tools),
+            Err(e) => Ok(tool_err(e)),
+        }
+    }
+
+    #[tool(
+        description = "Call one tool contributed by a Tempo plugin, if the user has exposed it to MCP. Use tempo_list_exposed_plugin_tools first to find a valid plugin_id/tool_name and its inputSchema. Fails with an error if the plugin is not installed, enabled, trusted, or MCP-exposed, or if tool_name is unknown."
+    )]
+    async fn tempo_call_plugin_tool(
+        &self,
+        Parameters(args): Parameters<CallPluginToolArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::plugins::mcp_bridge::call_exposed_tool(
+            &self.app,
+            &args.plugin_id,
+            &args.tool_name,
+            args.arguments,
+        )
+        .await
+        {
+            Ok(value) => json_result(value),
+            Err(e) => Ok(tool_err(e)),
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -699,6 +742,7 @@ impl ServerHandler for TempoMcpServer {
 - clipboard / 剪贴板历史：search recently copied text
 - pomodoro / 番茄钟 / 专注：get state, start, pause, stop, skip phase
 - screen time / 今日报告 / 屏幕时间 / 使用报告：daily app usage report
+- plugin tools the user has opted into MCP exposure：tempo_list_exposed_plugin_tools then tempo_call_plugin_tool
 
 Workflow tips:
 1. For "what's on my list" → list_todos first; use get_todo only when full details are needed.

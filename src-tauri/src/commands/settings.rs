@@ -116,6 +116,7 @@ pub fn update_settings(
     if let Some(v) = settings.get("sound_enabled").and_then(|v| v.as_bool()) {
         current.sound_enabled = v;
     }
+    let previous_theme = current.theme.clone();
     if let Some(v) = settings.get("theme").and_then(|v| v.as_str()) {
         current.theme = v.into();
     }
@@ -271,6 +272,12 @@ pub fn update_settings(
     if mcp_changed {
         if let Some(controller) = app.try_state::<crate::mcp::McpController>() {
             controller.restart(&app);
+        }
+    }
+
+    if current.theme != previous_theme {
+        if let Some(host) = app.try_state::<std::sync::Arc<crate::plugins::host::PluginHost>>() {
+            crate::plugins::bridge::broadcast_theme_change(&app, host.inner().as_ref(), &current.theme);
         }
     }
 

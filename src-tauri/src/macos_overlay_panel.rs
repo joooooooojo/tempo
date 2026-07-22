@@ -54,15 +54,19 @@ fn apply_base(panel: &dyn Panel, input: bool, config: &OverlayPanelConfig) {
 }
 
 pub fn shelf_picker_config() -> OverlayPanelConfig {
+    // Match ZTools: Electron `setAlwaysOnTop(true, 'modal-panel')` → NSModalPanelWindowLevel (8).
+    // Status (25) sits above system file sheets and makes Import Directory / zip look like a no-op.
     OverlayPanelConfig {
-        level: PanelLevel::Status,
+        level: PanelLevel::ModalPanel,
         collection_behavior: CollectionBehavior::new()
             .can_join_all_spaces()
             .stationary()
             .full_screen_auxiliary()
             .full_screen_none(),
         has_shadow: true,
-        becomes_key_only_if_needed: true,
+        // false: command palette must become key on show so the search input can autofocus.
+        // With true, AppKit ignores makeKeyWindow unless an NSTextField asks — WKWebView does not.
+        becomes_key_only_if_needed: false,
     }
 }
 
@@ -72,7 +76,9 @@ pub fn ensure_input_panel(
     label: &str,
     config: &OverlayPanelConfig,
 ) -> tauri::Result<()> {
-    if app.get_webview_panel(label).is_ok() {
+    if let Ok(panel) = app.get_webview_panel(label) {
+        // Re-apply on every ensure so level/style changes take effect without recreating the panel.
+        config.apply_input(panel.as_ref());
         return Ok(());
     }
 
@@ -97,6 +103,30 @@ pub fn hide_overlay(app: &AppHandle, label: &str) {
 
     if let Some(window) = app.get_webview_window(label) {
         crate::logging::debug_if_err(window.hide(), "hide macos overlay fallback window");
+    }
+}
+
+/// Temporarily make overlay panels safe hosts for NSOpenPanel sheets (ZTools parents dialogs
+/// to the palette). Nonactivating + high levels can swallow or hide the picker.
+pub fn prepare_for_native_dialog(app: &AppHandle) {
+    for label in ["command-palette", "shelf-picker"] {
+        if let Ok(panel) = app.get_webview_panel(label) {
+            // Keep borderless, but drop NonactivatingPanel so the sheet can key/focus.
+            panel.set_style_mask(StyleMask::empty().borderless().into());
+            panel.set_level(PanelLevel::ModalPanel.value());
+            panel.set_becomes_key_only_if_needed(false);
+            panel.show_and_make_key();
+        }
+    }
+}
+
+/// Restore overlay panels to the ZTools-aligned ModalPanel + nonactivating style.
+pub fn restore_after_native_dialog(app: &AppHandle) {
+    let config = shelf_picker_config();
+    for label in ["command-palette", "shelf-picker"] {
+        if let Ok(panel) = app.get_webview_panel(label) {
+            config.apply_input(panel.as_ref());
+        }
     }
 }
 

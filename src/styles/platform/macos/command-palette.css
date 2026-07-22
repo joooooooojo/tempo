@@ -1,0 +1,43 @@
+/* macOS command palette — ZTools / uTools frosted-glass style.
+ *
+ * Native layer: NSVisualEffectMaterial::FullScreenUI (see auxiliary_windows.rs).
+ * CSS layer: semi-transparent light/dark wash (#f4f4f4ab / #303133ab), same technique as
+ * ZTools `style.css` `.os-mac:root { --bg-color: #f4f4f4ab }` so wallpaper tint shows through
+ * while labels stay readable.
+ */
+
+html.command-palette-window--macos,
+html.command-palette-window--macos body,
+html.command-palette-window--macos #root {
+  background: transparent !important;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+html.command-palette-window--macos .command-palette-page {
+  border-radius: 16px;
+  overflow: hidden;
+  /* Light frosted wash over FullScreenUI vibrancy */
+  background: rgb(244 244 244 / 67%);
+  color: hsl(var(--foreground));
+}
+
+html.command-palette-window--macos.dark .command-palette-page {
+  /* Dark frosted wash */
+  background: rgb(48 49 51 / 67%);
+}
+
+html.command-palette-window--macos .command-palette-panel {
+  background: transparent;
+}
+
+/* Selection / hover tiles stay soft and translucent like ZTools */
+html.command-palette-window--macos .command-palette-app-tile-wrap[data-selected],
+html.command-palette-window--macos .command-palette-action-tile[data-selected] {
+  background: hsl(var(--primary) / 0.14);
+}
+
+html.command-palette-window--macos.dark .command-palette-app-tile-wrap[data-selected],
+html.command-palette-window--macos.dark .command-palette-action-tile[data-selected] {
+  background: hsl(var(--primary) / 0.22);
+}

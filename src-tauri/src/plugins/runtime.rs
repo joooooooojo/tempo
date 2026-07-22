@@ -7,12 +7,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
-use super::paths::{
-    ensure_dir, node_runtime_dir, plugin_runtime_root, runtime_manifest_path,
-};
+use super::paths::{ensure_dir, node_runtime_dir, plugin_runtime_root, runtime_manifest_path};
 
 /// Locked Node major line for Tempo plugins. Patch is chosen by the download manifest.
 pub const LOCKED_NODE_MAJOR: &str = "24";
+
+/// Official nodejs.org build this Tempo release is locked to (design §3.3.1).
+pub const OFFICIAL_NODE_VERSION: &str = "24.18.0";
+
+/// Test-only escape hatch: point directly at a pre-installed Node binary and skip the
+/// on-demand download/verify flow entirely. Never read outside of local development/tests.
+pub const NODE_PATH_OVERRIDE_ENV: &str = "TEMPO_PLUGIN_NODE_PATH";
+/// Override the official runtime manifest URL (mirrors / air-gapped installs / tests).
+pub const MANIFEST_URL_OVERRIDE_ENV: &str = "TEMPO_PLUGIN_RUNTIME_MANIFEST_URL";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +55,52 @@ struct RemoteRuntimeManifest {
 struct RemoteArtifact {
     url: String,
     sha256: String,
+}
+
+/// Hardcoded official Node 24.18.0 artifacts (nodejs.org dist). No third-party CDN is used;
+/// `TEMPO_PLUGIN_RUNTIME_MANIFEST_URL` may still override this for mirrors/tests.
+fn official_manifest() -> RemoteRuntimeManifest {
+    let mut artifacts = std::collections::HashMap::new();
+    artifacts.insert(
+        "aarch64-apple-darwin".to_string(),
+        RemoteArtifact {
+            url: format!(
+                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-darwin-arm64.tar.gz"
+            ),
+            sha256: "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1".into(),
+        },
+    );
+    artifacts.insert(
+        "x86_64-apple-darwin".to_string(),
+        RemoteArtifact {
+            url: format!(
+                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-darwin-x64.tar.gz"
+            ),
+            sha256: "dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080".into(),
+        },
+    );
+    artifacts.insert(
+        "x86_64-unknown-linux-gnu".to_string(),
+        RemoteArtifact {
+            url: format!(
+                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-linux-x64.tar.gz"
+            ),
+            sha256: "783130984963db7ba9cbd01089eaf2c2efb055c6770827f33aac9d8f26e821".into(),
+        },
+    );
+    artifacts.insert(
+        "x86_64-pc-windows-msvc".to_string(),
+        RemoteArtifact {
+            url: format!(
+                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-win-x64.zip"
+            ),
+            sha256: "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821".into(),
+        },
+    );
+    RemoteRuntimeManifest {
+        version: OFFICIAL_NODE_VERSION.to_string(),
+        artifacts,
+    }
 }
 
 fn current_target_triple() -> &'static str {
@@ -117,7 +170,26 @@ fn resolve_node_binary(install_dir: &std::path::Path) -> PathBuf {
     install_dir.join(node_exe_name())
 }
 
+/// Test-only direct override, bypassing install state entirely.
+fn test_node_path_override() -> Option<PathBuf> {
+    std::env::var(NODE_PATH_OVERRIDE_ENV)
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+}
+
 pub fn get_plugin_runtime_status(app: &AppHandle) -> Result<PluginRuntimeStatus, String> {
+    if let Some(path) = test_node_path_override() {
+        return Ok(PluginRuntimeStatus {
+            installed: true,
+            version: Some(format!("{LOCKED_NODE_MAJOR}.x (test override)")),
+            node_path: Some(path.display().to_string()),
+            install_dir: path.parent().map(|p| p.display().to_string()),
+            locked_major: LOCKED_NODE_MAJOR.into(),
+            message: "使用 TEMPO_PLUGIN_NODE_PATH 指定的测试 Node。".into(),
+        });
+    }
+
     let manifest_path = runtime_manifest_path(app)?;
     if !manifest_path.is_file() {
         return Ok(PluginRuntimeStatus {
@@ -158,13 +230,24 @@ pub fn get_plugin_runtime_status(app: &AppHandle) -> Result<PluginRuntimeStatus,
     })
 }
 
-/// Official endpoint for the locked Node build. Overridable later via settings.
-fn default_runtime_manifest_url() -> String {
-    // Placeholder CDN path — replace with Tempo-hosted manifest before shipping.
-    // Format: { version, artifacts: { "<triple>": { url, sha256 } } }
-    std::env::var("TEMPO_PLUGIN_RUNTIME_MANIFEST_URL").unwrap_or_else(|_| {
-        "https://cdn.example.invalid/tempo/plugin-runtime/node-24.json".into()
-    })
+/// Resolve the manifest to use: hardcoded official build, or an override URL fetched over HTTP
+/// (mirrors / air-gapped installs / tests only — never an arbitrary plugin-supplied endpoint).
+async fn resolve_runtime_manifest() -> Result<RemoteRuntimeManifest, String> {
+    if let Ok(url) = std::env::var(MANIFEST_URL_OVERRIDE_ENV) {
+        let client = reqwest::Client::new();
+        let remote: RemoteRuntimeManifest = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("下载运行时清单失败: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("运行时清单 HTTP 错误: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("解析运行时清单失败: {e}"))?;
+        return Ok(remote);
+    }
+    Ok(official_manifest())
 }
 
 pub async fn install_plugin_runtime(app: &AppHandle) -> Result<PluginRuntimeStatus, String> {
@@ -173,18 +256,7 @@ pub async fn install_plugin_runtime(app: &AppHandle) -> Result<PluginRuntimeStat
         return Err("当前平台暂不支持插件运行时".into());
     }
 
-    let manifest_url = default_runtime_manifest_url();
-    let client = reqwest::Client::new();
-    let remote: RemoteRuntimeManifest = client
-        .get(&manifest_url)
-        .send()
-        .await
-        .map_err(|e| format!("下载运行时清单失败: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("运行时清单 HTTP 错误: {e}"))?
-        .json()
-        .await
-        .map_err(|e| format!("解析运行时清单失败: {e}"))?;
+    let remote = resolve_runtime_manifest().await?;
 
     if !remote.version.starts_with(&format!("{LOCKED_NODE_MAJOR}.")) {
         return Err(format!(
@@ -198,6 +270,7 @@ pub async fn install_plugin_runtime(app: &AppHandle) -> Result<PluginRuntimeStat
         .get(target)
         .ok_or_else(|| format!("清单中缺少目标 {target} 的构建"))?;
 
+    let client = reqwest::Client::new();
     let bytes = client
         .get(&artifact.url)
         .send()
@@ -245,6 +318,15 @@ pub async fn install_plugin_runtime(app: &AppHandle) -> Result<PluginRuntimeStat
             version_dir.display()
         ));
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(&node_path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&node_path, perms);
+        }
+    }
 
     let local = LocalRuntimeManifest {
         version: remote.version.clone(),
@@ -279,8 +361,8 @@ fn extract_node_archive(archive: &std::path::Path, dest: &std::path::Path) -> Re
         .to_ascii_lowercase();
 
     if name.ends_with(".zip") || cfg!(windows) {
-        // Prefer external tar/Expand-Archive via std::process for MVP without zip crate.
-        // On Windows use PowerShell Expand-Archive; elsewhere try `unzip` then `tar`.
+        // Prefer external tar/Expand-Archive via std::process for MVP without a zip dependency
+        // for extraction (zip crate is used for plugin-package imports instead).
         #[cfg(windows)]
         {
             let status = std::process::Command::new("powershell")
@@ -331,6 +413,9 @@ fn extract_node_archive(archive: &std::path::Path, dest: &std::path::Path) -> Re
 
 /// Returns the managed Node executable if installed and present.
 pub fn resolved_node_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(path) = test_node_path_override() {
+        return Ok(path);
+    }
     let status = get_plugin_runtime_status(app)?;
     status
         .node_path

@@ -88,6 +88,9 @@ pub fn run() {
         .register_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |_ctx, request| {
             app_icons::AppIconService::global().protocol_response(request)
         })
+        .register_uri_scheme_protocol(plugins::ui::PROTOCOL, |ctx, request| {
+            plugins::ui::protocol_response(ctx.app_handle(), request)
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -210,6 +213,53 @@ pub fn run() {
             commands::check_pending_recurrences(app.handle(), &state);
             mcp_controller.start(app.handle());
 
+            {
+                let plugin_host = Arc::new(plugins::host::PluginHost::new(app.handle().clone()));
+                app.manage(plugin_host.clone());
+                let conn = state.db.lock();
+                if let Err(error) = plugins::trust::ensure_plugin_tables(&conn) {
+                    tracing::warn!(error = %error, "failed to prepare plugin tables");
+                }
+                if let Err(error) = plugins::trust::normalize_runtime_states_on_boot(&conn) {
+                    tracing::warn!(error = %error, "failed to normalize plugin runtime states");
+                }
+                match plugins::loader::scan_enabled_contributions(app.handle(), &plugin_host, &conn) {
+                    Ok(bundles) => {
+                        tracing::info!(count = bundles.len(), "loaded plugin contributions on boot");
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "failed to scan plugin contributions on boot");
+                    }
+                }
+
+                // Phase 1 §4.3/§15: only `onStartup` plugins get an eagerly-started Runtime;
+                // every other plugin stays lazy until its first command/`runtime.*` call.
+                match plugins::paths::packages_dir(app.handle()) {
+                    Ok(packages_root) => match plugins::loader::plugins_needing_startup(&conn, &packages_root) {
+                        Ok(plugin_ids) => {
+                            for plugin_id in plugin_ids {
+                                let host = plugin_host.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    if let Err(error) = host.supervisor.ensure_started(&plugin_id).await {
+                                        tracing::warn!(
+                                            plugin_id = %plugin_id,
+                                            error = %error,
+                                            "onStartup plugin activation failed"
+                                        );
+                                    }
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "failed to scan onStartup plugins");
+                        }
+                    },
+                    Err(error) => {
+                        tracing::warn!(error = %error, "failed to resolve plugin packages dir");
+                    }
+                }
+            }
+
             tray_menu::setup_tray(app)?;
             {
                 let settings = {
@@ -265,11 +315,8 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                logging::debug_if_err(
-                    app.handle()
-                        .set_activation_policy(tauri::ActivationPolicy::Regular),
-                    "set macos activation policy",
-                );
+                // Belt-and-suspenders after setup work; primary policy is set pre-run above.
+                crate::macos_dock::ensure_accessory_policy(app.handle());
             }
 
             if let Some(window) = app.get_webview_window("main") {
@@ -329,6 +376,9 @@ pub fn run() {
             auxiliary_windows::set_command_palette_height,
             auxiliary_windows::set_command_palette_size,
             auxiliary_windows::show_command_palette_window,
+            auxiliary_windows::prepare_native_file_dialog,
+            auxiliary_windows::restore_after_native_file_dialog,
+            auxiliary_windows::sync_command_palette_appearance,
             commands::todos::get_todos,
             commands::todos::get_todo,
             commands::todos::add_todo,
@@ -397,6 +447,17 @@ pub fn run() {
             commands::plugins::list_plugins,
             commands::plugins::trust_plugin,
             commands::plugins::set_plugin_enabled_command,
+            commands::plugins::list_plugin_contributions,
+            commands::plugins::plugin_call_command,
+            commands::plugins::plugin_bridge_invoke,
+            commands::plugins::plugin_ui_prepare,
+            commands::plugins::plugin_ui_dispose,
+            commands::plugins::plugin_ui_serialize_session,
+            commands::plugins::plugin_open_data_dir,
+            commands::plugins::plugin_uninstall,
+            commands::plugins::set_plugin_mcp_exposed,
+            commands::plugins::promote_plugin_pending_version,
+            commands::plugins::list_plugin_mcp_tools,
             commands::hosts::get_hosts_workspace,
             commands::hosts::authorize_hosts_write,
             commands::hosts::save_hosts_public,
@@ -418,7 +479,15 @@ pub fn run() {
             auxiliary_windows::hide_shelf_picker,
         ])
         .build(tauri::generate_context!())
-        .map(|app| {
+        .map(|mut app| {
+            // Set before run() so tao applies Accessory at applicationDidFinishLaunching —
+            // setting it later in setup still briefly shows a Dock icon (Regular is the default).
+            #[cfg(target_os = "macos")]
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                app.set_dock_visibility(false);
+            }
+
             app.run(|app_handle, event| {
                 #[cfg(target_os = "macos")]
                 if let tauri::RunEvent::Reopen {
@@ -426,7 +495,7 @@ pub fn run() {
                     ..
                 } = &event
                 {
-                    // Dock icon click while minimized to tray: open quick panel.
+                    // App reopen (e.g. from Finder) with no visible windows: open quick panel.
                     if !*has_visible_windows {
                         logging::warn_if_err(
                             auxiliary_windows::show_command_palette(app_handle),

@@ -11,7 +11,7 @@
   },
   "app": {
     "macOSPrivateApi": true,
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "label": "main",
@@ -71,7 +71,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "bundleName": "Tempo"
+      "bundleName": "Tempo",
+      "infoPlist": "Info.plist"
     }
   }
 }

@@ -1,0 +1,24 @@
+{
+  "name": "@tempo/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Type-only SDK for Tempo plugins (Phase 1 MVP). Bundle this at build time — it never ships a runtime, so it adds nothing to a compiled plugin.",
+  "license": "MIT",
+  "type": "module",
+  "types": "src/index.ts",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

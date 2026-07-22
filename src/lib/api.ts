@@ -11,7 +11,10 @@ import type {
   InstalledPlugin,
   LauncherApp,
   LauncherUsageItem,
+  PluginContributionBundle,
+  PluginMcpToolInfo,
   PluginRuntimeStatus,
+  PluginUiPrepareResult,
   PortRecord,
   PomodoroState,
   Settings,
@@ -224,9 +227,64 @@ export const api = {
   importLocalPlugin: (path: string) =>
     invoke<InstalledPackage>("import_local_plugin", { path }),
   trustPlugin: (pluginId: string, version: string, trusted: boolean) =>
-    invoke<void>("trust_plugin", { pluginId, version, trusted }),
+    invoke<void>("trust_plugin", {
+      args: { pluginId, version, trusted: Boolean(trusted) },
+    }),
   setPluginEnabled: (pluginId: string, enabled: boolean) =>
-    invoke<void>("set_plugin_enabled_command", { pluginId, enabled }),
+    invoke<void>("set_plugin_enabled_command", {
+      args: { pluginId, enabled: Boolean(enabled) },
+    }),
+  listPluginContributions: () =>
+    invoke<PluginContributionBundle[]>("list_plugin_contributions"),
+  pluginCallCommand: (pluginId: string, commandId: string, params?: unknown) =>
+    invoke<unknown>("plugin_call_command", {
+      args: { pluginId, commandId, params: params ?? null },
+    }),
+  pluginBridgeInvoke: (args: {
+    pluginId: string;
+    viewInstanceId?: string | null;
+    method: string;
+    params?: unknown;
+  }) =>
+    invoke<unknown>("plugin_bridge_invoke", {
+      args: {
+        pluginId: args.pluginId,
+        viewInstanceId: args.viewInstanceId ?? null,
+        method: args.method,
+        params: args.params ?? null,
+      },
+    }),
+  pluginUiPrepare: (args: {
+    pluginId: string;
+    appId: string;
+    params?: unknown;
+    sessionPayload?: unknown;
+  }) =>
+    invoke<PluginUiPrepareResult>("plugin_ui_prepare", {
+      args: {
+        pluginId: args.pluginId,
+        appId: args.appId,
+        params: args.params ?? null,
+        sessionPayload: args.sessionPayload ?? null,
+      },
+    }),
+  pluginUiDispose: (viewInstanceId: string) =>
+    invoke<void>("plugin_ui_dispose", { viewInstanceId }),
+  pluginUiSerializeSession: (viewInstanceId: string) =>
+    invoke<void>("plugin_ui_serialize_session", { viewInstanceId }),
+  pluginOpenDataDir: (pluginId: string) => invoke<void>("plugin_open_data_dir", { pluginId }),
+  pluginUninstall: (pluginId: string, deleteData: boolean) =>
+    invoke<void>("plugin_uninstall", {
+      args: { pluginId, deleteData: Boolean(deleteData) },
+    }),
+  setPluginMcpExposed: (pluginId: string, exposed: boolean) =>
+    invoke<void>("set_plugin_mcp_exposed", {
+      args: { pluginId, exposed: Boolean(exposed) },
+    }),
+  listPluginMcpTools: (pluginId: string) =>
+    invoke<PluginMcpToolInfo[]>("list_plugin_mcp_tools", { pluginId }),
+  promotePluginPendingVersion: (pluginId: string) =>
+    invoke<string>("promote_plugin_pending_version", { pluginId }),
 
   // Tools — Hosts
   getHostsWorkspace: () => invoke<HostsWorkspace>("get_hosts_workspace"),

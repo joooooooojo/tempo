@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { emit } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, RefreshCw, RotateCcw, Copy, Eye, EyeOff, CircleHelp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -13,6 +12,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Progress } from "@/components/ui/progress";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { api } from "@/lib/api";
+import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { emitThemeChange } from "@/lib/theme";
 import { getAppVersion } from "@/lib/update";
 import { useUpdateStore, runCheckUpdate, runInstallUpdate } from "@/lib/updateStore";
@@ -143,7 +143,7 @@ export function SettingsPage() {
     if (migratingStorage) return;
 
     try {
-      const selected = await open({
+      const selected = await openNativeFileDialog({
         directory: true,
         multiple: false,
         title: "选择文件存储位置",

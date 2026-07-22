@@ -6,6 +6,13 @@ use super::ids::{is_valid_local_id, is_valid_plugin_id};
 
 pub const MANIFEST_VERSION: u32 = 1;
 
+/// Fixed UI document at the package root (must sit beside `manifest.json`).
+pub const UI_ENTRY_FILE: &str = "index.html";
+
+/// Allowed Runtime entry filenames at the package root (beside `manifest.json`).
+/// Named `main.*` so they never collide with UI assets like `index.js` next to `index.html`.
+pub const MAIN_ENTRY_FILES: &[&str] = &["main.mjs", "main.js"];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginManifest {
@@ -30,7 +37,8 @@ pub struct PluginManifest {
     pub license: Option<String>,
     #[serde(default)]
     pub categories: Vec<String>,
-    /// Relative path to bundled ESM main entry (optional for pure UI packages).
+    /// Root-level Runtime entry: must be `main.mjs` or `main.js` when present.
+    /// Required for headless (no `apps[]`) plugins; optional for pure UI packages.
     #[serde(default)]
     pub main: Option<String>,
     #[serde(default)]
@@ -74,6 +82,7 @@ pub struct ContributedApp {
     pub keywords: Vec<String>,
     #[serde(default)]
     pub icon: Option<String>,
+    /// Must be the package-root `index.html` (same directory as `manifest.json`).
     pub entry: String,
     #[serde(default)]
     pub default_size: Option<DefaultSize>,
@@ -170,6 +179,7 @@ impl PluginManifest {
             return Err("engines.pluginApi is required".into());
         }
 
+        let has_ui = !self.contributes.apps.is_empty();
         let command_ids: std::collections::HashSet<&str> = self
             .contributes
             .commands
@@ -188,6 +198,12 @@ impl PluginManifest {
                 return Err(format!("invalid app id: {}", app.id));
             }
             validate_relative_path(&app.entry, "apps.entry")?;
+            if app.entry != UI_ENTRY_FILE {
+                return Err(format!(
+                    "apps.entry must be `{UI_ENTRY_FILE}` at the package root (got {})",
+                    app.entry
+                ));
+            }
             if let Some(icon) = &app.icon {
                 validate_relative_path(icon, "apps.icon")?;
             }
@@ -236,19 +252,32 @@ impl PluginManifest {
             }
         }
 
-        if let Some(main) = &self.main {
-            validate_relative_path(main, "main")?;
-        } else if !self.activation_events.is_empty() {
-            return Err("activationEvents require a main entry".into());
+        match &self.main {
+            Some(main) => {
+                validate_relative_path(main, "main")?;
+                if !is_allowed_main_entry(main) {
+                    return Err(format!(
+                        "main must be `{}` or `{}` at the package root (got {main})",
+                        MAIN_ENTRY_FILES[0], MAIN_ENTRY_FILES[1]
+                    ));
+                }
+            }
+            None => {
+                if !has_ui {
+                    return Err(format!(
+                        "headless plugins require main (`{}` or `{}`) at the package root",
+                        MAIN_ENTRY_FILES[0], MAIN_ENTRY_FILES[1]
+                    ));
+                }
+                if !self.activation_events.is_empty() {
+                    return Err("activationEvents require a main entry".into());
+                }
+            }
         }
 
         for exe in &self.executables {
             validate_relative_path(exe, "executables")?;
         }
-
-        // Unknown contribute keys are rejected by serde deny_unknown_fields? We use default
-        // ignore for forward-compatible metadata; contribute unknown keys currently ignored
-        // at serde level. Loader will harden with explicit schema later.
 
         Ok(())
     }
@@ -256,6 +285,14 @@ impl PluginManifest {
     pub fn requires_node_runtime(&self) -> bool {
         self.main.is_some()
     }
+
+    pub fn has_ui(&self) -> bool {
+        !self.contributes.apps.is_empty()
+    }
+}
+
+pub fn is_allowed_main_entry(path: &str) -> bool {
+    MAIN_ENTRY_FILES.contains(&path)
 }
 
 pub fn validate_relative_path(path: &str, field: &str) -> Result<(), String> {
@@ -285,19 +322,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_minimal_hybrid() {
+    fn parses_minimal_hybrid_at_package_root() {
         let raw = r#"{
           "manifestVersion": 1,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
           "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
-          "main": "dist/main/index.mjs",
+          "main": "main.mjs",
           "contributes": {
             "apps": [{
               "id": "main",
               "name": "Hello",
-              "entry": "dist/ui/index.html"
+              "entry": "index.html"
             }],
             "commands": [{ "id": "hello", "title": "Hello" }],
             "actions": [{ "id": "run", "name": "Run", "command": "hello" }]
@@ -305,7 +342,67 @@ mod tests {
         }"#;
         let m = PluginManifest::parse_str(raw).unwrap();
         assert!(m.requires_node_runtime());
-        assert_eq!(m.contributes.apps[0].entry, "dist/ui/index.html");
+        assert!(m.has_ui());
+        assert_eq!(m.contributes.apps[0].entry, UI_ENTRY_FILE);
+        assert_eq!(m.main.as_deref(), Some("main.mjs"));
+    }
+
+    #[test]
+    fn rejects_nested_ui_or_main_entry() {
+        let nested_ui = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.hello",
+          "name": "Hello",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "contributes": {
+            "apps": [{ "id": "main", "name": "Hello", "entry": "dist/ui/index.html" }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(nested_ui).is_err());
+
+        let nested_main = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.hello",
+          "name": "Hello",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "main": "dist/main/index.mjs",
+          "contributes": {
+            "apps": [{ "id": "main", "name": "Hello", "entry": "index.html" }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(nested_main).is_err());
+    }
+
+    #[test]
+    fn headless_requires_root_main() {
+        let missing = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.hello",
+          "name": "Hello",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "contributes": {
+            "commands": [{ "id": "hello", "title": "Hello" }],
+            "actions": [{ "id": "run", "name": "Run", "command": "hello" }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(missing).is_err());
+
+        let ok = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.hello",
+          "name": "Hello",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "main": "main.js",
+          "contributes": {
+            "commands": [{ "id": "hello", "title": "Hello" }],
+            "actions": [{ "id": "run", "name": "Run", "command": "hello" }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(ok).is_ok());
     }
 
     #[test]
@@ -316,6 +413,7 @@ mod tests {
           "name": "Hello",
           "version": "1.0.0",
           "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "main": "main.mjs",
           "contributes": {
             "actions": [{ "id": "run", "name": "Run", "command": "missing" }]
           }

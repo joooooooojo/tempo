@@ -20,7 +20,7 @@ export interface TempoAppProps {
 
 export type TempoAppUi =
   | { type: "react"; component: ComponentType<TempoAppProps> }
-  | { type: "plugin-webview"; entryPath: string };
+  | { type: "plugin-webview"; entryPath: string; localAppId: string };
 
 export interface TempoApp {
   /** Runtime id: builtin uses local id; plugins use `{pluginId}/{appId}`. */

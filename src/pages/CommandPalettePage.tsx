@@ -9,6 +9,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { isBlurHideSuppressed } from "@/lib/blurHideGuard";
 import {
   LoaderCircle,
   Pin,
@@ -28,7 +29,8 @@ import {
 import { AppIconView } from "@/apps/icon";
 import { BuiltinAppNavigationProvider } from "@/apps/navigation";
 import { PluginAppHost } from "@/apps/PluginAppHost";
-import { getBuiltinApp, listBuiltinApps } from "@/apps/registry";
+import { startPluginContributionSync } from "@/apps/plugins/syncContributions";
+import { getApp as getBuiltinApp, listApps as listBuiltinApps, subscribeApps } from "@/apps/registry";
 import {
   canPersistAppSession,
   clearPaletteSession,
@@ -58,6 +60,7 @@ const SEARCH_WIDTH = 800;
 const DEFAULT_APP_WIDTH = 920;
 const DEFAULT_APP_HEIGHT = 700;
 const BUILTIN_USAGE_PREFIX = "builtin:";
+const PLUGIN_USAGE_PREFIX = "plugin:";
 /** Tool pages already have their own edge-to-edge chrome; skip host padding. */
 const FLUSH_APP_IDS = new Set(["hosts", "translate", "port-manager"]);
 
@@ -102,6 +105,7 @@ function usageTimeMs(value: string | null | undefined): number {
 export function CommandPalettePage() {
   const [mode, setMode] = useState<PaletteMode>("search");
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
+  const [activeAppParams, setActiveAppParams] = useState<Record<string, unknown>>({});
   const [openCreateSnippet, setOpenCreateSnippet] = useState(false);
   const [initialTranslateText, setInitialTranslateText] = useState<string | undefined>();
   const [apps, setApps] = useState<LauncherApp[]>([]);
@@ -123,7 +127,19 @@ export function CommandPalettePage() {
   const modeRef = useRef<PaletteMode>("search");
   const activeAppIdRef = useRef<string | null>(null);
   const isTauri = isTauriRuntime();
-  const builtinApps = useMemo(() => listBuiltinApps(), []);
+  const [appsRevision, setAppsRevision] = useState(0);
+  const builtinApps = useMemo(() => listBuiltinApps(), [appsRevision]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeApps(() => setAppsRevision((current) => current + 1));
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    const registration = startPluginContributionSync();
+    return () => registration.dispose();
+  }, [isTauri]);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -148,6 +164,7 @@ export function CommandPalettePage() {
     resetSearchState();
     setMode("search");
     setActiveAppId(null);
+    setActiveAppParams({});
     setOpenCreateSnippet(false);
     setInitialTranslateText(undefined);
   }, [resetSearchState]);
@@ -185,6 +202,7 @@ export function CommandPalettePage() {
     clearPaletteSession();
     setMode("search");
     setActiveAppId(null);
+    setActiveAppParams({});
     setOpenCreateSnippet(false);
     setInitialTranslateText(undefined);
     setError(null);
@@ -206,6 +224,7 @@ export function CommandPalettePage() {
       const params = resolveOpenAppParams(options);
       setMode("app");
       setActiveAppId(appId);
+      setActiveAppParams(params);
       setOpenCreateSnippet(Boolean(params.createSnippet));
       const translateText =
         typeof params.initialTranslateText === "string"
@@ -387,10 +406,13 @@ export function CommandPalettePage() {
         // Drop stale keyboard selection (e.g. last opened 内置应用) so current
         // starts at the first 最近使用 item again.
         setSelectedKey(null);
-        window.requestAnimationFrame(() => {
+        const focusSearch = () => {
           inputRef.current?.focus();
           inputRef.current?.select();
-        });
+        };
+        window.requestAnimationFrame(focusSearch);
+        // Panel may become key a tick after the open event; retry so typing works immediately.
+        window.setTimeout(focusSearch, 50);
       }
       armTimer = window.setTimeout(() => {
         armed = true;
@@ -410,7 +432,17 @@ export function CommandPalettePage() {
     const unlistenIndex = listen("launcher:index-ready", () => void loadApps());
     void getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
-        if (!focused && armed && !pendingRef.current) void hidePreservingSession();
+        // Native file sheets steal focus; suppress blur→hide while they are open (ZTools pattern).
+        if (!focused && armed && !pendingRef.current && !isBlurHideSuppressed()) {
+          void hidePreservingSession();
+          return;
+        }
+        if (focused && modeRef.current === "search") {
+          window.requestAnimationFrame(() => {
+            inputRef.current?.focus();
+            inputRef.current?.select();
+          });
+        }
       })
       .then((unlisten) => {
         unlistenBlur = unlisten;
@@ -459,6 +491,20 @@ export function CommandPalettePage() {
         if (!app) continue;
         entries.push({
           key: `recent:builtin:${app.id}`,
+          kind: "builtin",
+          app,
+          last_used_at: usage.last_used_at ?? null,
+          use_count: usage.use_count,
+        });
+        continue;
+      }
+
+      if (usage.id.startsWith(PLUGIN_USAGE_PREFIX)) {
+        const runtimeAppId = usage.id.slice(PLUGIN_USAGE_PREFIX.length);
+        const app = getBuiltinApp(runtimeAppId);
+        if (!app) continue;
+        entries.push({
+          key: `recent:plugin:${app.id}`,
           kind: "builtin",
           app,
           last_used_at: usage.last_used_at ?? null,
@@ -806,7 +852,9 @@ export function CommandPalettePage() {
             ) : (
               <PluginAppHost
                 pluginId={activeApp.pluginId}
-                entryPath={activeApp.ui.entryPath}
+                appId={activeApp.ui.localAppId}
+                params={activeAppParams}
+                persistSession={activeApp.persistSession}
               />
             )}
           </div>
@@ -990,7 +1038,7 @@ function DefaultApps({
         </LauncherSection>
       ) : null}
 
-      <LauncherSection id="launcher-builtin-title" title="内置应用">
+      <LauncherSection id="launcher-builtin-title" title="应用">
         <div className="command-palette-app-grid">
           {builtinApps.map((app) => {
             const key = `builtin:${app.id}`;
@@ -1066,7 +1114,7 @@ function SearchResults({
   return (
     <div className="command-palette-sections">
       {builtinApps.length > 0 ? (
-        <LauncherSection id="launcher-builtin-results" title="内置应用">
+        <LauncherSection id="launcher-builtin-results" title="应用">
           <div className="command-palette-app-grid">
             {builtinApps.map((app) => {
               const key = `builtin:${app.id}`;
@@ -1200,6 +1248,11 @@ function BuiltinTile({
       data-selected={selected || undefined}
       data-selection-key={selectionKey}
     >
+      {app.source === "plugin" ? (
+        <span className="command-palette-plugin-badge" title="插件">
+          插件
+        </span>
+      ) : null}
       <button
         type="button"
         className="command-palette-app-tile"

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isBlurHideSuppressed } from "@/lib/blurHideGuard";
 import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
 
 export function useAuxiliaryWindowShell(className: string) {
@@ -48,7 +49,7 @@ export function useShelfBlurClose(openEvent: string, busy = false) {
     let unlistenBlur: (() => void) | undefined;
     void appWindow
       .onFocusChanged(({ payload: focused }) => {
-        if (!focused && armed && !busy) {
+        if (!focused && armed && !busy && !isBlurHideSuppressed()) {
           void appWindow.hide();
         }
       })

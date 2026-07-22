@@ -383,3 +383,17 @@ html.command-palette-window--macos #root {
   width: 18px;
   height: 18px;
 }
+
+.command-palette-plugin-badge {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  z-index: 1;
+  border-radius: 4px;
+  background: hsl(var(--primary) / 0.85);
+  color: hsl(var(--primary-foreground));
+  font-size: 9px;
+  line-height: 1.4;
+  padding: 0 4px;
+  pointer-events: none;
+}

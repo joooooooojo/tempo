@@ -302,6 +302,7 @@ export interface InstalledPackage {
 export interface InstalledPlugin {
   id: string;
   currentVersion: string;
+  pendingVersion?: string | null;
   enabled: boolean;
   runtimeState: string;
   packageHash?: string | null;
@@ -311,4 +312,71 @@ export interface InstalledPlugin {
   displayPublisher?: string | null;
   requiresNodeRuntime: boolean;
   lastError?: string | null;
+  /** User opt-in for exposing this plugin's `contributes.mcpTools` to MCP/AI (design §11). */
+  mcpExposed: boolean;
+  /** Number of `contributes.mcpTools` this plugin declares (0 = nothing to expose). */
+  mcpToolCount: number;
+}
+
+export interface PluginMcpToolInfo {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+
+export interface PluginDefaultSize {
+  width?: number | null;
+  height?: number | null;
+}
+
+export interface PluginAppContribution {
+  /** Runtime id: `{pluginId}/{localId}`. */
+  id: string;
+  localId: string;
+  name: string;
+  keywords: string[];
+  iconUrl?: string | null;
+  /** Resolved `tempo-plugin://` URL for the app's UI entry document. */
+  entryPath: string;
+  defaultSize?: PluginDefaultSize | null;
+  persistSession: boolean;
+  sessionVersion?: number | null;
+}
+
+export interface PluginActionContribution {
+  id: string;
+  localId: string;
+  name: string;
+  keywords: string[];
+  iconUrl?: string | null;
+  /** Runtime id of the command this action invokes: `{pluginId}/{commandLocalId}`. */
+  commandId: string;
+  titleTemplate?: string | null;
+  requiresQuery: boolean;
+}
+
+export interface PluginContributionBundle {
+  pluginId: string;
+  version: string;
+  packageHash: string;
+  name: string;
+  description?: string | null;
+  requiresNodeRuntime: boolean;
+  apps: PluginAppContribution[];
+  actions: PluginActionContribution[];
+}
+
+export interface PluginUiPrepareResult {
+  viewInstanceId: string;
+  entryUrl: string;
+  theme: string;
+  apiVersion: string;
+  params: unknown;
+  session?: unknown;
+}
+
+export interface PluginRpcError {
+  code: string;
+  message: string;
+  data?: unknown;
 }

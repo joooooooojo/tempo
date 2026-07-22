@@ -1,0 +1,50 @@
+{
+  "manifestVersion": 1,
+  "id": "com.example.hello",
+  "name": "Hello 示例插件",
+  "version": "1.0.0",
+  "engines": {
+    "tempo": ">=1.2.0",
+    "pluginApi": "^1.0.0"
+  },
+  "kind": "hybrid",
+  "author": "Tempo",
+  "publisher": "tempo-examples",
+  "description": "Phase 1 插件系统最小示例：一个面板应用 + 一个快捷操作，共用同一个 Runtime 命令。",
+  "homepage": "https://example.com/tempo-plugins/hello",
+  "license": "MIT",
+  "categories": ["tools"],
+  "main": "main.mjs",
+  "capabilities": ["filesystem"],
+  "contributes": {
+    "apps": [
+      {
+        "id": "main",
+        "name": "Hello 示例",
+        "keywords": ["hello", "示例", "demo"],
+        "icon": "icons/app.svg",
+        "entry": "index.html",
+        "defaultSize": { "width": 560, "height": 420 },
+        "persistSession": true,
+        "sessionVersion": 1
+      }
+    ],
+    "actions": [
+      {
+        "id": "say-hello",
+        "name": "Hello 一下",
+        "keywords": ["hello", "示例"],
+        "icon": "icons/app.svg",
+        "requiresQuery": false,
+        "command": "hello"
+      }
+    ],
+    "commands": [
+      {
+        "id": "hello",
+        "title": "Hello",
+        "visibility": "private"
+      }
+    ]
+  }
+}

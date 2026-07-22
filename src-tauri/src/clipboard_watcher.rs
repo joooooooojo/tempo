@@ -560,6 +560,23 @@ pub fn emit_clipboard_update(app: &AppHandle) {
         app.emit_to("main", "clipboard-update", ()),
         "emit main clipboard update",
     );
+
+    // Phase 2 hook (design §6.1): notify subscribed plugins that the clipboard changed. The
+    // payload deliberately omits clipboard contents by default — plugins that need the actual
+    // content should read it themselves via their own Runtime (which has full system access).
+    if let Some(host) = app.try_state::<Arc<crate::plugins::host::PluginHost>>() {
+        let host = host.inner().clone();
+        let app = app.clone();
+        crate::plugins::hooks::dispatch_event(
+            &app,
+            &host,
+            "clipboard.changed",
+            serde_json::json!({
+                "schemaVersion": 1,
+                "at": chrono::Local::now().to_rfc3339(),
+            }),
+        );
+    }
 }
 
 pub fn prewarm_clipboard_image_cache(app: AppHandle, state: AppState, contents: Vec<String>) {

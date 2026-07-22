@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Settings } from "@/types";
 
 export const THEME_CHANGED_EVENT = "settings:theme-changed";
@@ -15,6 +16,23 @@ export function applyTheme(theme: Settings["theme"]) {
       "dark",
       window.matchMedia("(prefers-color-scheme: dark)").matches
     );
+  }
+  void syncNativeWindowTheme(theme);
+}
+
+/** Keep the Tauri/native window appearance aligned with CSS so macOS vibrancy matches. */
+async function syncNativeWindowTheme(theme: Settings["theme"]) {
+  if (!("__TAURI_INTERNALS__" in window)) return;
+  try {
+    const native = theme === "system" ? null : theme;
+    await getCurrentWindow().setTheme(native);
+    // Re-apply FullScreenUI vibrancy after appearance flips (command palette only).
+    const label = getCurrentWindow().label;
+    if (label === "command-palette") {
+      await invoke("sync_command_palette_appearance");
+    }
+  } catch {
+    // Some auxiliary windows may not support setTheme; ignore.
   }
 }
 
