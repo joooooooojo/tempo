@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod platform;
+mod plugins;
 mod pomodoro;
 
 mod app_icons;
@@ -389,6 +390,13 @@ pub fn run() {
             commands::snippets::pin_snippet_command,
             commands::snippets::delete_snippet_command,
             commands::snippets::copy_snippet_to_clipboard,
+            commands::plugins::plugin_runtime_status,
+            commands::plugins::plugin_runtime_install,
+            commands::plugins::plugin_runtime_uninstall,
+            commands::plugins::import_local_plugin,
+            commands::plugins::list_plugins,
+            commands::plugins::trust_plugin,
+            commands::plugins::set_plugin_enabled_command,
             commands::hosts::get_hosts_workspace,
             commands::hosts::authorize_hosts_write,
             commands::hosts::save_hosts_public,

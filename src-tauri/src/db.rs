@@ -785,6 +785,42 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
         ),
         "backfill recurrence root id",
     );
+    log_optional_migration(
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS plugins (
+              id TEXT PRIMARY KEY,
+              current_version TEXT NOT NULL,
+              pending_version TEXT,
+              enabled INTEGER NOT NULL DEFAULT 0,
+              runtime_state TEXT NOT NULL DEFAULT 'disabled',
+              installed_at TEXT NOT NULL,
+              updated_at TEXT,
+              last_error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS plugin_versions (
+              plugin_id TEXT NOT NULL,
+              version TEXT NOT NULL,
+              package_hash TEXT,
+              dev_path TEXT,
+              display_publisher TEXT,
+              verified_publisher_key TEXT,
+              install_source TEXT NOT NULL,
+              signature_status TEXT NOT NULL,
+              trusted_at TEXT,
+              installed_at TEXT NOT NULL,
+              PRIMARY KEY (plugin_id, version)
+            );
+            CREATE TABLE IF NOT EXISTS publisher_trust (
+              signing_key_id TEXT PRIMARY KEY,
+              publisher_id TEXT NOT NULL,
+              trusted_at TEXT NOT NULL,
+              revoked_at TEXT
+            );
+            ",
+        ),
+        "create plugin tables",
+    );
     if let Err(error) = conn
         .execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;")
     {

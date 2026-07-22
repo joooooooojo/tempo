@@ -1,36 +1,45 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { OpenBuiltinAppOptions } from "@/apps/types";
+import type { OpenAppOptions } from "@/apps/types";
 
-type BuiltinAppNavigationValue = {
-  openApp: (appId: string, options?: OpenBuiltinAppOptions) => void;
+type AppNavigationValue = {
+  openApp: (appId: string, options?: OpenAppOptions) => void;
   backToSearch: () => void;
 };
 
-const BuiltinAppNavigationContext = createContext<BuiltinAppNavigationValue | null>(null);
+const AppNavigationContext = createContext<AppNavigationValue | null>(null);
 
-export function BuiltinAppNavigationProvider({
+export function AppNavigationProvider({
   value,
   children,
 }: {
-  value: BuiltinAppNavigationValue;
+  value: AppNavigationValue;
   children: ReactNode;
 }) {
-  return (
-    <BuiltinAppNavigationContext.Provider value={value}>
-      {children}
-    </BuiltinAppNavigationContext.Provider>
-  );
+  return <AppNavigationContext.Provider value={value}>{children}</AppNavigationContext.Provider>;
 }
 
-export function useBuiltinAppNavigation() {
-  const value = useContext(BuiltinAppNavigationContext);
+/** @deprecated Prefer AppNavigationProvider */
+export const BuiltinAppNavigationProvider = AppNavigationProvider;
+
+export function useAppNavigation() {
+  const value = useContext(AppNavigationContext);
   if (!value) {
-    throw new Error("useBuiltinAppNavigation must be used within BuiltinAppNavigationProvider");
+    throw new Error("useAppNavigation must be used within AppNavigationProvider");
   }
   return value;
 }
 
+/** @deprecated Prefer useAppNavigation */
+export function useBuiltinAppNavigation() {
+  return useAppNavigation();
+}
+
 /** Safe optional access when a page may also render outside the palette shell. */
+export function useOptionalAppNavigation() {
+  return useContext(AppNavigationContext);
+}
+
+/** @deprecated Prefer useOptionalAppNavigation */
 export function useOptionalBuiltinAppNavigation() {
-  return useContext(BuiltinAppNavigationContext);
+  return useOptionalAppNavigation();
 }

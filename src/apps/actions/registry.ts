@@ -1,10 +1,19 @@
 import { BUILTIN_QUICK_ACTIONS } from "@/apps/actions/builtin";
-import type { QuickAction } from "@/apps/types";
+import { BUILTIN_OWNER } from "@/apps/constants";
+import type { QuickAction, Registration } from "@/apps/types";
 
 export const ACTION_USAGE_PREFIX = "action:";
 
-const actions: QuickAction[] = [...BUILTIN_QUICK_ACTIONS];
-const byId = new Map(actions.map((action) => [action.id, action]));
+type ActionListener = () => void;
+
+const actions: QuickAction[] = [];
+const byId = new Map<string, QuickAction>();
+const ownerById = new Map<string, string>();
+const listeners = new Set<ActionListener>();
+
+function emit() {
+  for (const listener of listeners) listener();
+}
 
 export function quickActionUsageId(actionId: string) {
   return `${ACTION_USAGE_PREFIX}${actionId}`;
@@ -62,10 +71,20 @@ export function listVisibleQuickActions(
 }
 
 /**
- * Register (or replace) a quick action. Intended for plugins;
- * built-ins are registered at module load via `BUILTIN_QUICK_ACTIONS`.
+ * Register a quick action. Duplicate ids from a different owner are rejected.
+ * Same-owner re-register replaces in place (dev reload).
  */
-export function registerQuickAction(action: QuickAction): void {
+export function registerQuickAction(
+  action: QuickAction,
+  ownerPluginId: string = action.pluginId ?? (action.source === "builtin" ? BUILTIN_OWNER : action.id)
+): Registration {
+  const existingOwner = ownerById.get(action.id);
+  if (existingOwner && existingOwner !== ownerPluginId) {
+    throw new Error(
+      `Action id "${action.id}" is already owned by "${existingOwner}"; cannot register as "${ownerPluginId}"`
+    );
+  }
+
   const existingIndex = actions.findIndex((item) => item.id === action.id);
   if (existingIndex >= 0) {
     actions[existingIndex] = action;
@@ -73,12 +92,55 @@ export function registerQuickAction(action: QuickAction): void {
     actions.push(action);
   }
   byId.set(action.id, action);
+  ownerById.set(action.id, ownerPluginId);
+  emit();
+
+  return {
+    dispose() {
+      if (ownerById.get(action.id) !== ownerPluginId) return;
+      const index = actions.findIndex((item) => item.id === action.id);
+      if (index >= 0) actions.splice(index, 1);
+      byId.delete(action.id);
+      ownerById.delete(action.id);
+      emit();
+    },
+  };
 }
 
-export function unregisterQuickAction(id: string): boolean {
+export function unregisterQuickAction(id: string, ownerPluginId?: string): boolean {
+  if (ownerPluginId && ownerById.get(id) !== ownerPluginId) {
+    return false;
+  }
   const index = actions.findIndex((item) => item.id === id);
   if (index < 0) return false;
   actions.splice(index, 1);
   byId.delete(id);
+  ownerById.delete(id);
+  emit();
   return true;
+}
+
+export function unregisterAllActions(ownerPluginId: string): void {
+  const removeIds = [...ownerById.entries()]
+    .filter(([, owner]) => owner === ownerPluginId)
+    .map(([id]) => id);
+  if (removeIds.length === 0) return;
+  for (const id of removeIds) {
+    const index = actions.findIndex((item) => item.id === id);
+    if (index >= 0) actions.splice(index, 1);
+    byId.delete(id);
+    ownerById.delete(id);
+  }
+  emit();
+}
+
+export function subscribeQuickActions(listener: ActionListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+for (const action of BUILTIN_QUICK_ACTIONS) {
+  registerQuickAction(action, BUILTIN_OWNER);
 }

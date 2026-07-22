@@ -22,6 +22,7 @@ import {
   shortcutFromKeyboardEvent,
 } from "@/lib/shortcut";
 import type { Settings } from "@/types";
+import { PluginSettingsSection } from "@/pages/settings/PluginSettingsSection";
 
 const CLIPBOARD_RETENTION_OPTIONS = [
   { value: "days", label: "天" },
@@ -559,6 +560,10 @@ export function SettingsPage() {
             </div>
           </div>
         </Card>
+      </Section>
+
+      <Section title="插件">
+        <PluginSettingsSection />
       </Section>
 
       <Section title="关于">

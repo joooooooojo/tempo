@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hello Plugin</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: transparent;
+        color: CanvasText;
+      }
+      button {
+        border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
+        background: color-mix(in srgb, Canvas 88%, CanvasText 12%);
+        color: inherit;
+        border-radius: 8px;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      #log {
+        margin-top: 16px;
+        font-size: 12px;
+        opacity: 0.8;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Hello Plugin</h1>
+    <p>UI entry is ready. Runtime RPC will work once the host WebView bridge lands.</p>
+    <button id="run" type="button">Call hello</button>
+    <div id="log"></div>
+    <script type="module">
+      const log = document.getElementById("log");
+      document.getElementById("run").addEventListener("click", async () => {
+        try {
+          if (!globalThis.tempo?.runtime?.invoke) {
+            log.textContent = "Bridge not injected yet (expected until PluginAppHost Wry lands).";
+            return;
+          }
+          const result = await globalThis.tempo.runtime.invoke("hello");
+          log.textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          log.textContent = String(error);
+        }
+      });
+    </script>
+  </body>
+</html>

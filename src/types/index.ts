@@ -281,3 +281,34 @@ export interface TranslateResult {
   detectedFrom?: string | null;
   error?: string | null;
 }
+
+export interface PluginRuntimeStatus {
+  installed: boolean;
+  version?: string | null;
+  nodePath?: string | null;
+  installDir?: string | null;
+  lockedMajor: string;
+  message: string;
+}
+
+export interface InstalledPackage {
+  pluginId: string;
+  version: string;
+  packageHash: string;
+  installPath: string;
+  requiresNodeRuntime: boolean;
+}
+
+export interface InstalledPlugin {
+  id: string;
+  currentVersion: string;
+  enabled: boolean;
+  runtimeState: string;
+  packageHash?: string | null;
+  trusted: boolean;
+  installSource: string;
+  signatureStatus: string;
+  displayPublisher?: string | null;
+  requiresNodeRuntime: boolean;
+  lastError?: string | null;
+}

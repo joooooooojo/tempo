@@ -1,4 +1,4 @@
-import { getBuiltinApp } from "@/apps/registry";
+import { getApp } from "@/apps/registry";
 
 const STORAGE_KEY = "tempo.palette.session.v1";
 
@@ -75,7 +75,7 @@ export function clearPaletteSession() {
 export function resolveRestorablePaletteSession(): PaletteSession | null {
   const session = readPaletteSession();
   if (!session) return null;
-  const app = getBuiltinApp(session.appId);
+  const app = getApp(session.appId);
   if (!app?.persistSession) {
     clearPaletteSession();
     return null;
@@ -85,5 +85,5 @@ export function resolveRestorablePaletteSession(): PaletteSession | null {
 
 export function canPersistAppSession(appId: string | null | undefined): boolean {
   if (!appId) return false;
-  return Boolean(getBuiltinApp(appId)?.persistSession);
+  return Boolean(getApp(appId)?.persistSession);
 }

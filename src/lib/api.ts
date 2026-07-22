@@ -7,8 +7,11 @@ import type {
   HostsBackup,
   HostsProfile,
   HostsWorkspace,
+  InstalledPackage,
+  InstalledPlugin,
   LauncherApp,
   LauncherUsageItem,
+  PluginRuntimeStatus,
   PortRecord,
   PomodoroState,
   Settings,
@@ -209,6 +212,21 @@ export const api = {
   showClipboardPicker: () => invoke<void>("show_clipboard_picker"),
   showSnippetPicker: () => invoke<void>("show_snippet_picker"),
   hideShelfPicker: () => invoke<void>("hide_shelf_picker"),
+
+  // Plugins
+  getPluginRuntimeStatus: () =>
+    invoke<PluginRuntimeStatus>("plugin_runtime_status"),
+  installPluginRuntime: () =>
+    invoke<PluginRuntimeStatus>("plugin_runtime_install"),
+  uninstallPluginRuntime: () =>
+    invoke<PluginRuntimeStatus>("plugin_runtime_uninstall"),
+  listPlugins: () => invoke<InstalledPlugin[]>("list_plugins"),
+  importLocalPlugin: (path: string) =>
+    invoke<InstalledPackage>("import_local_plugin", { path }),
+  trustPlugin: (pluginId: string, version: string, trusted: boolean) =>
+    invoke<void>("trust_plugin", { pluginId, version, trusted }),
+  setPluginEnabled: (pluginId: string, enabled: boolean) =>
+    invoke<void>("set_plugin_enabled_command", { pluginId, enabled }),
 
   // Tools — Hosts
   getHostsWorkspace: () => invoke<HostsWorkspace>("get_hosts_workspace"),

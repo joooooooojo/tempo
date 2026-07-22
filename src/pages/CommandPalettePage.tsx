@@ -25,7 +25,9 @@ import {
   listVisibleQuickActions,
   quickActionUsageId,
 } from "@/apps/actions/registry";
+import { AppIconView } from "@/apps/icon";
 import { BuiltinAppNavigationProvider } from "@/apps/navigation";
+import { PluginAppHost } from "@/apps/PluginAppHost";
 import { getBuiltinApp, listBuiltinApps } from "@/apps/registry";
 import {
   canPersistAppSession,
@@ -33,7 +35,12 @@ import {
   resolveRestorablePaletteSession,
   writePaletteSession,
 } from "@/apps/session";
-import type { BuiltinApp, OpenBuiltinAppOptions, QuickAction } from "@/apps/types";
+import {
+  resolveOpenAppParams,
+  type BuiltinApp,
+  type OpenBuiltinAppOptions,
+  type QuickAction,
+} from "@/apps/types";
 import { api } from "@/lib/api";
 import { notifyUser } from "@/lib/notifications";
 import { playNotificationSound } from "@/lib/sound";
@@ -196,10 +203,15 @@ export function CommandPalettePage() {
     (appId: string, options?: OpenBuiltinAppOptions) => {
       const app = getBuiltinApp(appId);
       if (!app) return;
+      const params = resolveOpenAppParams(options);
       setMode("app");
       setActiveAppId(appId);
-      setOpenCreateSnippet(Boolean(options?.createSnippet));
-      setInitialTranslateText(options?.initialTranslateText?.trim() || undefined);
+      setOpenCreateSnippet(Boolean(params.createSnippet));
+      const translateText =
+        typeof params.initialTranslateText === "string"
+          ? params.initialTranslateText.trim()
+          : undefined;
+      setInitialTranslateText(translateText || undefined);
       setQuery("");
       setError(null);
       if (app.persistSession) {
@@ -211,8 +223,10 @@ export function CommandPalettePage() {
       if (isTauri && !options?.restore) {
         // Always record via Rust (local RFC3339) then refresh — JS toISOString() is UTC
         // and lexicographic string sort put builtins after local +08:00 OS app timestamps.
+        const usageId =
+          app.source === "plugin" ? `plugin:${app.id}` : builtinUsageId(appId);
         void api
-          .recordLauncherUsage(builtinUsageId(appId))
+          .recordLauncherUsage(usageId)
           .then(() => api.getLauncherUsage())
           .then(setUsageItems)
           .catch((recordError) => {
@@ -756,7 +770,6 @@ export function CommandPalettePage() {
   );
 
   if (mode === "app" && activeApp) {
-    const AppComponent = activeApp.component;
     return (
       <BuiltinAppNavigationProvider value={navigationValue}>
         <main className="command-palette-page command-palette-page--app">
@@ -772,7 +785,7 @@ export function CommandPalettePage() {
               <ArrowLeft />
             </Button>
             <div className="command-palette-app-title">
-              <activeApp.icon className="size-4" aria-hidden="true" />
+              <AppIconView icon={activeApp.icon} className="size-4" />
               <span>{activeApp.name}</span>
             </div>
           </header>
@@ -782,13 +795,20 @@ export function CommandPalettePage() {
               !FLUSH_APP_IDS.has(activeApp.id) && "command-palette-app-host--padded"
             )}
           >
-            <AppComponent
-              onBack={backToSearch}
-              openCreateOnMount={activeApp.id === "snippets" ? openCreateSnippet : undefined}
-              initialTranslateText={
-                activeApp.id === "translate" ? initialTranslateText : undefined
-              }
-            />
+            {activeApp.ui.type === "react" ? (
+              <activeApp.ui.component
+                onBack={backToSearch}
+                openCreateOnMount={activeApp.id === "snippets" ? openCreateSnippet : undefined}
+                initialTranslateText={
+                  activeApp.id === "translate" ? initialTranslateText : undefined
+                }
+              />
+            ) : (
+              <PluginAppHost
+                pluginId={activeApp.pluginId}
+                entryPath={activeApp.ui.entryPath}
+              />
+            )}
           </div>
         </main>
         <OnboardingDialog
@@ -1098,7 +1118,6 @@ function SearchResults({
             {quickActions.map((action) => {
               const key = `action:${action.id}`;
               const validationError = action.validate?.(query) ?? null;
-              const Icon = action.icon;
               const pending = pendingKey === key;
               return (
                 <button
@@ -1117,7 +1136,7 @@ function SearchResults({
                         aria-hidden="true"
                       />
                     ) : (
-                      <Icon aria-hidden="true" />
+                      <AppIconView icon={action.icon} />
                     )}
                   </span>
                   <span>{validationError ? "内容过长" : action.name}</span>
@@ -1175,7 +1194,6 @@ function BuiltinTile({
   selected: boolean;
   onExecute: () => void;
 }) {
-  const Icon = app.icon;
   return (
     <div
       className="command-palette-app-tile-wrap"
@@ -1189,7 +1207,7 @@ function BuiltinTile({
         onClick={onExecute}
       >
         <span className="command-palette-builtin-icon">
-          <Icon aria-hidden="true" />
+          <AppIconView icon={app.icon} />
         </span>
         <span>{app.name}</span>
       </button>

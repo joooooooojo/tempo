@@ -1,5 +1,5 @@
 import { CheckSquare2, Languages } from "lucide-react";
-import type { QuickAction } from "@/apps/types";
+import { lucideIcon, type QuickAction } from "@/apps/types";
 import { api } from "@/lib/api";
 
 export const TODO_TITLE_LIMIT = 120;
@@ -8,7 +8,7 @@ const createTodoAction: QuickAction = {
   id: "create-todo",
   name: "创建待办",
   keywords: ["todo", "待办", "任务"],
-  icon: CheckSquare2,
+  icon: lucideIcon(CheckSquare2),
   source: "builtin",
   requiresQuery: true,
   validate: (query) =>
@@ -24,7 +24,7 @@ const translateAction: QuickAction = {
   id: "translate",
   name: "聚合翻译",
   keywords: ["translate", "翻译"],
-  icon: Languages,
+  icon: lucideIcon(Languages),
   source: "builtin",
   requiresQuery: true,
   title: (query) => `翻译：${query}`,
