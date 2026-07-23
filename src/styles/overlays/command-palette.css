@@ -45,6 +45,56 @@ html.command-palette-window--macos #root {
   padding: 5px 12px;
 }
 
+.command-palette-search-field {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-palette-clipboard-chip {
+  display: inline-flex;
+  max-width: min(52%, 360px);
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 10px;
+  background: hsl(var(--muted) / 0.72);
+  color: hsl(var(--foreground));
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.command-palette-clipboard-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-clipboard-chip-edit {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  opacity: 0.72;
+}
+
+.command-palette-clipboard-chip-edit:hover {
+  opacity: 1;
+}
+
+.command-palette-clipboard-chip-image {
+  display: block;
+  max-width: 120px;
+  max-height: 36px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
 .command-palette-input {
   min-width: 0;
   height: 48px;

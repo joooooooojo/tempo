@@ -2,7 +2,9 @@ use crate::clipboard_db::{
     clear_clipboard_history, count_clipboard_entries, delete_clipboard_entry,
     list_clipboard_entries, set_clipboard_entry_pinned, ClipboardEntry,
 };
-use crate::clipboard_images::{hydrate_clipboard_image_urls, maybe_delete_clipboard_image_file};
+use crate::clipboard_images::{
+    hydrate_clipboard_image_content, hydrate_clipboard_image_urls, maybe_delete_clipboard_image_file,
+};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -13,7 +15,7 @@ pub struct ClipboardHistoryPage {
 }
 use crate::clipboard_watcher::prewarm_clipboard_image_cache;
 use crate::clipboard_watcher::{copy_clipboard_entry_by_id, write_clipboard_text};
-use crate::db::AppState;
+use crate::db::{AppState, PALETTE_CLIPBOARD_SEED_MAX_AGE_MS};
 
 fn hydrate_clipboard_icons(entries: &mut [ClipboardEntry]) {
     for entry in entries.iter_mut() {
@@ -117,4 +119,78 @@ pub fn copy_clipboard_entry(
 ) -> Result<(), String> {
     tracing::debug!(target: "tempo::clipboard", entry_id = id, "copy clipboard entry command");
     copy_clipboard_entry_by_id(&state, &app, id)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandPaletteClipboardSeed {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_height: Option<u32>,
+}
+
+#[tauri::command]
+pub fn get_command_palette_clipboard_seed(
+    state: tauri::State<AppState>,
+) -> Result<Option<CommandPaletteClipboardSeed>, String> {
+    let recent = {
+        let runtime = state.clipboard.lock();
+        runtime.recent_for_palette.clone()
+    };
+    let Some(recent) = recent else {
+        return Ok(None);
+    };
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    if now_ms.saturating_sub(recent.captured_at_ms) > PALETTE_CLIPBOARD_SEED_MAX_AGE_MS {
+        return Ok(None);
+    }
+
+    if recent.kind == "text" {
+        let Some(full_text) = recent.text.filter(|value| !value.trim().is_empty()) else {
+            return Ok(None);
+        };
+        return Ok(Some(CommandPaletteClipboardSeed {
+            kind: "text".into(),
+            full_text: Some(full_text),
+            entry_id: recent.entry_id,
+            image_url: None,
+            image_width: None,
+            image_height: None,
+        }));
+    }
+
+    if recent.kind == "image" {
+        let Some(entry_id) = recent.entry_id else {
+            return Ok(None);
+        };
+        let conn = state.db.lock();
+        let Some(entry) = crate::clipboard_db::get_clipboard_entry(&conn, entry_id) else {
+            return Ok(None);
+        };
+        drop(conn);
+        let image_url = if entry.kind == "image" {
+            Some(hydrate_clipboard_image_content(&entry.content))
+        } else {
+            None
+        };
+        return Ok(Some(CommandPaletteClipboardSeed {
+            kind: "image".into(),
+            full_text: None,
+            entry_id: Some(entry_id),
+            image_url,
+            image_width: recent.image_width.or(entry.image_width),
+            image_height: recent.image_height.or(entry.image_height),
+        }));
+    }
+
+    Ok(None)
 }

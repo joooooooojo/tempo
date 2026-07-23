@@ -159,6 +159,15 @@ export interface ClipboardHistoryPage {
   has_more: boolean;
 }
 
+export interface CommandPaletteClipboardSeed {
+  kind: "text" | "image" | string;
+  fullText?: string | null;
+  entryId?: number | null;
+  imageUrl?: string | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+}
+
 export interface Snippet {
   id: number;
   title: string;

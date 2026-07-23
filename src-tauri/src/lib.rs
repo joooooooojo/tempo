@@ -426,6 +426,7 @@ pub fn run() {
             commands::clipboard::pin_clipboard_history_entry,
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::copy_clipboard_entry,
+            commands::clipboard::get_command_palette_clipboard_seed,
             commands::snippets::get_snippets,
             commands::snippets::get_snippet_groups,
             commands::snippets::create_snippet_group,

@@ -17,6 +17,7 @@ import {
   Pin,
   PinOff,
   ArrowLeft,
+  Pencil,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { AppIcon } from "@/components/AppIcon";
@@ -51,8 +52,14 @@ import { notifyUser } from "@/lib/notifications";
 import { playNotificationSound } from "@/lib/sound";
 import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
 import { appToastOptions } from "@/lib/toastOptions";
+import {
+  resolveQuickActionQuery,
+  seedToPaletteChip,
+  shouldInlineClipboardText,
+  type PaletteClipboardChip,
+} from "@/lib/paletteClipboardSeed";
 import { isMacTarget, isWindowsTarget, cn } from "@/lib/utils";
-import type { LauncherApp, LauncherUsageItem, ReminderEvent } from "@/types";
+import type { CommandPaletteClipboardSeed, LauncherApp, LauncherUsageItem, ReminderEvent } from "@/types";
 
 const GRID_COLUMNS = 9;
 const RECENT_COLLAPSED_COUNT = GRID_COLUMNS * 2;
@@ -69,7 +76,7 @@ const BUILTIN_USAGE_PREFIX = "builtin:";
 const PLUGIN_USAGE_PREFIX = "plugin:";
 /** Tool pages already have their own edge-to-edge chrome; skip host padding. */
 const FLUSH_APP_IDS = new Set(["hosts", "translate", "port-manager"]);
-/** Fill host via h-full/flex — do not wrap in ScrollArea (breaks height chain). */
+/** Fill host via h-full/flex ? do not wrap in ScrollArea (breaks height chain). */
 const FILL_HEIGHT_APP_IDS = new Set([
   "hosts",
   "translate",
@@ -125,6 +132,7 @@ export function CommandPalettePage() {
   const [apps, setApps] = useState<LauncherApp[]>([]);
   const [usageItems, setUsageItems] = useState<LauncherUsageItem[]>([]);
   const [query, setQuery] = useState("");
+  const [clipboardChip, setClipboardChip] = useState<PaletteClipboardChip | null>(null);
   const [loading, setLoading] = useState(true);
   const [recentExpanded, setRecentExpanded] = useState(false);
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
@@ -136,6 +144,7 @@ export function CommandPalettePage() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const clipboardChipRef = useRef<PaletteClipboardChip | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<string | null>(null);
   const modeRef = useRef<PaletteMode>("search");
@@ -165,8 +174,13 @@ export function CommandPalettePage() {
     activeAppIdRef.current = activeAppId;
   }, [activeAppId]);
 
+  useEffect(() => {
+    clipboardChipRef.current = clipboardChip;
+  }, [clipboardChip]);
+
   const resetSearchState = useCallback(() => {
     setQuery("");
+    setClipboardChip(null);
     setRecentExpanded(false);
     setPinnedExpanded(false);
     setSearchExpanded(false);
@@ -184,6 +198,47 @@ export function CommandPalettePage() {
     setOpenCreateSnippet(false);
     setInitialTranslateText(undefined);
   }, [resetSearchState]);
+
+  const applyClipboardSeedFromBackend = useCallback(async () => {
+    if (!isTauri) return;
+    try {
+      const seed = await api.getCommandPaletteClipboardSeed();
+      if (!seed) {
+        setClipboardChip(null);
+        return;
+      }
+      if (seed.kind === "text" && seed.fullText) {
+        if (shouldInlineClipboardText(seed.fullText)) {
+          setClipboardChip(null);
+          setQuery(seed.fullText.trim());
+        } else {
+          setClipboardChip(seedToPaletteChip(seed));
+          setQuery("");
+        }
+        return;
+      }
+      if (seed.kind === "image") {
+        setClipboardChip(seedToPaletteChip(seed));
+        setQuery("");
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }, [isTauri]);
+
+  const clipboardSeedForActions = useMemo((): CommandPaletteClipboardSeed | null => {
+    if (!clipboardChip) return null;
+    if (clipboardChip.kind === "text") {
+      return { kind: "text", fullText: clipboardChip.fullText };
+    }
+    return {
+      kind: "image",
+      entryId: clipboardChip.entryId,
+      imageUrl: clipboardChip.imageUrl,
+      imageWidth: clipboardChip.imageWidth,
+      imageHeight: clipboardChip.imageHeight,
+    };
+  }, [clipboardChip]);
 
   const hideAndResetPalette = useCallback(async () => {
     clearPaletteSession();
@@ -247,7 +302,7 @@ export function CommandPalettePage() {
       }
       if (isTauri) needsSearchSizeRef.current = true;
       if (isTauri && !options?.restore) {
-        // Always record via Rust (local RFC3339) then refresh — JS toISOString() is UTC
+        // Always record via Rust (local RFC3339) then refresh ? JS toISOString() is UTC
         // and lexicographic string sort put builtins after local +08:00 OS app timestamps.
         const usageId =
           app.source === "plugin" ? `plugin:${app.id}` : builtinUsageId(appId);
@@ -395,7 +450,7 @@ export function CommandPalettePage() {
 
     const restoreSessionIfNeeded = () => {
       if (modeRef.current === "app" && activeAppIdRef.current) {
-        // Keep current size — resizing here after show causes a visible flash.
+        // Keep current size ? resizing here after show causes a visible flash.
         return true;
       }
       const session = resolveRestorablePaletteSession();
@@ -410,12 +465,13 @@ export function CommandPalettePage() {
       setOpenRevision((current) => current + 1);
       const restored = restoreSessionIfNeeded();
       if (!restored && modeRef.current === "search") {
-        // Drop stale keyboard selection (e.g. last opened 内置应用) so current
-        // starts at the first 最近使用 item again.
         setSelectedKey(null);
+        void applyClipboardSeedFromBackend();
         const focusSearch = () => {
           inputRef.current?.focus();
-          inputRef.current?.select();
+          if (!clipboardChipRef.current) {
+            inputRef.current?.select();
+          }
         };
         window.requestAnimationFrame(focusSearch);
         // Panel may become key a tick after the open event; retry so typing works immediately.
@@ -439,7 +495,7 @@ export function CommandPalettePage() {
     const unlistenIndex = listen("launcher:index-ready", () => void loadApps());
     void getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
-        // Native file sheets steal focus; suppress blur→hide while they are open (ZTools pattern).
+        // Native file sheets steal focus; suppress blur?hide while they are open (ZTools pattern).
         if (!focused && armed && !pendingRef.current && !isBlurHideSuppressed()) {
           void hidePreservingSession();
           return;
@@ -447,7 +503,9 @@ export function CommandPalettePage() {
         if (focused && modeRef.current === "search") {
           window.requestAnimationFrame(() => {
             inputRef.current?.focus();
-            inputRef.current?.select();
+            if (!clipboardChipRef.current) {
+              inputRef.current?.select();
+            }
           });
         }
       })
@@ -463,7 +521,7 @@ export function CommandPalettePage() {
       void unlistenIndex.then((unlisten) => unlisten());
       unlistenBlur?.();
     };
-  }, [hidePreservingSession, isTauri, loadApps, openBuiltinApp, resetPaletteState]);
+  }, [applyClipboardSeedFromBackend, hidePreservingSession, isTauri, loadApps, openBuiltinApp, resetPaletteState]);
 
   // Keep the controlled input snappy; defer the heavy search/list work.
   const deferredQuery = useDeferredValue(query);
@@ -577,9 +635,18 @@ export function CommandPalettePage() {
     return map;
   }, [usageItems]);
 
+  const liveQuickActionQuery = useMemo(
+    () => resolveQuickActionQuery(liveNormalizedQuery, clipboardSeedForActions),
+    [clipboardSeedForActions, liveNormalizedQuery]
+  );
+  const quickActionQuery = useMemo(
+    () => resolveQuickActionQuery(normalizedQuery, clipboardSeedForActions),
+    [clipboardSeedForActions, normalizedQuery]
+  );
+
   const visibleQuickActions = useMemo(
-    () => listVisibleQuickActions(normalizedQuery, quickActionUsageById),
-    [normalizedQuery, quickActionUsageById]
+    () => listVisibleQuickActions(quickActionQuery, quickActionUsageById),
+    [quickActionQuery, quickActionUsageById]
   );
 
   const selectionRows = useMemo<PaletteSelection[][]>(() => {
@@ -665,7 +732,7 @@ export function CommandPalettePage() {
     void api.setCommandPaletteSize(SEARCH_WIDTH, height);
   }, [isTauri, mode, activeAppId]);
 
-  // ResizeObserver alone tracks content height. Avoid depending on query/lists —
+  // ResizeObserver alone tracks content height. Avoid depending on query/lists ?
   // re-subscribing + native set_size on every keystroke is the main input lag source.
   useEffect(() => {
     const content = contentRef.current;
@@ -713,12 +780,12 @@ export function CommandPalettePage() {
       }
 
       if (selection.kind === "action") {
-        const validationError = selection.action.validate?.(liveNormalizedQuery) ?? null;
+        const validationError = selection.action.validate?.(liveQuickActionQuery) ?? null;
         if (validationError) {
           setError(validationError);
           return;
         }
-        if (selection.action.requiresQuery !== false && !liveNormalizedQuery) return;
+        if (selection.action.requiresQuery !== false && !liveQuickActionQuery) return;
 
         pendingRef.current = selection.key;
         setPendingKey(selection.key);
@@ -743,7 +810,7 @@ export function CommandPalettePage() {
               .catch(console.error);
           }
           await selection.action.run({
-            query: liveNormalizedQuery,
+            query: liveQuickActionQuery,
             openApp: openBuiltinApp,
             hideAndReset: hideAndResetPalette,
           });
@@ -770,7 +837,7 @@ export function CommandPalettePage() {
         setPendingKey(null);
       }
     },
-    [hideAndResetPalette, isTauri, liveNormalizedQuery, loadApps, openBuiltinApp]
+    [hideAndResetPalette, isTauri, liveQuickActionQuery, loadApps, openBuiltinApp]
   );
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -895,20 +962,64 @@ export function CommandPalettePage() {
               </>
             ) : (
               <>
-                <input
-                  ref={inputRef}
-                  value={query}
-                  className="command-palette-input"
-                  placeholder="搜索应用或输入命令"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-label="搜索应用或输入命令"
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setError(null);
-                  }}
-                  onKeyDown={handleKeyDown}
-                />
+                <div className="command-palette-search-field">
+                  {clipboardChip ? (
+                    <div
+                      className="command-palette-clipboard-chip"
+                      title={
+                        clipboardChip.kind === "text"
+                          ? clipboardChip.fullText
+                          : "图片"
+                      }
+                    >
+                      {clipboardChip.kind === "text" ? (
+                        <>
+                          <span className="command-palette-clipboard-chip-label">
+                            {clipboardChip.label}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className="command-palette-clipboard-chip-edit"
+                            onClick={() => {
+                              setQuery(clipboardChip.fullText);
+                              setClipboardChip(null);
+                              window.requestAnimationFrame(() => {
+                                inputRef.current?.focus();
+                                inputRef.current?.select();
+                              });
+                            }}
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+                        </>
+                      ) : (
+                        <img
+                          src={clipboardChip.imageUrl}
+                          alt=""
+                          className="command-palette-clipboard-chip-image"
+                          width={clipboardChip.imageWidth ?? undefined}
+                          height={clipboardChip.imageHeight ?? undefined}
+                        />
+                      )}
+                    </div>
+                  ) : null}
+                  <input
+                    ref={inputRef}
+                    value={query}
+                    className="command-palette-input"
+                    placeholder={clipboardChip ? "搜索匹配" : "搜索应用或输入命令"}
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="搜索应用或输入命令"
+                    onChange={(event) => {
+                      setQuery(event.target.value);
+                      setError(null);
+                    }}
+                    onKeyDown={handleKeyDown}
+                  />
+                </div>
                 <Button
                   type="button"
                   variant="ghost"

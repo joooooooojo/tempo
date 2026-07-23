@@ -1,13 +1,12 @@
 use crate::clipboard_db::{
     encode_rgba_png, get_clipboard_entry, hash_bytes, insert_clipboard_image,
-    insert_clipboard_text, touch_clipboard_entry,
+    insert_clipboard_text, touch_clipboard_entry, ClipboardEntry,
 };
 use crate::clipboard_images::save_clipboard_image_png;
 use crate::clipboard_images::{
     load_clipboard_image_rgba_timed, normalize_clipboard_image_reference,
 };
-use crate::db::CachedClipboardImage;
-use crate::db::{load_settings, AppState};
+use crate::db::{load_settings, AppState, CachedClipboardImage, RecentClipboardForPalette};
 use crate::platform::{get_foreground_app, ForegroundApp};
 use arboard::ImageData;
 use arboard::{Clipboard, Error as ClipboardError};
@@ -264,9 +263,12 @@ fn capture_clipboard_snapshot(
                     None
                 };
 
-            return ClipboardCaptureResult::Captured {
-                changed: inserted.is_some(),
-            };
+            let changed = inserted.is_some();
+            if let Some(entry) = &inserted {
+                record_recent_clipboard_for_palette(state, entry);
+            }
+
+            return ClipboardCaptureResult::Captured { changed };
         }
         Ok(ClipboardSnapshot::Text(text)) => {
             if text.is_empty() {
@@ -286,9 +288,11 @@ fn capture_clipboard_snapshot(
                 let conn = state.db.lock();
                 insert_clipboard_text(&conn, &text, source_app, source_process, max_entries)
             };
-            ClipboardCaptureResult::Captured {
-                changed: inserted.is_some(),
+            let changed = inserted.is_some();
+            if let Some(entry) = &inserted {
+                record_recent_clipboard_for_palette(state, entry);
             }
+            ClipboardCaptureResult::Captured { changed }
         }
         Ok(ClipboardSnapshot::Empty) => ClipboardCaptureResult::Captured { changed: false },
         Err(error) if clipboard_error_is_busy(&error) => ClipboardCaptureResult::Busy,
@@ -901,6 +905,24 @@ fn cache_decoded_clipboard_image(
     ));
 
     image
+}
+
+pub(crate) fn record_recent_clipboard_for_palette(state: &AppState, entry: &ClipboardEntry) {
+    let captured_at_ms = chrono::Utc::now().timestamp_millis();
+    let text = if entry.kind == "text" {
+        Some(entry.content.clone())
+    } else {
+        None
+    };
+    let mut runtime = state.clipboard.lock();
+    runtime.recent_for_palette = Some(RecentClipboardForPalette {
+        captured_at_ms,
+        kind: entry.kind.clone(),
+        text,
+        entry_id: Some(entry.id),
+        image_width: entry.image_width,
+        image_height: entry.image_height,
+    });
 }
 
 fn with_skip_capture<T>(

@@ -291,6 +291,19 @@ impl Default for TrackerState {
     }
 }
 
+/// Recent user copy kept for the command palette (see `PALETTE_CLIPBOARD_SEED_MAX_AGE_MS`).
+#[derive(Debug, Clone)]
+pub struct RecentClipboardForPalette {
+    pub captured_at_ms: i64,
+    pub kind: String,
+    pub text: Option<String>,
+    pub entry_id: Option<i64>,
+    pub image_width: Option<u32>,
+    pub image_height: Option<u32>,
+}
+
+pub const PALETTE_CLIPBOARD_SEED_MAX_AGE_MS: i64 = 10_000;
+
 #[derive(Debug, Default)]
 pub struct ClipboardRuntime {
     pub skip_next_capture: bool,
@@ -299,6 +312,7 @@ pub struct ClipboardRuntime {
     pub decoded_image_cache: HashMap<String, CachedClipboardImage>,
     pub decoded_image_cache_order: VecDeque<String>,
     pub decoded_image_cache_bytes: usize,
+    pub recent_for_palette: Option<RecentClipboardForPalette>,
 }
 
 #[derive(Debug, Clone)]

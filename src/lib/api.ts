@@ -3,6 +3,7 @@ import type {
   AppUsage,
   ClipboardEntry,
   ClipboardHistoryPage,
+  CommandPaletteClipboardSeed,
   DailyReport,
   HostsBackup,
   HostsProfile,
@@ -173,6 +174,8 @@ export const api = {
     invoke<ClipboardEntry>("pin_clipboard_history_entry", { id, pinned }),
   copyTextToClipboard: (text: string) => invoke<void>("copy_text_to_clipboard", { text }),
   copyClipboardEntry: (id: number) => invoke<void>("copy_clipboard_entry", { id }),
+  getCommandPaletteClipboardSeed: () =>
+    invoke<CommandPaletteClipboardSeed | null>("get_command_palette_clipboard_seed"),
   getSnippets: (query?: string, groupId?: number | null, sort?: string) =>
     invoke<Snippet[]>("get_snippets", { query, groupId, sort }),
   getSnippetGroups: () => invoke<SnippetGroup[]>("get_snippet_groups"),

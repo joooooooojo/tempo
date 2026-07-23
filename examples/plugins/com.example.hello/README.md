@@ -1,8 +1,7 @@
 # Hello 示例插件（com.example.hello）
 
 Tempo 插件系统 Phase 1 的最小混合插件示例：一个面板应用（UI）+ 一个快捷操作，二者共用同一个
-`main` Runtime 命令 `hello`。用于验证插件导入、信任、启用、Runtime 激活和 Host Bridge 的完整
-链路（详见 `docs/plugin-system-design.md` 附录 C）。
+`main` Runtime 命令 `hello`。用于验证插件导入、信任、启用、Runtime 激活和 Host Bridge 的完整链路。
 
 ```text
 com.example.hello/
