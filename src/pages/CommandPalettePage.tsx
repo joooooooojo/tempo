@@ -2,6 +2,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -60,6 +61,8 @@ const MAX_SEARCH_RESULTS = GRID_COLUMNS * 4;
 /** Typing changes result height often; native window resize each time feels like input lag. */
 const PALETTE_RESIZE_DEBOUNCE_MS = 100;
 const SEARCH_WIDTH = 800;
+/** Fallback only when content has not mounted yet; prefer measured scrollHeight. */
+const SEARCH_FALLBACK_HEIGHT = 370;
 const DEFAULT_APP_WIDTH = 920;
 const DEFAULT_APP_HEIGHT = 700;
 const BUILTIN_USAGE_PREFIX = "builtin:";
@@ -129,6 +132,8 @@ export function CommandPalettePage() {
   const pendingRef = useRef<string | null>(null);
   const modeRef = useRef<PaletteMode>("search");
   const activeAppIdRef = useRef<string | null>(null);
+  /** After leaving a plugin, size once to measured search content (skip placeholder 370). */
+  const needsSearchSizeRef = useRef(false);
   const isTauri = isTauriRuntime();
   const [appsRevision, setAppsRevision] = useState(0);
   const builtinApps = useMemo(() => listBuiltinApps(), [appsRevision]);
@@ -211,7 +216,9 @@ export function CommandPalettePage() {
     setError(null);
     setSelectedKey(null);
     if (isTauri) {
-      void api.setCommandPaletteSize(SEARCH_WIDTH, 370);
+      // Defer size until search DOM is laid out so we jump once to measured
+      // height instead of 370 -> ResizeObserver correction (height jitter).
+      needsSearchSizeRef.current = true;
       void api.getLauncherUsage().then(setUsageItems).catch(console.error);
     }
     window.requestAnimationFrame(() => {
@@ -651,6 +658,16 @@ export function CommandPalettePage() {
     }
   }, [mode, selectedKey, selections]);
 
+  // After plugin -> search: apply SEARCH_WIDTH + measured height in one shot before paint.
+  useLayoutEffect(() => {
+    if (!needsSearchSizeRef.current || !isTauri || mode !== "search") return;
+    needsSearchSizeRef.current = false;
+    const height = contentRef.current
+      ? Math.ceil(contentRef.current.scrollHeight)
+      : SEARCH_FALLBACK_HEIGHT;
+    void api.setCommandPaletteSize(SEARCH_WIDTH, height);
+  }, [isTauri, mode]);
+
   // ResizeObserver alone tracks content height. Avoid depending on query/lists —
   // re-subscribing + native set_size on every keystroke is the main input lag source.
   useEffect(() => {
@@ -684,7 +701,7 @@ export function CommandPalettePage() {
       observer.disconnect();
       window.cancelAnimationFrame(frame);
       window.clearTimeout(debounceTimer);
-      flushResize();
+      // Do not flush: leaving search must not race applyAppWindowSize.
     };
   }, [isTauri, mode, openRevision]);
 

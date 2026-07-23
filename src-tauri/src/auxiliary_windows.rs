@@ -265,9 +265,14 @@ fn resize_command_palette_height_only(
         let max_height = COMMAND_PALETTE_MAX_HEIGHT
             .min((available_height - top_offset - 24.0).max(COMMAND_PALETTE_MIN_HEIGHT));
         let height = requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, max_height);
-        let current = window.outer_size().ok();
-        let width = current
-            .map(|size| size.width as f64 / scale)
+        // Preserve inner width. `set_size(LogicalSize)` sets the inner client area;
+        // reading outer_size (shadow/DWM frame) and writing it back widens the window
+        // once — visible as a width jitter when the panel opens or returns to search.
+        let window_scale = window.scale_factor().unwrap_or(scale);
+        let width = window
+            .inner_size()
+            .ok()
+            .map(|size| size.width as f64 / window_scale)
             .unwrap_or(COMMAND_PALETTE_WIDTH)
             .clamp(320.0, COMMAND_PALETTE_APP_WIDTH.max(COMMAND_PALETTE_WIDTH));
         (width, height)
@@ -277,6 +282,14 @@ fn resize_command_palette_height_only(
             requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, COMMAND_PALETTE_MAX_HEIGHT),
         )
     };
+    // Skip no-op resizes (e.g. ResizeObserver remount on every open) to avoid a flash.
+    if let (Ok(current), Ok(window_scale)) = (window.inner_size(), window.scale_factor()) {
+        let current_width = current.width as f64 / window_scale;
+        let current_height = current.height as f64 / window_scale;
+        if (current_width - width).abs() < 0.5 && (current_height - height).abs() < 0.5 {
+            return Ok(());
+        }
+    }
     window.set_size(LogicalSize::new(width, height))?;
     Ok(())
 }
