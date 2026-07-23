@@ -33,8 +33,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/Tempo/**",
-          "$APPDATA/com.zekun.tempo/**"
+          "$APPDATA/Tempo/**"
         ]
       }
     }

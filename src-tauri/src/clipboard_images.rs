@@ -1,8 +1,7 @@
 use crate::asset_protocol::{
     asset_dir, asset_protocol_response, asset_url_for_file_name, storage_key_from_protocol_url,
 };
-use crate::clipboard_db::{hash_bytes, ClipboardEntry};
-use base64::Engine as _;
+use crate::clipboard_db::ClipboardEntry;
 use rusqlite::Connection;
 use std::path::Path;
 use std::time::Instant;
@@ -27,10 +26,6 @@ pub fn is_clipboard_image_storage_key(content: &str) -> bool {
     is_valid_clipboard_image_file_name(file_name)
 }
 
-pub fn is_legacy_clipboard_image_data_url(content: &str) -> bool {
-    content.starts_with("data:image/png;base64,")
-}
-
 pub fn save_clipboard_image_png(
     app: &AppHandle,
     content_hash: &str,
@@ -50,37 +45,12 @@ pub fn save_clipboard_image_png(
     Ok(clipboard_image_storage_key(content_hash))
 }
 
-pub fn hydrate_clipboard_image_urls(
-    app: &AppHandle,
-    conn: &Connection,
-    entries: &mut [ClipboardEntry],
-) {
+pub fn hydrate_clipboard_image_urls(entries: &mut [ClipboardEntry]) {
     for entry in entries.iter_mut() {
         if entry.kind != "image" {
             continue;
         }
-        let original = entry.content.clone();
-        if is_legacy_clipboard_image_data_url(&original) {
-            if let Ok(storage_key) = migrate_legacy_image_content(app, &original) {
-                if let Err(error) = conn.execute(
-                    "UPDATE clipboard_history SET content = ?1 WHERE id = ?2",
-                    rusqlite::params![storage_key, entry.id],
-                ) {
-                    tracing::warn!(
-                        entry_id = entry.id,
-                        error = %error,
-                        "failed to update hydrated clipboard image storage key"
-                    );
-                }
-                entry.content = hydrate_clipboard_image_content(&storage_key);
-                continue;
-            }
-            tracing::debug!(
-                entry_id = entry.id,
-                "failed to hydrate legacy clipboard image"
-            );
-        }
-        entry.content = hydrate_clipboard_image_content(&original);
+        entry.content = hydrate_clipboard_image_content(&entry.content);
     }
 }
 
@@ -124,39 +94,6 @@ pub fn load_clipboard_image_rgba_timed(
     content: &str,
 ) -> Option<(u32, u32, Vec<u8>, ClipboardImageLoadTiming)> {
     let total_start = Instant::now();
-    if is_legacy_clipboard_image_data_url(content) {
-        let decode_start = Instant::now();
-        let png_bytes = match decode_legacy_png_bytes(content) {
-            Some(bytes) => bytes,
-            None => {
-                tracing::debug!("failed to decode legacy clipboard image data url");
-                return None;
-            }
-        };
-        let png_len = png_bytes.len();
-        let (width, height, rgba) = match decode_png_bytes(&png_bytes) {
-            Some(decoded) => decoded,
-            None => {
-                tracing::debug!(
-                    png_bytes = png_len,
-                    "failed to decode legacy clipboard image png"
-                );
-                return None;
-            }
-        };
-        let decode_ms = decode_start.elapsed().as_millis();
-        return Some((
-            width,
-            height,
-            rgba,
-            ClipboardImageLoadTiming {
-                read_ms: 0,
-                decode_ms,
-                total_ms: total_start.elapsed().as_millis(),
-                png_bytes: png_len,
-            },
-        ));
-    }
     let storage_key = normalize_clipboard_image_reference(content);
     if !is_clipboard_image_storage_key(&storage_key) {
         return None;
@@ -229,59 +166,6 @@ pub fn maybe_delete_clipboard_image_file(conn: &Connection, app: &AppHandle, con
     }
 }
 
-pub fn migrate_legacy_clipboard_images(app: &AppHandle, conn: &Connection) {
-    let mut stmt = match conn.prepare(
-        "SELECT id, content FROM clipboard_history
-         WHERE kind = 'image' AND content LIKE 'data:image/png;base64,%'",
-    ) {
-        Ok(stmt) => stmt,
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to prepare legacy clipboard image migration query");
-            return;
-        }
-    };
-    let rows = match stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-    }) {
-        Ok(rows) => {
-            let mut values = Vec::new();
-            for row in rows {
-                match row {
-                    Ok(value) => values.push(value),
-                    Err(error) => {
-                        tracing::warn!(error = %error, "failed to read legacy clipboard image row");
-                    }
-                }
-            }
-            values
-        }
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to query legacy clipboard images");
-            return;
-        }
-    };
-
-    for (id, content) in rows {
-        let Ok(storage_key) = migrate_legacy_image_content(app, &content) else {
-            tracing::debug!(
-                entry_id = id,
-                "failed to migrate legacy clipboard image content"
-            );
-            continue;
-        };
-        if let Err(error) = conn.execute(
-            "UPDATE clipboard_history SET content = ?1 WHERE id = ?2",
-            rusqlite::params![storage_key, id],
-        ) {
-            tracing::warn!(
-                entry_id = id,
-                error = %error,
-                "failed to update migrated clipboard image row"
-            );
-        }
-    }
-}
-
 pub fn clipboard_image_protocol_response(
     app: &AppHandle,
     request: Request<Vec<u8>>,
@@ -293,12 +177,6 @@ pub fn clipboard_image_protocol_response(
         is_valid_clipboard_image_file_name,
         request,
     )
-}
-
-fn migrate_legacy_image_content(app: &AppHandle, data_url: &str) -> Result<String, String> {
-    let png_bytes = decode_legacy_png_bytes(data_url).ok_or_else(|| "图片数据无效".to_string())?;
-    let content_hash = hash_bytes(&png_bytes);
-    save_clipboard_image_png(app, &content_hash, &png_bytes)
 }
 
 fn read_clipboard_image_bytes(app: &AppHandle, storage_key: &str) -> Result<Vec<u8>, String> {
@@ -316,17 +194,6 @@ fn read_clipboard_image_bytes(app: &AppHandle, storage_key: &str) -> Result<Vec<
         return Err("图片路径无效".into());
     }
     std::fs::read(canonical_path).map_err(|_| "图片读取失败".to_string())
-}
-
-fn decode_legacy_png_bytes(data_url: &str) -> Option<Vec<u8>> {
-    let payload = data_url.strip_prefix("data:image/png;base64,")?;
-    match base64::engine::general_purpose::STANDARD.decode(payload) {
-        Ok(bytes) => Some(bytes),
-        Err(error) => {
-            tracing::debug!(error = %error, "failed to decode legacy clipboard image base64");
-            None
-        }
-    }
 }
 
 fn decode_png_bytes(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {

@@ -1,8 +1,8 @@
 use crate::db::{
-    add_app_time, add_screen_time, cleanup_old_data, get_daily_total, load_settings, today_str,
+    add_app_time, add_tempo_time, cleanup_old_data, get_daily_total, load_settings, today_str,
     AppState,
 };
-use crate::platform::{get_foreground_app, should_count_screen_time, should_count_time};
+use crate::platform::{get_foreground_app, should_count_tempo_time, should_count_time};
 use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
 use serde_json::json;
 use std::time::Instant;
@@ -40,7 +40,7 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
 
             let foreground = get_foreground_app();
 
-            if !should_count_screen_time(&foreground) {
+            if !should_count_tempo_time(&foreground) {
                 state.tracker.lock().continuous_seconds = 0;
                 continue;
             }
@@ -49,7 +49,7 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
                 let conn = state.db.lock();
                 for (bucket_date, bucket_hour, seconds) in second_buckets(now, elapsed_seconds) {
                     let tracked_seconds =
-                        add_screen_time(&conn, &bucket_date, bucket_hour, seconds);
+                        add_tempo_time(&conn, &bucket_date, bucket_hour, seconds);
                     if tracked_seconds <= 0 {
                         continue;
                     }

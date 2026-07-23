@@ -337,8 +337,8 @@ pub fn set_storage_dir(
         return Err("请选择数据目录之外的位置".into());
     }
 
-    let current_db = current_dir.join("screen_time.db");
-    let target_db = target_dir.join("screen_time.db");
+    let current_db = current_dir.join(crate::db::DB_FILE_NAME);
+    let target_db = target_dir.join(crate::db::DB_FILE_NAME);
     if target_db.exists() {
         return Err("目标位置已存在 Tempo 数据，请选择一个空目录".into());
     }
@@ -398,7 +398,7 @@ fn normalize_storage_dir(value: &str) -> Result<PathBuf, String> {
             .is_some_and(|name| name == "clipboard-images")
         || path
             .file_name()
-            .is_some_and(|name| name == "screen_time.db")
+            .is_some_and(|name| name == crate::db::DB_FILE_NAME)
     {
         return Err("请选择一个文件夹作为存储位置".into());
     }
@@ -518,8 +518,14 @@ fn cleanup_old_storage_files(
     }
 
     remove_old_storage_file(old_db, "old database file");
-    remove_old_storage_file(&old_dir.join("screen_time.db-wal"), "old database wal file");
-    remove_old_storage_file(&old_dir.join("screen_time.db-shm"), "old database shm file");
+    remove_old_storage_file(
+        &old_dir.join(format!("{}-wal", crate::db::DB_FILE_NAME)),
+        "old database wal file",
+    );
+    remove_old_storage_file(
+        &old_dir.join(format!("{}-shm", crate::db::DB_FILE_NAME)),
+        "old database shm file",
+    );
     remove_old_storage_dir(old_markdown_dir, "old markdown image directory");
     remove_old_storage_dir(old_clipboard_images_dir, "old clipboard image directory");
 }
@@ -549,11 +555,11 @@ pub fn reset_today(state: tauri::State<AppState>) {
 pub fn do_reset_today(state: &AppState) {
     let conn = state.db.lock();
     let today = today_str();
-    if let Err(error) = conn.execute("DELETE FROM screen_time_daily WHERE date = ?1", [&today]) {
-        tracing::warn!(error = %error, "failed to reset today's daily screen time");
+    if let Err(error) = conn.execute("DELETE FROM tempo_daily WHERE date = ?1", [&today]) {
+        tracing::warn!(error = %error, "failed to reset today's daily tempo usage");
     }
-    if let Err(error) = conn.execute("DELETE FROM screen_time_hourly WHERE date = ?1", [&today]) {
-        tracing::warn!(error = %error, "failed to reset today's hourly screen time");
+    if let Err(error) = conn.execute("DELETE FROM tempo_hourly WHERE date = ?1", [&today]) {
+        tracing::warn!(error = %error, "failed to reset today's hourly tempo usage");
     }
     if let Err(error) = conn.execute("DELETE FROM app_usage WHERE date = ?1", [&today]) {
         tracing::warn!(error = %error, "failed to reset today's app usage");
@@ -563,11 +569,11 @@ pub fn do_reset_today(state: &AppState) {
 #[tauri::command]
 pub fn reset_all(state: tauri::State<AppState>) {
     let conn = state.db.lock();
-    if let Err(error) = conn.execute("DELETE FROM screen_time_daily", []) {
-        tracing::warn!(error = %error, "failed to reset all daily screen time");
+    if let Err(error) = conn.execute("DELETE FROM tempo_daily", []) {
+        tracing::warn!(error = %error, "failed to reset all daily tempo usage");
     }
-    if let Err(error) = conn.execute("DELETE FROM screen_time_hourly", []) {
-        tracing::warn!(error = %error, "failed to reset all hourly screen time");
+    if let Err(error) = conn.execute("DELETE FROM tempo_hourly", []) {
+        tracing::warn!(error = %error, "failed to reset all hourly tempo usage");
     }
     if let Err(error) = conn.execute("DELETE FROM app_usage", []) {
         tracing::warn!(error = %error, "failed to reset all app usage");

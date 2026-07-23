@@ -236,9 +236,49 @@ pub fn set_command_palette_size(
     let window = app
         .get_webview_window(COMMAND_PALETTE_LABEL)
         .ok_or_else(|| "未找到快捷面板窗口".to_string())?;
+    // Search mode passes width=None and only changes height while typing. Avoid
+    // monitor/cursor/position work on every keystroke — that was a major input lag source.
+    if width.is_none() {
+        return resize_command_palette_height_only(&app, &window, height)
+            .map_err(|error| error.to_string());
+    }
     let requested_width = width.unwrap_or(COMMAND_PALETTE_WIDTH);
     place_command_palette_window(&app, &window, requested_width, height, false)
         .map_err(|error| error.to_string())
+}
+
+fn resize_command_palette_height_only(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    requested_height: f64,
+) -> tauri::Result<()> {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let (width, height) = if let Some(monitor) = monitor {
+        let scale = monitor.scale_factor();
+        let work_area = monitor.work_area();
+        let available_height = work_area.size.height as f64 / scale;
+        let top_offset = ((available_height - COMMAND_PALETTE_MAX_HEIGHT) / 2.0).clamp(96.0, 320.0);
+        let max_height = COMMAND_PALETTE_MAX_HEIGHT
+            .min((available_height - top_offset - 24.0).max(COMMAND_PALETTE_MIN_HEIGHT));
+        let height = requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, max_height);
+        let current = window.outer_size().ok();
+        let width = current
+            .map(|size| size.width as f64 / scale)
+            .unwrap_or(COMMAND_PALETTE_WIDTH)
+            .clamp(320.0, COMMAND_PALETTE_APP_WIDTH.max(COMMAND_PALETTE_WIDTH));
+        (width, height)
+    } else {
+        (
+            COMMAND_PALETTE_WIDTH,
+            requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, COMMAND_PALETTE_MAX_HEIGHT),
+        )
+    };
+    window.set_size(LogicalSize::new(width, height))?;
+    Ok(())
 }
 
 #[tauri::command]

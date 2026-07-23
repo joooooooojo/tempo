@@ -45,7 +45,7 @@ pub fn get_clipboard_history(
     let total = count_clipboard_entries(&conn, query.as_deref());
     let mut entries = list_clipboard_entries(&conn, query.as_deref(), limit, offset);
     hydrate_clipboard_icons(&mut entries);
-    hydrate_clipboard_image_urls(&app, &conn, &mut entries);
+    hydrate_clipboard_image_urls(&mut entries);
     drop(conn);
     let image_contents = entries
         .iter()
@@ -91,7 +91,6 @@ pub fn clear_clipboard_history_command(state: tauri::State<AppState>) -> Result<
 
 #[tauri::command]
 pub fn pin_clipboard_history_entry(
-    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     id: i64,
     pinned: bool,
@@ -100,7 +99,7 @@ pub fn pin_clipboard_history_entry(
     let mut entry =
         set_clipboard_entry_pinned(&conn, id, pinned).ok_or("记录不存在".to_string())?;
     hydrate_clipboard_icons(std::slice::from_mut(&mut entry));
-    hydrate_clipboard_image_urls(&app, &conn, std::slice::from_mut(&mut entry));
+    hydrate_clipboard_image_urls(std::slice::from_mut(&mut entry));
     drop(conn);
     Ok(entry)
 }

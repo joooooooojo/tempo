@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -56,6 +57,8 @@ const RECENT_COLLAPSED_COUNT = GRID_COLUMNS * 2;
 const PINNED_COLLAPSED_COUNT = GRID_COLUMNS;
 const SEARCH_COLLAPSED_COUNT = GRID_COLUMNS * 2;
 const MAX_SEARCH_RESULTS = GRID_COLUMNS * 4;
+/** Typing changes result height often; native window resize each time feels like input lag. */
+const PALETTE_RESIZE_DEBOUNCE_MS = 100;
 const SEARCH_WIDTH = 800;
 const DEFAULT_APP_WIDTH = 920;
 const DEFAULT_APP_HEIGHT = 700;
@@ -458,7 +461,10 @@ export function CommandPalettePage() {
     };
   }, [hidePreservingSession, isTauri, loadApps, openBuiltinApp, resetPaletteState]);
 
-  const normalizedQuery = query.trim();
+  // Keep the controlled input snappy; defer the heavy search/list work.
+  const deferredQuery = useDeferredValue(query);
+  const liveNormalizedQuery = query.trim();
+  const normalizedQuery = deferredQuery.trim();
   const matchedOsApps = useMemo(() => {
     if (!normalizedQuery) return [];
     return apps
@@ -631,7 +637,6 @@ export function CommandPalettePage() {
   const activeApp = activeAppId ? getBuiltinApp(activeAppId) : undefined;
 
   useEffect(() => {
-    setSelectedKey(null);
     setSearchExpanded(false);
   }, [normalizedQuery]);
 
@@ -646,20 +651,30 @@ export function CommandPalettePage() {
     }
   }, [mode, selectedKey, selections]);
 
+  // ResizeObserver alone tracks content height. Avoid depending on query/lists —
+  // re-subscribing + native set_size on every keystroke is the main input lag source.
   useEffect(() => {
     const content = contentRef.current;
     if (!content || !isTauri || mode !== "search") return;
     let frame = 0;
-    let lastWidth = SEARCH_WIDTH;
+    let debounceTimer = 0;
     let lastHeight = -1;
+    let pendingHeight = -1;
+    const flushResize = () => {
+      if (pendingHeight < 0) return;
+      const nextHeight = pendingHeight;
+      pendingHeight = -1;
+      void api.setCommandPaletteSize(null, nextHeight);
+    };
     const resize = () => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         const nextHeight = Math.ceil(content.scrollHeight);
-        if (nextHeight === lastHeight && lastWidth === SEARCH_WIDTH) return;
+        if (nextHeight === lastHeight) return;
         lastHeight = nextHeight;
-        lastWidth = SEARCH_WIDTH;
-        void api.setCommandPaletteSize(SEARCH_WIDTH, nextHeight);
+        pendingHeight = nextHeight;
+        window.clearTimeout(debounceTimer);
+        debounceTimer = window.setTimeout(flushResize, PALETTE_RESIZE_DEBOUNCE_MS);
       });
     };
     const observer = new ResizeObserver(resize);
@@ -668,22 +683,10 @@ export function CommandPalettePage() {
     return () => {
       observer.disconnect();
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(debounceTimer);
+      flushResize();
     };
-  }, [
-    error,
-    isTauri,
-    loading,
-    mode,
-    normalizedQuery,
-    openRevision,
-    pinnedExpanded,
-    recentExpanded,
-    searchExpanded,
-    visibleMatchedApps.length,
-    visiblePinnedApps.length,
-    visibleRecentApps.length,
-    matchedBuiltinApps.length,
-  ]);
+  }, [isTauri, mode, openRevision]);
 
   const executeSelection = useCallback(
     async (selection: PaletteSelection | undefined) => {
@@ -696,12 +699,12 @@ export function CommandPalettePage() {
       }
 
       if (selection.kind === "action") {
-        const validationError = selection.action.validate?.(normalizedQuery) ?? null;
+        const validationError = selection.action.validate?.(liveNormalizedQuery) ?? null;
         if (validationError) {
           setError(validationError);
           return;
         }
-        if (selection.action.requiresQuery !== false && !normalizedQuery) return;
+        if (selection.action.requiresQuery !== false && !liveNormalizedQuery) return;
 
         pendingRef.current = selection.key;
         setPendingKey(selection.key);
@@ -726,7 +729,7 @@ export function CommandPalettePage() {
               .catch(console.error);
           }
           await selection.action.run({
-            query: normalizedQuery,
+            query: liveNormalizedQuery,
             openApp: openBuiltinApp,
             hideAndReset: hideAndResetPalette,
           });
@@ -753,7 +756,7 @@ export function CommandPalettePage() {
         setPendingKey(null);
       }
     },
-    [hideAndResetPalette, isTauri, loadApps, normalizedQuery, openBuiltinApp]
+    [hideAndResetPalette, isTauri, liveNormalizedQuery, loadApps, openBuiltinApp]
   );
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {

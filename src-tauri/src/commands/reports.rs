@@ -22,7 +22,7 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
         let mut hourly = Vec::new();
         for h in 0..24 {
             let secs: i64 = match conn.query_row(
-                "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
+                "SELECT COALESCE(seconds, 0) FROM tempo_hourly WHERE date = ?1 AND hour = ?2",
                 params![date, h],
                 |r| r.get(0),
             ) {
@@ -32,7 +32,7 @@ pub fn get_daily_report(state: tauri::State<AppState>, date: Option<String>) -> 
                     tracing::warn!(
                         hour = h,
                         error = %error,
-                        "failed to load hourly screen time for daily report"
+                        "failed to load hourly tempo usage for daily report"
                     );
                     0
                 }

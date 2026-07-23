@@ -818,9 +818,7 @@ fn debug_clipboard_log(message: impl AsRef<str>) {
 }
 
 fn clipboard_reference_kind(content: &str) -> &'static str {
-    if crate::clipboard_images::is_legacy_clipboard_image_data_url(content) {
-        "legacy-data-url"
-    } else if crate::clipboard_images::is_clipboard_image_storage_key(content) {
+    if crate::clipboard_images::is_clipboard_image_storage_key(content) {
         "storage-key"
     } else {
         "external-reference"

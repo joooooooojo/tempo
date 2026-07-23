@@ -10,7 +10,6 @@ use tauri::http::{
 
 pub const APP_ICON_PROTOCOL: &str = "tempo-app-icon";
 const MAX_MEMORY_ICONS: usize = 128;
-const OBSOLETE_DISK_CACHE_SUBDIR: &str = "app-icons";
 
 #[derive(Clone)]
 struct AppIconSource {
@@ -133,17 +132,6 @@ impl AppIconService {
         let bytes = crate::platform::extract_icon_png_bytes(&source.app_name, &source.source)?;
         self.cache.lock().insert(key.to_string(), bytes.clone());
         Some(bytes)
-    }
-}
-
-pub fn remove_obsolete_disk_cache(app: &tauri::AppHandle) {
-    let Ok(directory) = crate::asset_protocol::asset_dir(app, OBSOLETE_DISK_CACHE_SUBDIR) else {
-        return;
-    };
-    if let Err(error) = std::fs::remove_dir_all(directory) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            tracing::debug!(error = %error, "failed to remove obsolete app icon disk cache");
-        }
     }
 }
 

@@ -1,22 +1,33 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
-import type { InstalledPlugin, PluginMcpToolInfo, PluginRuntimeStatus } from "@/types";
+import type {
+  InstalledPlugin,
+  PluginMcpToolInfo,
+  PluginRuntimeStatus,
+  RuntimeInstallProgress,
+} from "@/types";
 
 const NODE_RUNTIME_TRUST_TEXT =
   "启用此插件将允许其在本机执行代码，权限与 Tempo 相近（可读写文件、访问网络、发起进程等），请仅安装信任的来源。确定信任并继续？";
 const UI_ONLY_TRUST_TEXT =
   "将在隔离视图中运行网页代码，并可调用受限的 Tempo 接口（面板控制、主题、私有存储等），不具备完整系统权限。确定信任并继续？";
 
+const RUNTIME_PROGRESS_EVENT = "plugin-runtime-install-progress";
+
 export function PluginSettingsSection() {
   const [runtime, setRuntime] = useState<PluginRuntimeStatus | null>(null);
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
   const [busy, setBusy] = useState(false);
   const [mcpTools, setMcpTools] = useState<Record<string, PluginMcpToolInfo[]>>({});
+  const [progress, setProgress] = useState<RuntimeInstallProgress | null>(null);
+  const toastDoneRef = useRef(false);
 
   const refresh = useCallback(async () => {
     const [nextRuntime, nextPlugins] = await Promise.all([
@@ -25,6 +36,12 @@ export function PluginSettingsSection() {
     ]);
     setRuntime(nextRuntime);
     setPlugins(nextPlugins);
+    if (nextRuntime.progress) {
+      setProgress(nextRuntime.progress);
+    } else if (!nextRuntime.installing) {
+      setProgress(null);
+    }
+    return nextRuntime;
   }, []);
 
   useEffect(() => {
@@ -32,6 +49,60 @@ export function PluginSettingsSection() {
       console.error(error);
     });
   }, [refresh]);
+
+  // Keep showing live progress even after closing/reopening the palette mid-install.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen<RuntimeInstallProgress>(RUNTIME_PROGRESS_EVENT, (event) => {
+      if (cancelled) return;
+      const next = event.payload;
+      setProgress(next);
+      setRuntime((prev) =>
+        prev
+          ? {
+              ...prev,
+              installing: next.phase !== "failed" && next.phase !== "done",
+              message: next.message,
+              progress: next,
+            }
+          : prev
+      );
+      if (next.phase === "done") {
+        if (!toastDoneRef.current) {
+          toastDoneRef.current = true;
+          toast.success("插件运行时已安装");
+        }
+        void refresh();
+      } else if (next.phase === "failed") {
+        toast.error(next.message || "插件运行时安装失败");
+        void refresh();
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [refresh]);
+
+  // Poll while installing so remounted UI converges even if an event was missed.
+  useEffect(() => {
+    if (!runtime?.installing) return;
+    toastDoneRef.current = false;
+    const timer = window.setInterval(() => {
+      void refresh().then((next) => {
+        if (next.installed && !toastDoneRef.current) {
+          toastDoneRef.current = true;
+          toast.success("插件运行时已安装");
+        }
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [runtime?.installing, refresh]);
 
   useEffect(() => {
     const toFetch = plugins.filter((plugin) => plugin.mcpToolCount > 0 && !(plugin.id in mcpTools));
@@ -50,10 +121,16 @@ export function PluginSettingsSection() {
 
   const installRuntime = async () => {
     setBusy(true);
+    toastDoneRef.current = false;
     try {
       const next = await api.installPluginRuntime();
       setRuntime(next);
-      toast.success(next.installed ? "插件运行时已安装" : next.message);
+      if (next.progress) setProgress(next.progress);
+      if (next.installed) {
+        toast.success("插件运行时已安装");
+      } else if (!next.installing && next.progress?.phase === "failed") {
+        toast.error(next.progress.message || next.message);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -67,6 +144,7 @@ export function PluginSettingsSection() {
     try {
       const next = await api.uninstallPluginRuntime();
       setRuntime(next);
+      setProgress(null);
       toast.success("已卸载插件运行时");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
@@ -163,10 +241,10 @@ export function PluginSettingsSection() {
       <Card>
         <CardContent className="space-y-3 p-4">
           <div className="flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-[14px] font-medium">插件运行时（Node）</p>
               <p className="mt-1 text-[12px] text-muted-foreground">
-                {runtime?.message ?? "正在检测…"}
+                {progress?.message ?? runtime?.message ?? "正在检测…"}
               </p>
               {runtime?.installed ? (
                 <p className="mt-1 font-mono text-[11px] text-muted-foreground">
@@ -174,23 +252,48 @@ export function PluginSettingsSection() {
                 </p>
               ) : (
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  与系统 Node 无关；仅在使用含 main 的第三方插件时需要安装。
+                  与系统 Node 无关；仅在使用含 main 的第三方插件时需要安装。关闭面板不会中断下载。
                 </p>
               )}
+              {runtime?.installing || (progress && progress.phase !== "failed" && progress.phase !== "done") ? (
+                <div className="mt-3 space-y-1.5">
+                  <Progress value={progress?.percent ?? null} className="w-full">
+                    <span className="sr-only">安装进度</span>
+                  </Progress>
+                  <p className="text-[11px] text-muted-foreground">
+                    {typeof progress?.percent === "number"
+                      ? `${progress.percent}%`
+                      : progress?.phase === "extracting"
+                        ? "解压中…"
+                        : progress?.phase === "verifying"
+                          ? "校验中…"
+                          : "下载中…"}
+                  </p>
+                </div>
+              ) : null}
+              {progress?.phase === "failed" ? (
+                <p className="mt-2 rounded-md bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                  {progress.message}
+                </p>
+              ) : null}
             </div>
             <div className="flex shrink-0 gap-2">
               {runtime?.installed ? (
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={busy}
+                  disabled={busy || Boolean(runtime.installing)}
                   onClick={() => void uninstallRuntime()}
                 >
                   卸载
                 </Button>
               ) : (
-                <Button size="sm" disabled={busy} onClick={() => void installRuntime()}>
-                  安装
+                <Button
+                  size="sm"
+                  disabled={busy || Boolean(runtime?.installing)}
+                  onClick={() => void installRuntime()}
+                >
+                  {runtime?.installing ? "安装中…" : "安装"}
                 </Button>
               )}
             </div>

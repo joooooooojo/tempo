@@ -187,9 +187,6 @@ pub fn run() {
                 tracing::error!(error = %error, "failed to initialize database");
                 Box::<dyn std::error::Error>::from(std::io::Error::other(error))
             })?;
-            clipboard_images::migrate_legacy_clipboard_images(app.handle(), &conn);
-            todo_images::migrate_legacy_todo_images(app.handle(), &conn);
-            app_icons::remove_obsolete_disk_cache(app.handle());
             {
                 let settings = db::load_settings(&conn);
                 clipboard_db::purge_clipboard_history_by_retention(

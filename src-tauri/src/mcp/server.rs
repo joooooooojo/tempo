@@ -684,7 +684,7 @@ impl TempoMcpServer {
     }
 
     #[tool(
-        description = "Get Tempo daily screen-time report/今日报告/屏幕时间. Optional date YYYY-MM-DD (defaults today). Use when asking how much time was spent on apps"
+        description = "Get Tempo daily usage report/今日报告/屏幕时间. Optional date YYYY-MM-DD (defaults today). Use when asking how much time was spent on apps"
     )]
     fn get_daily_report(
         &self,
@@ -741,7 +741,7 @@ impl ServerHandler for TempoMcpServer {
 - snippets / quick phrases / 快捷短语：list, create, update, delete, groups, copy to clipboard
 - clipboard / 剪贴板历史：search recently copied text
 - pomodoro / 番茄钟 / 专注：get state, start, pause, stop, skip phase
-- screen time / 今日报告 / 屏幕时间 / 使用报告：daily app usage report
+- usage report / 今日报告 / 屏幕时间 / 使用报告：daily app usage report
 - plugin tools the user has opted into MCP exposure：tempo_list_exposed_plugin_tools then tempo_call_plugin_tool
 
 Workflow tips:

@@ -1,15 +1,20 @@
 //! App-data paths for plugins and the on-demand Node runtime.
+//!
+//! All durable plugin files live under the unified Tempo storage root
+//! (`%APPDATA%/Tempo` on Windows by default).
 
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+
+use crate::db::{current_storage_dir, default_storage_dir};
+
+fn storage_root(app: &AppHandle) -> Result<PathBuf, String> {
+    current_storage_dir(app).or_else(|_| default_storage_dir(app))
+}
 
 pub fn plugins_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app data dir: {e}"))?;
-    Ok(dir.join("plugins"))
+    Ok(storage_root(app)?.join("plugins"))
 }
 
 pub fn packages_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -29,11 +34,7 @@ pub fn trash_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn plugin_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app data dir: {e}"))?;
-    Ok(dir.join("plugin-runtime"))
+    Ok(storage_root(app)?.join("plugin-runtime"))
 }
 
 pub fn node_runtime_dir(app: &AppHandle, version: &str) -> Result<PathBuf, String> {

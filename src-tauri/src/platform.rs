@@ -336,7 +336,7 @@ fn nsstring_to_rust_string(nsstring: *mut objc::runtime::Object) -> String {
 }
 
 /// 有前台应用或用户近期有输入时才计屏幕时长
-pub fn should_count_screen_time(foreground: &Option<ForegroundApp>) -> bool {
+pub fn should_count_tempo_time(foreground: &Option<ForegroundApp>) -> bool {
     if !should_count_time() {
         return false;
     }
@@ -649,7 +649,7 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         icon_path.hash(&mut hasher);
         let out = std::env::temp_dir().join(format!(
-            "screen-time-icon-{}-{}.png",
+            "tempo-icon-{}-{}.png",
             std::process::id(),
             hasher.finish()
         ));

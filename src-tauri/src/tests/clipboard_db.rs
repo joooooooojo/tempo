@@ -17,7 +17,7 @@ fn temp_db_path(test_name: &str) -> PathBuf {
             test_name,
             std::process::id()
         ))
-        .join("screen_time.db")
+        .join("tempo.db")
 }
 
 fn cleanup_temp_db(path: &Path) {

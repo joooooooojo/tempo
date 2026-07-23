@@ -15,7 +15,8 @@ use crate::plugins::manifest::PluginManifest;
 use crate::plugins::package::{import_directory, import_zip, InstalledPackage};
 use crate::plugins::paths::{packages_dir, plugin_data_dir, trash_dir};
 use crate::plugins::runtime::{
-    get_plugin_runtime_status, install_plugin_runtime, uninstall_plugin_runtime, PluginRuntimeStatus,
+    get_plugin_runtime_status, start_plugin_runtime_install, uninstall_plugin_runtime,
+    PluginRuntimeStatus,
 };
 use crate::plugins::storage;
 use crate::plugins::trust::{
@@ -34,7 +35,8 @@ pub fn plugin_runtime_status(app: AppHandle) -> Result<PluginRuntimeStatus, Stri
 
 #[tauri::command]
 pub async fn plugin_runtime_install(app: AppHandle) -> Result<PluginRuntimeStatus, String> {
-    install_plugin_runtime(&app).await
+    // Detach from the invoke future so closing the palette cannot cancel the download.
+    crate::plugins::runtime::start_plugin_runtime_install(app)
 }
 
 #[tauri::command]

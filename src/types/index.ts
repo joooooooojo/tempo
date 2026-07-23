@@ -282,13 +282,23 @@ export interface TranslateResult {
   error?: string | null;
 }
 
+export interface RuntimeInstallProgress {
+  phase: string;
+  message: string;
+  downloadedBytes: number;
+  totalBytes?: number | null;
+  percent?: number | null;
+}
+
 export interface PluginRuntimeStatus {
   installed: boolean;
+  installing: boolean;
   version?: string | null;
   nodePath?: string | null;
   installDir?: string | null;
   lockedMajor: string;
   message: string;
+  progress?: RuntimeInstallProgress | null;
 }
 
 export interface InstalledPackage {

@@ -4,7 +4,6 @@ use crate::asset_protocol::{
 use crate::clipboard_db::hash_bytes;
 use crate::db::{TodoImage, TodoNoteImage};
 use base64::Engine as _;
-use rusqlite::Connection;
 use std::path::Path;
 use tauri::http::{Request, Response};
 use tauri::AppHandle;
@@ -69,21 +68,6 @@ pub fn hydrate_todo_note_images(images: &mut [TodoNoteImage]) {
     }
 }
 
-pub fn migrate_legacy_todo_images(app: &AppHandle, conn: &Connection) {
-    migrate_table_legacy_images(
-        app,
-        conn,
-        "todo_images",
-        "SELECT id, data_url, mime_type FROM todo_images WHERE data_url LIKE 'data:image/%'",
-    );
-    migrate_table_legacy_images(
-        app,
-        conn,
-        "todo_note_images",
-        "SELECT id, data_url, mime_type FROM todo_note_images WHERE data_url LIKE 'data:image/%'",
-    );
-}
-
 pub fn todo_image_protocol_response(
     app: &AppHandle,
     request: Request<Vec<u8>>,
@@ -95,68 +79,6 @@ pub fn todo_image_protocol_response(
         is_valid_todo_image_file_name,
         request,
     )
-}
-
-fn migrate_table_legacy_images(app: &AppHandle, conn: &Connection, table: &str, query: &str) {
-    let mut stmt = match conn.prepare(query) {
-        Ok(stmt) => stmt,
-        Err(error) => {
-            tracing::warn!(
-                table,
-                error = %error,
-                "failed to prepare legacy todo image migration query"
-            );
-            return;
-        }
-    };
-    let rows = match stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    }) {
-        Ok(rows) => {
-            let mut values = Vec::new();
-            for row in rows {
-                match row {
-                    Ok(value) => values.push(value),
-                    Err(error) => tracing::warn!(
-                        table,
-                        error = %error,
-                        "failed to read legacy todo image row"
-                    ),
-                }
-            }
-            values
-        }
-        Err(error) => {
-            tracing::warn!(table = %table, error = %error, "failed to query legacy todo images");
-            return;
-        }
-    };
-
-    for (id, data_url, mime_type) in rows {
-        let input = TodoImageInput {
-            data_url,
-            mime_type,
-        };
-        let Ok(storage_key) = save_todo_image_input(app, &input) else {
-            tracing::debug!(table = %table, row_id = id, "failed to save migrated todo image");
-            continue;
-        };
-        if let Err(error) = conn.execute(
-            &format!("UPDATE {table} SET data_url = ?1 WHERE id = ?2"),
-            rusqlite::params![storage_key, id],
-        ) {
-            tracing::warn!(
-                table,
-                row_id = id,
-                error = %error,
-                "failed to update migrated todo image row"
-            );
-        }
-    }
 }
 
 fn decode_todo_image_input(image: &TodoImageInput) -> Result<(Vec<u8>, String), String> {

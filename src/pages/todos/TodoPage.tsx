@@ -402,7 +402,7 @@ export function TodoPage() {
 
     const path = await save({
       title: "导出待办备份",
-      defaultPath: `screen-time-todos-${new Date().toISOString().slice(0, 10)}.zip`,
+      defaultPath: `tempo-todos-${new Date().toISOString().slice(0, 10)}.zip`,
       filters: [{ name: "待办备份", extensions: ["zip"] }],
     });
     if (!path) return;

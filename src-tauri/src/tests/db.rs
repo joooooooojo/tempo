@@ -1,5 +1,5 @@
 use crate::db::{
-    add_screen_time, get_daily_total, init_db, load_settings, save_settings, set_setting,
+    add_tempo_time, get_daily_total, init_db, load_settings, save_settings,
     DEFAULT_CLIPBOARD_PICKER_SHORTCUT, DEFAULT_COMMAND_PALETTE_SHORTCUT,
     DEFAULT_SNIPPET_PICKER_SHORTCUT, MAX_HOURLY_SECONDS,
 };
@@ -17,7 +17,7 @@ fn temp_db_path(test_name: &str) -> PathBuf {
             test_name,
             std::process::id()
         ))
-        .join("screen_time.db")
+        .join("tempo.db")
 }
 
 #[test]
@@ -58,28 +58,11 @@ fn init_db_creates_schema_and_is_idempotent() {
 }
 
 #[test]
-fn shortcut_settings_migrate_old_defaults_and_preserve_empty_bindings() {
+fn shortcut_settings_preserve_empty_bindings() {
     let path = temp_db_path("shortcut-settings");
     {
         let conn = init_db(&path).expect("init db");
-        set_setting(&conn, "shortcut_quick_todo", "F2");
-        set_setting(&conn, "shortcut_clipboard_picker", "F4");
-        set_setting(&conn, "shortcut_snippet_picker", "F5");
-
         let mut settings = load_settings(&conn);
-        assert_eq!(
-            settings.shortcut_command_palette,
-            DEFAULT_COMMAND_PALETTE_SHORTCUT
-        );
-        assert_eq!(
-            settings.shortcut_clipboard_picker,
-            DEFAULT_CLIPBOARD_PICKER_SHORTCUT
-        );
-        assert_eq!(
-            settings.shortcut_snippet_picker,
-            DEFAULT_SNIPPET_PICKER_SHORTCUT
-        );
-
         settings.shortcut_command_palette.clear();
         save_settings(&conn, &settings);
         assert_eq!(load_settings(&conn).shortcut_command_palette, "");
@@ -91,38 +74,15 @@ fn shortcut_settings_migrate_old_defaults_and_preserve_empty_bindings() {
 }
 
 #[test]
-fn command_palette_previous_default_migrates_without_overwriting_custom_bindings() {
-    let path = temp_db_path("command-palette-shortcut-migration");
-    {
-        let conn = init_db(&path).expect("init db");
-        set_setting(&conn, "shortcut_command_palette", "Control+Shift+T");
-        assert_eq!(
-            load_settings(&conn).shortcut_command_palette,
-            DEFAULT_COMMAND_PALETTE_SHORTCUT
-        );
-
-        set_setting(&conn, "shortcut_command_palette", "Control+Alt+P");
-        assert_eq!(
-            load_settings(&conn).shortcut_command_palette,
-            "Control+Alt+P"
-        );
-    }
-
-    if let Some(parent) = path.parent() {
-        drop(std::fs::remove_dir_all(parent));
-    }
-}
-
-#[test]
-fn add_screen_time_caps_hourly_total() {
-    let path = temp_db_path("screen-time-cap");
+fn add_tempo_time_caps_hourly_total() {
+    let path = temp_db_path("tempo-usage-cap");
     {
         let conn = init_db(&path).expect("init db");
 
-        let inserted = add_screen_time(&conn, "2026-01-01", 10, MAX_HOURLY_SECONDS + 60);
+        let inserted = add_tempo_time(&conn, "2026-01-01", 10, MAX_HOURLY_SECONDS + 60);
         assert_eq!(inserted, MAX_HOURLY_SECONDS);
 
-        let inserted = add_screen_time(&conn, "2026-01-01", 10, 30);
+        let inserted = add_tempo_time(&conn, "2026-01-01", 10, 30);
         assert_eq!(inserted, 0);
 
         assert_eq!(get_daily_total(&conn, "2026-01-01"), MAX_HOURLY_SECONDS);

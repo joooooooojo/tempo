@@ -4,6 +4,7 @@
 > 状态：MVP 实现基线  
 > 产品定位：**Tempo 的核心是插件平台**；内置应用是第一批官方插件样板，不定义能力上限。  
 > 范围：在现有「快捷面板 + 内置应用注册表 + 快捷操作注册表」之上，建设可分发的插件运行时与（后续）插件市场。  
+> 相关详设：[内置应用 → 内置插件](./builtin-plugins-design.md)（第一方包装、**Rust 解耦**、特权 API、迁移分期）。  
 > 目录：0 产品原则 · 1 背景与目标 · 2 概念模型 · 3 总体架构 · 4 Manifest · 5 有界面插件 · 6 无界面插件 · 7 Host Bridge · 8 信任与安装 · 9 面板集成 · 10 开发者体验 · 11 MCP · 12 威胁模型 · 13 分期 · 14 扩展点 · 15 验收 · 16 开放问题 · 附录 A–D
 
 ---
@@ -276,7 +277,7 @@ Tempo 安装包**不附带** Node，以保持本体体积小。需要执行 `mai
 | 规则 | 说明 |
 |------|------|
 | 与系统 Node 无关 | 不读 `PATH`、不用 `node` 命令、不升级用户全局 Node |
-| 安装位置 | `{app_data}/plugin-runtime/node/{lockedVersion}/`（可执行文件路径写入设置 / SQLite） |
+| 安装位置 | `{Tempo 存储根}/plugin-runtime/node/{lockedVersion}/`（Windows 默认 `%APPDATA%\Tempo`，不用包名目录） |
 | 版本策略 | 每个 Tempo 产品版本锁定一个 Node patch；清单由官方 manifest（URL + hash）下发 |
 | 谁需要装 | 仅当启用的插件声明了 `main`，或首次将触发 Runtime 激活；**纯 UI 包跳过** |
 | 下载渠道 | 仅 Tempo 配置的官方 endpoint（可镜像官方 Node 构建）；禁止插件自行指定 Node 下载地址 |
@@ -636,7 +637,10 @@ type RpcError = {
 ### 8.1 目录布局
 
 ```text
-{app_data}/
+{Tempo 存储根}/                 # 默认 %APPDATA%/Tempo（macOS ~/Library/Application Support/Tempo）
+                                # 用户可在设置中改到自定义路径
+  tempo.db
+  storage.json                  # 可选：自定义存储根指针
   plugin-runtime/
     node/
       24.x.y/                # 按需下载的插件专用 Node（与系统无关）
@@ -942,7 +946,7 @@ Headless 插件可贡献 `mcpTools`：AI 与用户插件打通。工具对外名
 ## 16. 后续开放问题（不阻塞 MVP）
 
 1. 是否允许插件贡献独立浮动窗；若允许，窗口数量、恢复和 capability 如何约束？  
-2. 内置应用是否迁移为仓库内官方插件包，与第三方同一 Loader？  
+2. ~~内置应用是否迁移为仓库内官方插件包，与第三方同一 Loader？~~ → **已决策**：见 [builtin-plugins-design.md](./builtin-plugins-design.md)（`tempo.*` 第一方插件；双来源解析后共用贡献归一化 / Registry；**后端为 Rust crate / HostApiHub，不是 Node**；可选 App entry `{ "type": "host-react" }` + 特权 `host.tempo.*`）。
 3. 插件数据升级的 migration、备份和回滚契约采用宿主 API 还是完全交给插件？  
 4. 是否提供 CPU / 内存观测、用户可见的资源告警和可选配额？  
 5. 市场签名密钥轮换、撤销列表离线缓存和紧急下架的具体协议是什么？  

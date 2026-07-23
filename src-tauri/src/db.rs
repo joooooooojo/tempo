@@ -1,6 +1,6 @@
 use chrono::Local;
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, Error as SqliteError, OptionalExtension};
+use rusqlite::{params, Connection, Error as SqliteError};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -164,7 +164,6 @@ pub struct Settings {
 pub const DEFAULT_COMMAND_PALETTE_SHORTCUT: &str = "Alt+Space";
 pub const DEFAULT_CLIPBOARD_PICKER_SHORTCUT: &str = "Control+Shift+V";
 pub const DEFAULT_SNIPPET_PICKER_SHORTCUT: &str = "Control+Shift+S";
-const PREVIOUS_COMMAND_PALETTE_SHORTCUT: &str = "Control+Shift+T";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -324,13 +323,12 @@ pub fn today_str() -> String {
 /// User-facing data folder name. Keep in sync with `productName` in tauri.conf.json.
 pub const APP_STORAGE_FOLDER_NAME: &str = "Tempo";
 
+/// Primary SQLite database file under the Tempo storage root.
+pub const DB_FILE_NAME: &str = "tempo.db";
+
 #[derive(Debug, Serialize, Deserialize)]
 struct StorageConfig {
     storage_dir: String,
-}
-
-pub fn legacy_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
 pub fn default_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -339,29 +337,13 @@ pub fn default_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn prepare_storage_dir(app: &AppHandle) -> Result<(), String> {
-    if has_custom_storage_config(app)? {
-        return Ok(());
-    }
-
-    let preferred = default_storage_dir(app)?;
-    if preferred.join("screen_time.db").exists() {
-        if let Some(parent) = preferred.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        std::fs::create_dir_all(&preferred).map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    let legacy = legacy_app_data_dir(app)?;
-    if legacy.join("screen_time.db").exists() || storage_dir_has_data(&legacy) {
-        if let Some(parent) = preferred.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        copy_storage_dir(&legacy, &preferred)?;
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(&preferred).map_err(|e| e.to_string())
+    let preferred = if has_custom_storage_config(app)? {
+        current_storage_dir(app)?
+    } else {
+        default_storage_dir(app)?
+    };
+    std::fs::create_dir_all(&preferred).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn has_custom_storage_config(app: &AppHandle) -> Result<bool, String> {
@@ -375,49 +357,8 @@ fn has_custom_storage_config(app: &AppHandle) -> Result<bool, String> {
     Ok(!config.storage_dir.trim().is_empty())
 }
 
-fn storage_dir_has_data(path: &Path) -> bool {
-    if path.join("markdown-images").exists() {
-        return true;
-    }
-
-    std::fs::read_dir(path)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or_else(|error| {
-            tracing::debug!(error = %error, "failed to inspect storage directory");
-            false
-        })
-}
-
-fn copy_storage_dir(source: &Path, target: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(target).map_err(|e| e.to_string())?;
-    for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-
-        if source_path.is_dir() {
-            copy_storage_dir(&source_path, &target_path)?;
-        } else if source_path.is_file() {
-            if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::copy(&source_path, &target_path).map_err(|e| e.to_string())?;
-        }
-    }
-
-    Ok(())
-}
-
 pub fn storage_config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?
-        .join("storage.json"))
+    Ok(default_storage_dir(app)?.join("storage.json"))
 }
 
 pub fn current_storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -451,7 +392,7 @@ pub fn save_storage_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
 
 pub fn db_path(app: &AppHandle) -> PathBuf {
     match current_storage_dir(app).or_else(|_| default_storage_dir(app)) {
-        Ok(storage_dir) => storage_dir.join("screen_time.db"),
+        Ok(storage_dir) => storage_dir.join(DB_FILE_NAME),
         Err(error) => {
             tracing::error!(error = %error, "failed to resolve storage directory");
             panic!("storage dir: {error}");
@@ -466,11 +407,11 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|error| error.to_string())?;
     conn.execute_batch(
         "
-        CREATE TABLE IF NOT EXISTS screen_time_daily (
+        CREATE TABLE IF NOT EXISTS tempo_daily (
             date TEXT PRIMARY KEY,
             total_seconds INTEGER NOT NULL DEFAULT 0
         );
-        CREATE TABLE IF NOT EXISTS screen_time_hourly (
+        CREATE TABLE IF NOT EXISTS tempo_hourly (
             date TEXT NOT NULL,
             hour INTEGER NOT NULL,
             seconds INTEGER NOT NULL DEFAULT 0,
@@ -496,7 +437,18 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             due_at TEXT,
             pinned_at TEXT,
             created_at TEXT NOT NULL,
-            completed_at TEXT
+            completed_at TEXT,
+            recurrence TEXT NOT NULL DEFAULT 'none',
+            remind_1d INTEGER NOT NULL DEFAULT 0,
+            remind_1h INTEGER NOT NULL DEFAULT 0,
+            due_reminded_1d INTEGER NOT NULL DEFAULT 0,
+            due_reminded_1h INTEGER NOT NULL DEFAULT 0,
+            due_reminded_at INTEGER NOT NULL DEFAULT 0,
+            remind_custom_hours INTEGER,
+            due_reminded_custom INTEGER NOT NULL DEFAULT 0,
+            recurrence_root_id INTEGER,
+            next_recurrence_at TEXT,
+            subtasks_completion_snapshot TEXT
         );
         CREATE TABLE IF NOT EXISTS todo_images (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -575,6 +527,7 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             tags TEXT NOT NULL DEFAULT '[]',
             group_id INTEGER,
             shortcut TEXT,
+            language TEXT,
             pinned INTEGER NOT NULL DEFAULT 0,
             use_count INTEGER NOT NULL DEFAULT 0,
             last_used_at TEXT,
@@ -590,257 +543,74 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             last_used_at TEXT,
             use_count INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS plugins (
+            id TEXT PRIMARY KEY,
+            current_version TEXT NOT NULL,
+            pending_version TEXT,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            runtime_state TEXT NOT NULL DEFAULT 'disabled',
+            installed_at TEXT NOT NULL,
+            updated_at TEXT,
+            last_error TEXT
+        );
+        CREATE TABLE IF NOT EXISTS plugin_versions (
+            plugin_id TEXT NOT NULL,
+            version TEXT NOT NULL,
+            package_hash TEXT,
+            dev_path TEXT,
+            display_publisher TEXT,
+            verified_publisher_key TEXT,
+            install_source TEXT NOT NULL,
+            signature_status TEXT NOT NULL,
+            trusted_at TEXT,
+            installed_at TEXT NOT NULL,
+            PRIMARY KEY (plugin_id, version)
+        );
+        CREATE TABLE IF NOT EXISTS publisher_trust (
+            signing_key_id TEXT PRIMARY KEY,
+            publisher_id TEXT NOT NULL,
+            trusted_at TEXT NOT NULL,
+            revoked_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS plugin_sessions (
+            plugin_id TEXT NOT NULL,
+            app_id TEXT NOT NULL,
+            plugin_version TEXT NOT NULL,
+            session_version INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (plugin_id, app_id)
+        );
+        CREATE TABLE IF NOT EXISTS plugin_storage (
+            plugin_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (plugin_id, key)
+        );
+        CREATE TABLE IF NOT EXISTS plugin_mcp_exposure (
+            plugin_id TEXT PRIMARY KEY,
+            exposed INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_clipboard_history_created
             ON clipboard_history(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_launcher_usage_recent
             ON launcher_usage(pinned_at DESC, last_used_at DESC, use_count DESC);
+        CREATE INDEX IF NOT EXISTS idx_snippets_usage
+            ON snippets(pinned DESC, sort_order ASC, last_used_at DESC, updated_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_snippets_shortcut
+            ON snippets(shortcut)
+            WHERE shortcut IS NOT NULL AND shortcut <> '';
         ",
     )
     .map_err(|error| error.to_string())?;
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE clipboard_history ADD COLUMN image_width INTEGER",
-            [],
-        ),
-        "add clipboard image width column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE clipboard_history ADD COLUMN image_height INTEGER",
-            [],
-        ),
-        "add clipboard image height column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE clipboard_history ADD COLUMN source_process TEXT",
-            [],
-        ),
-        "add clipboard source process column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE todos ADD COLUMN due_at TEXT", []),
-        "add todo due_at column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE todos ADD COLUMN pinned_at TEXT", []),
-        "add todo pinned_at column",
-    );
-    let added_todo_content = log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN content TEXT NOT NULL DEFAULT ''",
-            [],
-        ),
-        "add todo content column",
-    );
-    if added_todo_content {
-        log_optional_migration(
-            conn.execute("UPDATE todos SET content = title WHERE content = ''", []),
-            "backfill todo content column",
-        );
-    }
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none'",
-            [],
-        ),
-        "add todo recurrence column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN remind_1d INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add todo remind_1d column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN remind_1h INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add todo remind_1h column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN due_reminded_1d INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add todo due_reminded_1d column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN due_reminded_1h INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add todo due_reminded_1h column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN due_reminded_at INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add todo due_reminded_at column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN remind_custom_hours INTEGER",
-            [],
-        ),
-        "add todo custom reminder column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN due_reminded_custom INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add todo custom reminder sent column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN recurrence_root_id INTEGER",
-            [],
-        ),
-        "add todo recurrence root column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE todos ADD COLUMN next_recurrence_at TEXT", []),
-        "add todo next recurrence column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE todos ADD COLUMN subtasks_completion_snapshot TEXT",
-            [],
-        ),
-        "add todo subtasks completion snapshot column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE snippets ADD COLUMN group_id INTEGER", []),
-        "add snippet group column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE snippets ADD COLUMN shortcut TEXT", []),
-        "add snippet shortcut column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE snippets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add snippet pinned column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "ALTER TABLE snippets ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
-            [],
-        ),
-        "add snippet use_count column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE snippets ADD COLUMN last_used_at TEXT", []),
-        "add snippet last_used_at column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE snippets ADD COLUMN archived_at TEXT", []),
-        "add snippet archived_at column",
-    );
-    log_optional_migration(
-        conn.execute("ALTER TABLE snippets ADD COLUMN language TEXT", []),
-        "add snippet language column",
-    );
-    log_optional_migration(
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_snippets_usage
-         ON snippets(pinned DESC, sort_order ASC, last_used_at DESC, updated_at DESC)",
-            [],
-        ),
-        "create snippet usage index",
-    );
-    log_optional_migration(
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_snippets_shortcut
-         ON snippets(shortcut)
-         WHERE shortcut IS NOT NULL AND shortcut <> ''",
-            [],
-        ),
-        "create snippet shortcut index",
-    );
-    log_optional_migration(
-        conn.execute(
-            "UPDATE todos
-         SET due_at = NULL,
-             remind_1d = 0,
-             remind_1h = 0,
-             remind_custom_hours = NULL
-         WHERE recurrence != 'none'",
-            [],
-        ),
-        "normalize recurring todo due reminders",
-    );
-    log_optional_migration(
-        conn.execute(
-            "UPDATE todos
-         SET recurrence_root_id = id
-         WHERE recurrence != 'none' AND recurrence_root_id IS NULL",
-            [],
-        ),
-        "backfill recurrence root id",
-    );
-    log_optional_migration(
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS plugins (
-              id TEXT PRIMARY KEY,
-              current_version TEXT NOT NULL,
-              pending_version TEXT,
-              enabled INTEGER NOT NULL DEFAULT 0,
-              runtime_state TEXT NOT NULL DEFAULT 'disabled',
-              installed_at TEXT NOT NULL,
-              updated_at TEXT,
-              last_error TEXT
-            );
-            CREATE TABLE IF NOT EXISTS plugin_versions (
-              plugin_id TEXT NOT NULL,
-              version TEXT NOT NULL,
-              package_hash TEXT,
-              dev_path TEXT,
-              display_publisher TEXT,
-              verified_publisher_key TEXT,
-              install_source TEXT NOT NULL,
-              signature_status TEXT NOT NULL,
-              trusted_at TEXT,
-              installed_at TEXT NOT NULL,
-              PRIMARY KEY (plugin_id, version)
-            );
-            CREATE TABLE IF NOT EXISTS publisher_trust (
-              signing_key_id TEXT PRIMARY KEY,
-              publisher_id TEXT NOT NULL,
-              trusted_at TEXT NOT NULL,
-              revoked_at TEXT
-            );
-            ",
-        ),
-        "create plugin tables",
-    );
     if let Err(error) = conn
         .execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;")
     {
         tracing::warn!(error = %error, "failed to apply database pragmas");
     }
     Ok(conn)
-}
-
-fn log_optional_migration<T>(result: rusqlite::Result<T>, migration: &'static str) -> bool {
-    match result {
-        Ok(_) => true,
-        Err(error) => {
-            tracing::debug!(
-                migration = %migration,
-                error = %error,
-                "database migration skipped or failed"
-            );
-            false
-        }
-    }
 }
 
 pub fn get_setting(conn: &Connection, key: &str, default: &str) -> String {
@@ -861,57 +631,21 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) {
 }
 
 pub fn load_settings(conn: &Connection) -> Settings {
-    let command_palette_value = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'shortcut_command_palette'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .unwrap_or(None);
-    let mut shortcut_command_palette = if let Some(value) = command_palette_value {
-        normalize_shortcut_setting(&value)
-    } else {
-        let migrated = normalize_shortcut_setting(&get_setting(
-            conn,
-            "shortcut_quick_todo",
-            DEFAULT_COMMAND_PALETTE_SHORTCUT,
-        ));
-        set_setting(conn, "shortcut_command_palette", &migrated);
-        migrated
-    };
-    let mut shortcut_clipboard_picker = normalize_shortcut_setting(&get_setting(
+    let shortcut_command_palette = normalize_shortcut_setting(&get_setting(
+        conn,
+        "shortcut_command_palette",
+        DEFAULT_COMMAND_PALETTE_SHORTCUT,
+    ));
+    let shortcut_clipboard_picker = normalize_shortcut_setting(&get_setting(
         conn,
         "shortcut_clipboard_picker",
         DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
     ));
-    let mut shortcut_snippet_picker = normalize_shortcut_setting(&get_setting(
+    let shortcut_snippet_picker = normalize_shortcut_setting(&get_setting(
         conn,
         "shortcut_snippet_picker",
         DEFAULT_SNIPPET_PICKER_SHORTCUT,
     ));
-
-    // Upgrade the previous default trio while leaving customized bindings untouched.
-    if shortcut_command_palette.eq_ignore_ascii_case("F2")
-        && shortcut_clipboard_picker.eq_ignore_ascii_case("F4")
-        && shortcut_snippet_picker.eq_ignore_ascii_case("F5")
-    {
-        shortcut_command_palette = DEFAULT_COMMAND_PALETTE_SHORTCUT.into();
-        shortcut_clipboard_picker = DEFAULT_CLIPBOARD_PICKER_SHORTCUT.into();
-        shortcut_snippet_picker = DEFAULT_SNIPPET_PICKER_SHORTCUT.into();
-        set_setting(conn, "shortcut_command_palette", &shortcut_command_palette);
-        set_setting(
-            conn,
-            "shortcut_clipboard_picker",
-            &shortcut_clipboard_picker,
-        );
-        set_setting(conn, "shortcut_snippet_picker", &shortcut_snippet_picker);
-    }
-
-    if shortcut_command_palette.eq_ignore_ascii_case(PREVIOUS_COMMAND_PALETTE_SHORTCUT) {
-        shortcut_command_palette = DEFAULT_COMMAND_PALETTE_SHORTCUT.into();
-        set_setting(conn, "shortcut_command_palette", &shortcut_command_palette);
-    }
 
     Settings {
         autostart: get_setting(conn, "autostart", "false") == "true",
@@ -940,6 +674,7 @@ pub fn load_settings(conn: &Connection) -> Settings {
         pomodoro_float_enabled: get_setting(conn, "pomodoro_float_enabled", "false") == "true",
         pomodoro_float_auto_show: get_setting(conn, "pomodoro_float_auto_show", "true") == "true",
         pomodoro_float_x: {
+
             let raw = get_setting(conn, "pomodoro_float_x", "");
             if raw.is_empty() {
                 None
@@ -1326,13 +1061,13 @@ pub fn is_system_host_usage(name: &str, process: &str) -> bool {
     )
 }
 
-pub fn add_screen_time(conn: &Connection, date: &str, hour: u32, seconds: i64) -> i64 {
+pub fn add_tempo_time(conn: &Connection, date: &str, hour: u32, seconds: i64) -> i64 {
     if seconds <= 0 {
         return 0;
     }
 
     let current_hour_seconds: i64 = match conn.query_row(
-        "SELECT COALESCE(seconds, 0) FROM screen_time_hourly WHERE date = ?1 AND hour = ?2",
+        "SELECT COALESCE(seconds, 0) FROM tempo_hourly WHERE date = ?1 AND hour = ?2",
         params![date, hour as i64],
         |r| r.get(0),
     ) {
@@ -1342,7 +1077,7 @@ pub fn add_screen_time(conn: &Connection, date: &str, hour: u32, seconds: i64) -
             tracing::warn!(
                 hour = hour,
                 error = %error,
-                "failed to load current hourly screen time"
+                "failed to load current hourly tempo usage"
             );
             0
         }
@@ -1353,18 +1088,18 @@ pub fn add_screen_time(conn: &Connection, date: &str, hour: u32, seconds: i64) -
     }
 
     if let Err(error) = conn.execute(
-        "INSERT INTO screen_time_daily (date, total_seconds) VALUES (?1, ?2)
+        "INSERT INTO tempo_daily (date, total_seconds) VALUES (?1, ?2)
          ON CONFLICT(date) DO UPDATE SET total_seconds = MIN(?3, total_seconds + excluded.total_seconds)",
         params![date, seconds, MAX_DAILY_SECONDS],
     ) {
-        tracing::warn!(error = %error, "failed to upsert daily screen time");
+        tracing::warn!(error = %error, "failed to upsert daily tempo usage");
     }
     if let Err(error) = conn.execute(
-        "INSERT INTO screen_time_hourly (date, hour, seconds) VALUES (?1, ?2, ?3)
+        "INSERT INTO tempo_hourly (date, hour, seconds) VALUES (?1, ?2, ?3)
          ON CONFLICT(date, hour) DO UPDATE SET seconds = MIN(?4, seconds + excluded.seconds)",
         params![date, hour as i64, seconds, MAX_HOURLY_SECONDS],
     ) {
-        tracing::warn!(hour = hour, error = %error, "failed to upsert hourly screen time");
+        tracing::warn!(hour = hour, error = %error, "failed to upsert hourly tempo usage");
     }
     seconds
 }
@@ -1431,14 +1166,14 @@ pub fn top_apps(conn: &Connection, date: &str, limit: i64) -> Vec<AppUsage> {
 
 pub fn get_daily_total(conn: &Connection, date: &str) -> i64 {
     match conn.query_row(
-        "SELECT COALESCE(total_seconds, 0) FROM screen_time_daily WHERE date = ?1",
+        "SELECT COALESCE(total_seconds, 0) FROM tempo_daily WHERE date = ?1",
         [date],
         |r| r.get(0),
     ) {
         Ok(total) => total,
         Err(SqliteError::QueryReturnedNoRows) => 0,
         Err(error) => {
-            tracing::warn!(error = %error, "failed to load daily screen time total");
+            tracing::warn!(error = %error, "failed to load daily tempo usage total");
             0
         }
     }
@@ -1449,11 +1184,11 @@ pub fn cleanup_old_data(conn: &Connection) {
     let cutoff = (Local::now().date_naive() - chrono::Duration::days(30))
         .format("%Y-%m-%d")
         .to_string();
-    if let Err(error) = conn.execute("DELETE FROM screen_time_daily WHERE date < ?1", [&cutoff]) {
-        tracing::warn!(error = %error, "failed to cleanup old daily screen time");
+    if let Err(error) = conn.execute("DELETE FROM tempo_daily WHERE date < ?1", [&cutoff]) {
+        tracing::warn!(error = %error, "failed to cleanup old daily tempo usage");
     }
-    if let Err(error) = conn.execute("DELETE FROM screen_time_hourly WHERE date < ?1", [&cutoff]) {
-        tracing::warn!(error = %error, "failed to cleanup old hourly screen time");
+    if let Err(error) = conn.execute("DELETE FROM tempo_hourly WHERE date < ?1", [&cutoff]) {
+        tracing::warn!(error = %error, "failed to cleanup old hourly tempo usage");
     }
     if let Err(error) = conn.execute("DELETE FROM app_usage WHERE date < ?1", [&cutoff]) {
         tracing::warn!(error = %error, "failed to cleanup old app usage");
