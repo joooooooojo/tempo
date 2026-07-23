@@ -23,6 +23,7 @@ import { AppIcon } from "@/components/AppIcon";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { ReminderDialog } from "@/components/ReminderDialog";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   listVisibleQuickActions,
@@ -63,12 +64,19 @@ const PALETTE_RESIZE_DEBOUNCE_MS = 100;
 const SEARCH_WIDTH = 800;
 /** Fallback only when content has not mounted yet; prefer measured scrollHeight. */
 const SEARCH_FALLBACK_HEIGHT = 370;
-const DEFAULT_APP_WIDTH = 920;
-const DEFAULT_APP_HEIGHT = 700;
+const DEFAULT_APP_HEIGHT = 580;
 const BUILTIN_USAGE_PREFIX = "builtin:";
 const PLUGIN_USAGE_PREFIX = "plugin:";
 /** Tool pages already have their own edge-to-edge chrome; skip host padding. */
 const FLUSH_APP_IDS = new Set(["hosts", "translate", "port-manager"]);
+/** Fill host via h-full/flex — do not wrap in ScrollArea (breaks height chain). */
+const FILL_HEIGHT_APP_IDS = new Set([
+  "hosts",
+  "translate",
+  "port-manager",
+  "todo",
+  "pomodoro",
+]);
 
 type PaletteMode = "search" | "app";
 
@@ -177,17 +185,6 @@ export function CommandPalettePage() {
     setInitialTranslateText(undefined);
   }, [resetSearchState]);
 
-  const applyAppWindowSize = useCallback(
-    (appId: string) => {
-      if (!isTauri) return;
-      const app = getBuiltinApp(appId);
-      const width = app?.defaultSize?.width ?? DEFAULT_APP_WIDTH;
-      const height = app?.defaultSize?.height ?? DEFAULT_APP_HEIGHT;
-      void api.setCommandPaletteSize(width, height);
-    },
-    [isTauri]
-  );
-
   const hideAndResetPalette = useCallback(async () => {
     clearPaletteSession();
     await hidePalette();
@@ -248,7 +245,7 @@ export function CommandPalettePage() {
       } else {
         clearPaletteSession();
       }
-      applyAppWindowSize(appId);
+      if (isTauri) needsSearchSizeRef.current = true;
       if (isTauri && !options?.restore) {
         // Always record via Rust (local RFC3339) then refresh — JS toISOString() is UTC
         // and lexicographic string sort put builtins after local +08:00 OS app timestamps.
@@ -263,7 +260,7 @@ export function CommandPalettePage() {
           });
       }
     },
-    [applyAppWindowSize, isTauri]
+    [isTauri]
   );
 
   useEffect(() => {
@@ -660,19 +657,19 @@ export function CommandPalettePage() {
 
   // After plugin -> search: apply SEARCH_WIDTH + measured height in one shot before paint.
   useLayoutEffect(() => {
-    if (!needsSearchSizeRef.current || !isTauri || mode !== "search") return;
+    if (!needsSearchSizeRef.current || !isTauri) return;
     needsSearchSizeRef.current = false;
     const height = contentRef.current
       ? Math.ceil(contentRef.current.scrollHeight)
       : SEARCH_FALLBACK_HEIGHT;
     void api.setCommandPaletteSize(SEARCH_WIDTH, height);
-  }, [isTauri, mode]);
+  }, [isTauri, mode, activeAppId]);
 
   // ResizeObserver alone tracks content height. Avoid depending on query/lists —
   // re-subscribing + native set_size on every keystroke is the main input lag source.
   useEffect(() => {
     const content = contentRef.current;
-    if (!content || !isTauri || mode !== "search") return;
+    if (!content || !isTauri) return;
     let frame = 0;
     let debounceTimer = 0;
     let lastHeight = -1;
@@ -701,7 +698,7 @@ export function CommandPalettePage() {
       observer.disconnect();
       window.cancelAnimationFrame(frame);
       window.clearTimeout(debounceTimer);
-      // Do not flush: leaving search must not race applyAppWindowSize.
+      // Do not flush pending resize on teardown (avoids racing the next mode's size).
     };
   }, [isTauri, mode, openRevision]);
 
@@ -835,105 +832,116 @@ export function CommandPalettePage() {
     [backToSearch, openBuiltinApp]
   );
 
-  if (mode === "app" && activeApp) {
-    return (
-      <BuiltinAppNavigationProvider value={navigationValue}>
-        <main className="command-palette-page command-palette-page--app">
-          <header className="command-palette-app-header">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="返回搜索"
-              title="返回搜索 (Esc)"
-              onClick={backToSearch}
-            >
-              <ArrowLeft />
-            </Button>
-            <div className="command-palette-app-title">
-              <AppIconView icon={activeApp.icon} className="size-4" />
-              <span>{activeApp.name}</span>
-            </div>
-          </header>
-          <div
-            className={cn(
-              "command-palette-app-host",
-              !FLUSH_APP_IDS.has(activeApp.id) && "command-palette-app-host--padded"
-            )}
-          >
-            {activeApp.ui.type === "react" ? (
-              <activeApp.ui.component
-                onBack={backToSearch}
-                openCreateOnMount={activeApp.id === "snippets" ? openCreateSnippet : undefined}
-                initialTranslateText={
-                  activeApp.id === "translate" ? initialTranslateText : undefined
-                }
-              />
-            ) : (
-              <PluginAppHost
-                pluginId={activeApp.pluginId}
-                appId={activeApp.ui.localAppId}
-                params={activeAppParams}
-                persistSession={activeApp.persistSession}
-              />
-            )}
-          </div>
-        </main>
-        <OnboardingDialog
-          open={showOnboarding}
-          onComplete={async () => {
-            await api.completeOnboarding();
-            setShowOnboarding(false);
-          }}
+  const appBodyHeight = activeApp?.defaultSize?.height ?? DEFAULT_APP_HEIGHT;
+  const showApp = Boolean(mode === "app" && activeApp);
+  const flushApp = Boolean(activeApp && FLUSH_APP_IDS.has(activeApp.id));
+  const fillAppHeight = Boolean(
+    activeApp && (activeApp.ui.type !== "react" || FILL_HEIGHT_APP_IDS.has(activeApp.id))
+  );
+
+  const activeAppNode =
+    showApp && activeApp ? (
+      activeApp.ui.type === "react" ? (
+        <activeApp.ui.component
+          onBack={backToSearch}
+          openCreateOnMount={activeApp.id === "snippets" ? openCreateSnippet : undefined}
+          initialTranslateText={
+            activeApp.id === "translate" ? initialTranslateText : undefined
+          }
         />
-        <ReminderDialog event={reminder} onDismiss={() => setReminder(null)} />
-        <Toaster position="top-center" richColors toastOptions={appToastOptions} />
-      </BuiltinAppNavigationProvider>
-    );
-  }
+      ) : (
+        <PluginAppHost
+          pluginId={activeApp.pluginId}
+          appId={activeApp.ui.localAppId}
+          params={activeAppParams}
+          persistSession={activeApp.persistSession}
+        />
+      )
+    ) : null;
 
   return (
     <BuiltinAppNavigationProvider value={navigationValue}>
-      <main className="command-palette-page">
+      <main className={cn("command-palette-page", showApp && "command-palette-page--app")}>
         <div
           ref={contentRef}
           className="command-palette-panel"
           onMouseDownCapture={(event) => {
-            if (event.target === inputRef.current) return;
-            event.preventDefault();
-            keepSearchFocused();
+            if (!showApp) {
+              if (event.target === inputRef.current) return;
+              event.preventDefault();
+              keepSearchFocused();
+            }
           }}
         >
           <header className="command-palette-search">
-            <input
-              ref={inputRef}
-              value={query}
-              className="command-palette-input"
-              placeholder="搜索应用或输入命令"
-              autoComplete="off"
-              spellCheck={false}
-              aria-label="搜索应用或输入命令"
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setError(null);
-              }}
-              onKeyDown={handleKeyDown}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-lg"
-              className="command-palette-logo-button"
-              aria-label="打开设置"
-              title="打开设置"
-              onClick={() => openBuiltinApp("settings")}
-            >
-              <img src="/favicon.png" alt="" className="command-palette-logo" />
-            </Button>
+            {showApp && activeApp ? (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-lg"
+                  className="command-palette-back-button"
+                  aria-label="返回搜索"
+                  title="返回搜索 (Esc)"
+                  onClick={backToSearch}
+                >
+                  <ArrowLeft />
+                </Button>
+                <div className="command-palette-app-bar-title">{activeApp.name}</div>
+                <div className="command-palette-search-spacer" aria-hidden="true" />
+                <div className="command-palette-app-bar-icon" aria-hidden="true">
+                  <AppIconView icon={activeApp.icon} className="command-palette-app-bar-icon-glyph" />
+                </div>
+              </>
+            ) : (
+              <>
+                <input
+                  ref={inputRef}
+                  value={query}
+                  className="command-palette-input"
+                  placeholder="搜索应用或输入命令"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="搜索应用或输入命令"
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setError(null);
+                  }}
+                  onKeyDown={handleKeyDown}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-lg"
+                  className="command-palette-logo-button"
+                  aria-label="打开设置"
+                  title="打开设置"
+                  onClick={() => openBuiltinApp("settings")}
+                >
+                  <img src="/favicon.png" alt="" className="command-palette-logo" />
+                </Button>
+              </>
+            )}
           </header>
 
           <div className="command-palette-content">
-            {loading ? (
+            {showApp && activeAppNode ? (
+              <div
+                className={cn(
+                  "command-palette-app-host",
+                  fillAppHeight && !flushApp && "command-palette-app-host--padded"
+                )}
+                style={{ height: appBodyHeight }}
+              >
+                {fillAppHeight ? (
+                  activeAppNode
+                ) : (
+                  <ScrollArea className="h-full">
+                    <div className="box-border p-4 px-5 pb-5">{activeAppNode}</div>
+                  </ScrollArea>
+                )}
+              </div>
+            ) : loading ? (
               <LauncherLoading />
             ) : normalizedQuery ? (
               <SearchResults
@@ -966,7 +974,7 @@ export function CommandPalettePage() {
                 onTogglePinned={(app) => void togglePinned(app)}
               />
             )}
-            {error ? (
+            {!showApp && error ? (
               <p className="command-palette-error" role="alert">
                 {error}
               </p>

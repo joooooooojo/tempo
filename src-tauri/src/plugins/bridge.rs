@@ -223,12 +223,12 @@ async fn dispatch_host_method(
             let Some(_view_instance_id) = ctx.view_instance_id() else {
                 return Err(RpcError::new(codes::FORBIDDEN, "palette.setSize is UI-only"));
             };
-            let width = params.get("width").and_then(Value::as_f64);
             let height = params
                 .get("height")
                 .and_then(Value::as_f64)
                 .ok_or_else(|| RpcError::new(codes::INVALID_REQUEST, "height is required"))?;
-            crate::auxiliary_windows::set_command_palette_size(app.clone(), width, height)
+            // Palette chrome keeps a fixed search width; plugins may only change height.
+            crate::auxiliary_windows::set_command_palette_size(app.clone(), None, height)
                 .map_err(|e| RpcError::internal("palette.setSize", e))?;
             Ok(Value::Null)
         }

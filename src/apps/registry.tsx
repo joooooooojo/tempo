@@ -55,7 +55,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["todo", "任务", "待办", "todos"],
     icon: lucideIcon(ListTodo),
     component: wrapPage(TodoPage),
-    defaultSize: { width: 920, height: 720 },
+    defaultSize: { width: 920, height: 580 },
   }),
   reactApp({
     id: "pomodoro",
@@ -63,7 +63,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["pomodoro", "番茄", "专注", "计时"],
     icon: lucideIcon(Timer),
     component: wrapPage(PomodoroPage),
-    defaultSize: { width: 920, height: 640 },
+    defaultSize: { width: 920, height: 580 },
   }),
   reactApp({
     id: "reports",
@@ -71,7 +71,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["screen", "报告", "屏幕", "使用时间", "reports"],
     icon: lucideIcon(BarChart3),
     component: wrapPage(ReportsPage),
-    defaultSize: { width: 960, height: 720 },
+    defaultSize: { width: 960, height: 580 },
   }),
   reactApp({
     id: "clipboard",
@@ -79,7 +79,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["clipboard", "剪贴板", "复制"],
     icon: lucideIcon(ClipboardList),
     component: wrapPage(ClipboardPage),
-    defaultSize: { width: 920, height: 680 },
+    defaultSize: { width: 920, height: 580 },
   }),
   reactApp({
     id: "snippets",
@@ -87,7 +87,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["snippet", "短语", "快捷短语", "snippets"],
     icon: lucideIcon(TextQuote),
     component: SnippetsPage,
-    defaultSize: { width: 920, height: 680 },
+    defaultSize: { width: 920, height: 580 },
   }),
   reactApp({
     id: "hosts",
@@ -95,7 +95,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["hosts", "host", "域名"],
     icon: lucideIcon(FileCode2),
     component: wrapPage(HostsPage),
-    defaultSize: { width: 920, height: 720 },
+    defaultSize: { width: 920, height: 580 },
   }),
   reactApp({
     id: "translate",
@@ -103,7 +103,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["translate", "翻译", "有道", "deepl"],
     icon: lucideIcon(Languages),
     component: TranslatePage,
-    defaultSize: { width: 920, height: 680 },
+    defaultSize: { width: 920, height: 580 },
     persistSession: true,
   }),
   reactApp({
@@ -112,7 +112,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["port", "端口", "进程", "tcp", "udp"],
     icon: lucideIcon(Cable),
     component: wrapPage(PortManagerPage),
-    defaultSize: { width: 920, height: 720 },
+    defaultSize: { width: 920, height: 580 },
   }),
   reactApp({
     id: "settings",
@@ -120,7 +120,7 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["settings", "设置", "偏好", "配置"],
     icon: lucideIcon(Settings),
     component: wrapPage(SettingsPage),
-    defaultSize: { width: 900, height: 700 },
+    defaultSize: { width: 900, height: 580 },
   }),
 ];
 

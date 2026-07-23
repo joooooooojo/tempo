@@ -112,7 +112,7 @@ export function PomodoroPage() {
 
   if (!state || !settings) {
     return (
-      <div className="flex h-[calc(100vh-5rem)] items-center justify-center overflow-hidden">
+      <div className="flex h-full items-center justify-center overflow-hidden">
         <div className="glass rounded-lg px-8 py-5 text-sm text-muted-foreground">
           加载中...
         </div>
@@ -197,7 +197,7 @@ export function PomodoroPage() {
   };
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-5rem)] max-h-[calc(100vh-5rem)] max-w-3xl flex-col gap-3 overflow-hidden">
+    <div className="mx-auto flex h-full max-h-full max-w-3xl flex-col gap-3 overflow-hidden">
       <div className="flex shrink-0 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <span

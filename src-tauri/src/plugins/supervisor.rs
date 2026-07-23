@@ -312,20 +312,8 @@ impl Supervisor {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env_clear()
-            .env("NODE_ENV", "production")
             .kill_on_drop(true);
-        // Minimal startup environment (design §3.3.1): forward just enough for the plugin's
-        // own child_process spawns to resolve binaries, without leaking the host's full env.
-        if let Ok(path) = std::env::var("PATH") {
-            command.env("PATH", path);
-        }
-        if let Ok(home) = std::env::var("HOME") {
-            command.env("HOME", home);
-        }
-        if let Ok(profile) = std::env::var("USERPROFILE") {
-            command.env("USERPROFILE", profile);
-        }
+        apply_minimal_plugin_runtime_env(&mut command);
         #[cfg(unix)]
         {
             command.process_group(0);
@@ -410,6 +398,41 @@ impl Supervisor {
                     bridge::codes::ACTIVATION_FAILED,
                     "plugin activate() did not complete within 10s",
                 ))
+            }
+        }
+    }
+}
+
+/// Minimal startup environment (design §3.3.1): forward just enough for Node and the plugin's
+/// own child_process spawns, without leaking the host's full env.
+fn apply_minimal_plugin_runtime_env(command: &mut tokio::process::Command) {
+    command.env_clear().env("NODE_ENV", "production");
+    const COMMON: &[&str] = &["PATH", "HOME", "USERPROFILE"];
+    for key in COMMON {
+        if let Ok(value) = std::env::var(key) {
+            command.env(key, value);
+        }
+    }
+    // Node 22+ asserts `ncrypto::CSPRNG` during init; on Windows that requires SystemRoot
+    // (and related OS paths) to be present — a bare PATH/USERPROFILE is not enough.
+    #[cfg(windows)]
+    {
+        const WINDOWS: &[&str] = &[
+            "SystemRoot",
+            "WINDIR",
+            "ComSpec",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "TEMP",
+            "TMP",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+        ];
+        for key in WINDOWS {
+            if let Ok(value) = std::env::var(key) {
+                command.env(key, value);
             }
         }
     }
