@@ -6,6 +6,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJsonPath = resolve(root, "package.json");
 const cargoTomlPath = resolve(root, "src-tauri", "Cargo.toml");
 const tauriConfigPath = resolve(root, "src-tauri", "tauri.conf.json");
+const pluginSdkPackageJsonPath = resolve(root, "packages", "plugin-sdk", "package.json");
 
 const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
 const version = packageJson.version;
@@ -18,6 +19,18 @@ await updateJson(tauriConfigPath, (json) => {
   json.version = version;
 });
 
+await updateJson(pluginSdkPackageJsonPath, (json) => {
+  json.version = version;
+});
+
+const pluginSdkLockPath = resolve(root, "packages", "plugin-sdk", "package-lock.json");
+await updateJson(pluginSdkLockPath, (json) => {
+  json.version = version;
+  if (json.packages?.[""]) {
+    json.packages[""].version = version;
+  }
+});
+
 await updateText(cargoTomlPath, (text) =>
   replaceRequired(
     text,
@@ -27,7 +40,7 @@ await updateText(cargoTomlPath, (text) =>
   )
 );
 
-console.log(`Synced Tempo version to ${version}`);
+console.log(`Synced Tempo version to ${version} (app + @tempo/plugin-sdk)`);
 
 async function updateJson(path, mutate) {
   const json = JSON.parse(await readFile(path, "utf8"));

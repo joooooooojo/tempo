@@ -1,6 +1,6 @@
 //! Package / publisher trust records (Phase 1: package hash confirmation).
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 pub fn ensure_plugin_tables(conn: &Connection) -> Result<(), String> {
@@ -60,12 +60,14 @@ pub fn ensure_plugin_tables(conn: &Connection) -> Result<(), String> {
           plugin_id TEXT PRIMARY KEY,
           exposed INTEGER NOT NULL DEFAULT 0,
           toolset_fingerprint TEXT NOT NULL DEFAULT '',
+          disabled_tools TEXT NOT NULL DEFAULT '[]',
           updated_at TEXT NOT NULL
         );
         ",
     )
     .map_err(|e| format!("create plugin tables: {e}"))?;
     ensure_plugin_mcp_fingerprint_column(conn)?;
+    ensure_plugin_mcp_disabled_tools_column(conn)?;
     Ok(())
 }
 
@@ -96,8 +98,93 @@ fn ensure_plugin_mcp_fingerprint_column(conn: &Connection) -> Result<(), String>
     Ok(())
 }
 
+fn ensure_plugin_mcp_disabled_tools_column(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(plugin_mcp_exposure)")
+        .map_err(|error| format!("inspect plugin_mcp_exposure: {error}"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("query plugin_mcp_exposure columns: {error}"))?;
+    let mut has_disabled_tools = false;
+    for column in columns {
+        if column.map_err(|error| format!("read plugin_mcp_exposure column: {error}"))?
+            == "disabled_tools"
+        {
+            has_disabled_tools = true;
+            break;
+        }
+    }
+    if !has_disabled_tools {
+        conn.execute(
+            "ALTER TABLE plugin_mcp_exposure
+             ADD COLUMN disabled_tools TEXT NOT NULL DEFAULT '[]'",
+            [],
+        )
+        .map_err(|error| format!("migrate plugin_mcp_exposure disabled_tools: {error}"))?;
+    }
+    Ok(())
+}
+
+fn parse_tool_names_json(raw: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
+}
+
+fn serialize_tool_names(tools: &[String]) -> Result<String, String> {
+    serde_json::to_string(tools).map_err(|error| format!("serialize tool names: {error}"))
+}
+
+pub fn get_plugin_mcp_disabled_tools(
+    conn: &Connection,
+    plugin_id: &str,
+) -> Result<Vec<String>, String> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT disabled_tools FROM plugin_mcp_exposure WHERE plugin_id = ?1",
+            params![plugin_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("read disabled_tools: {e}"))?;
+    Ok(raw.map(|value| parse_tool_names_json(&value)).unwrap_or_default())
+}
+
+pub fn is_plugin_mcp_tool_enabled(conn: &Connection, plugin_id: &str, tool_name: &str) -> bool {
+    get_plugin_mcp_disabled_tools(conn, plugin_id)
+        .map(|disabled| !disabled.iter().any(|name| name == tool_name))
+        .unwrap_or(true)
+}
+
+/// Persist per-tool enable preference. Missing exposure rows are created with overall off.
+pub fn set_plugin_mcp_tool_enabled(
+    conn: &Connection,
+    plugin_id: &str,
+    tool_name: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    let now = chrono::Local::now().to_rfc3339();
+    let mut disabled = get_plugin_mcp_disabled_tools(conn, plugin_id)?;
+    if enabled {
+        disabled.retain(|name| name != tool_name);
+    } else if !disabled.iter().any(|name| name == tool_name) {
+        disabled.push(tool_name.to_string());
+    }
+    let disabled_json = serialize_tool_names(&disabled)?;
+    conn.execute(
+        "INSERT INTO plugin_mcp_exposure
+           (plugin_id, exposed, toolset_fingerprint, disabled_tools, updated_at)
+         VALUES (?1, 0, '', ?2, ?3)
+         ON CONFLICT(plugin_id) DO UPDATE SET
+           disabled_tools = excluded.disabled_tools,
+           updated_at = excluded.updated_at",
+        params![plugin_id, disabled_json, now],
+    )
+    .map_err(|e| format!("upsert plugin_mcp_tool_enabled: {e}"))?;
+    Ok(())
+}
+
 /// User opt-in for exactly one reviewed `contributes.mcpTools` contract. Existing approvals
 /// fail closed after an upgrade because their empty/old fingerprint no longer matches.
+/// Per-tool disable preferences in `disabled_tools` are preserved across overall toggles.
 pub fn set_plugin_mcp_exposed(
     conn: &Connection,
     plugin_id: &str,
@@ -106,15 +193,23 @@ pub fn set_plugin_mcp_exposed(
 ) -> Result<(), String> {
     let now = chrono::Local::now().to_rfc3339();
     let approved_fingerprint = if exposed { toolset_fingerprint } else { "" };
+    let disabled_tools = get_plugin_mcp_disabled_tools(conn, plugin_id)?;
+    let disabled_json = serialize_tool_names(&disabled_tools)?;
     conn.execute(
         "INSERT INTO plugin_mcp_exposure
-           (plugin_id, exposed, toolset_fingerprint, updated_at)
-         VALUES (?1, ?2, ?3, ?4)
+           (plugin_id, exposed, toolset_fingerprint, disabled_tools, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(plugin_id) DO UPDATE SET
            exposed = excluded.exposed,
            toolset_fingerprint = excluded.toolset_fingerprint,
            updated_at = excluded.updated_at",
-        params![plugin_id, exposed as i64, approved_fingerprint, now],
+        params![
+            plugin_id,
+            exposed as i64,
+            approved_fingerprint,
+            disabled_json,
+            now
+        ],
     )
     .map_err(|e| format!("upsert plugin_mcp_exposure: {e}"))?;
     Ok(())
@@ -333,6 +428,8 @@ pub fn set_plugin_enabled(conn: &Connection, plugin_id: &str, enabled: bool) -> 
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPluginRow {
     pub id: String,
+    pub name: String,
+    pub icon_url: Option<String>,
     pub current_version: String,
     pub pending_version: Option<String>,
     pub enabled: bool,
@@ -343,6 +440,8 @@ pub struct InstalledPluginRow {
     pub signature_status: String,
     pub display_publisher: Option<String>,
     pub requires_node_runtime: bool,
+    /// Behavior-derived: `ui` | `hybrid` | `headless`.
+    pub kind: String,
     pub last_error: Option<String>,
     pub mcp_exposed: bool,
     #[serde(skip_serializing)]
@@ -350,6 +449,10 @@ pub struct InstalledPluginRow {
     /// Filled by callers that read the manifest from disk (design §11): number of
     /// `contributes.mcpTools` entries. `0` for plugins with none, or when unread.
     pub mcp_tool_count: usize,
+    /// Number of `contributes.settings` entries from the current package manifest.
+    pub settings_count: usize,
+    /// First install time of this plugin id (`plugins.installed_at`).
+    pub installed_at: String,
 }
 
 pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRow>, String> {
@@ -358,13 +461,13 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
             "SELECT p.id, p.current_version, p.pending_version, p.enabled, p.runtime_state, p.last_error,
                     v.package_hash, v.trusted_at, v.install_source, v.signature_status,
                     v.display_publisher, COALESCE(m.exposed, 0),
-                    COALESCE(m.toolset_fingerprint, '')
+                    COALESCE(m.toolset_fingerprint, ''), p.installed_at
              FROM plugins p
              LEFT JOIN plugin_versions v
                ON v.plugin_id = p.id AND v.version = p.current_version
              LEFT JOIN plugin_mcp_exposure m
                ON m.plugin_id = p.id
-             ORDER BY p.id",
+             ORDER BY p.installed_at DESC, p.id ASC",
         )
         .map_err(|e| format!("prepare list plugins: {e}"))?;
 
@@ -373,6 +476,8 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
             let trusted_at: Option<String> = row.get(7)?;
             Ok(InstalledPluginRow {
                 id: row.get(0)?,
+                name: String::new(),
+                icon_url: None,
                 current_version: row.get(1)?,
                 pending_version: row.get(2)?,
                 enabled: row.get::<_, i64>(3)? != 0,
@@ -389,9 +494,12 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
                 display_publisher: row.get(10)?,
                 mcp_exposed: row.get::<_, i64>(11)? != 0,
                 mcp_approved_fingerprint: row.get(12)?,
+                installed_at: row.get(13)?,
                 // Filled by caller after reading manifest from disk when needed.
                 requires_node_runtime: false,
+                kind: String::new(),
                 mcp_tool_count: 0,
+                settings_count: 0,
             })
         })
         .map_err(|e| format!("query plugins: {e}"))?;
@@ -464,6 +572,19 @@ mod tests {
             &conn,
             "com.example.hello",
             "fingerprint-a"
+        ));
+
+        set_plugin_mcp_tool_enabled(&conn, "com.example.hello", "say-hello", false).unwrap();
+        assert!(!is_plugin_mcp_tool_enabled(
+            &conn,
+            "com.example.hello",
+            "say-hello"
+        ));
+        set_plugin_mcp_tool_enabled(&conn, "com.example.hello", "say-hello", true).unwrap();
+        assert!(is_plugin_mcp_tool_enabled(
+            &conn,
+            "com.example.hello",
+            "say-hello"
         ));
     }
 }

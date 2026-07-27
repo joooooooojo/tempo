@@ -36,23 +36,8 @@ async function syncNativeWindowTheme(theme: Settings["theme"]) {
   }
 }
 
-export function isDarkThemeApplied() {
-  return document.documentElement.classList.contains("dark");
-}
-
-export async function syncEyeCareWindowBackground() {
-  try {
-    await invoke("sync_eye_care_window_background", {
-      dark: isDarkThemeApplied(),
-    });
-  } catch {
-    // Not running inside Tauri or command unavailable.
-  }
-}
-
 export async function emitThemeChange(theme: Settings["theme"]) {
   applyTheme(theme);
-  await syncEyeCareWindowBackground();
   await emit(THEME_CHANGED_EVENT, { theme });
 }
 

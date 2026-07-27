@@ -238,13 +238,6 @@ pub struct ListClipboardArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct StartPomodoroArgs {
-    #[serde(default)]
-    #[schemars(description = "Optional todo id to bind this focus session to")]
-    pub todo_id: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DailyReportArgs {
     #[serde(default)]
     #[schemars(description = "Optional date as YYYY-MM-DD; defaults to today")]
@@ -645,73 +638,6 @@ impl TempoMcpServer {
     }
 
     #[tool(
-        description = "Get current Tempo pomodoro/番茄钟 timer state. Use when asking if a focus session is running or remaining time"
-    )]
-    fn get_pomodoro_state(&self) -> Result<CallToolResult, McpError> {
-        let state = match app_state(&self.app) {
-            Ok(s) => s,
-            Err(e) => return Ok(e),
-        };
-        json_result(crate::commands::pomodoro_cmds::get_pomodoro_state(state))
-    }
-
-    #[tool(
-        description = "Start the Tempo pomodoro/番茄钟 timer. Optional todo_id to bind focus. Use when starting focus/专注/开始番茄"
-    )]
-    fn start_pomodoro(
-        &self,
-        Parameters(args): Parameters<StartPomodoroArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let state = match app_state(&self.app) {
-            Ok(s) => s,
-            Err(e) => return Ok(e),
-        };
-        match crate::commands::pomodoro_cmds::start_pomodoro(self.app.clone(), state, args.todo_id)
-        {
-            Ok(snapshot) => json_result(snapshot),
-            Err(e) => Ok(tool_err(e)),
-        }
-    }
-
-    #[tool(description = "Pause the Tempo pomodoro/番茄钟 timer. Use when pausing focus/暂停番茄")]
-    fn pause_pomodoro(&self) -> Result<CallToolResult, McpError> {
-        let state = match app_state(&self.app) {
-            Ok(s) => s,
-            Err(e) => return Ok(e),
-        };
-        json_result(crate::commands::pomodoro_cmds::pause_pomodoro(
-            self.app.clone(),
-            state,
-        ))
-    }
-
-    #[tool(description = "Stop the Tempo pomodoro/番茄钟 timer. Use when ending focus/停止番茄")]
-    fn stop_pomodoro(&self) -> Result<CallToolResult, McpError> {
-        let state = match app_state(&self.app) {
-            Ok(s) => s,
-            Err(e) => return Ok(e),
-        };
-        json_result(crate::commands::pomodoro_cmds::stop_pomodoro(
-            self.app.clone(),
-            state,
-        ))
-    }
-
-    #[tool(
-        description = "Skip the current Tempo pomodoro phase (focus or break). Use when skipping/跳过当前阶段"
-    )]
-    fn skip_pomodoro_phase(&self) -> Result<CallToolResult, McpError> {
-        let state = match app_state(&self.app) {
-            Ok(s) => s,
-            Err(e) => return Ok(e),
-        };
-        json_result(crate::commands::pomodoro_cmds::skip_pomodoro_phase(
-            self.app.clone(),
-            state,
-        ))
-    }
-
-    #[tool(
         description = "Get Tempo daily usage report/今日报告/屏幕时间. Optional date YYYY-MM-DD (defaults today). Use when asking how much time was spent on apps"
     )]
     fn get_daily_report(
@@ -766,6 +692,12 @@ impl ServerHandler for TempoMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let name = request.name.to_string();
         if self.tool_router.get(&name).is_some() {
+            if !crate::mcp::is_static_mcp_tool_allowed(&self.app, &name) {
+                return Err(McpError::invalid_params(
+                    "builtin MCP tool is disabled",
+                    None,
+                ));
+            }
             let context = ToolCallContext::new(self, request, context);
             return self.tool_router.call(context).await;
         }
@@ -795,6 +727,7 @@ impl ServerHandler for TempoMcpServer {
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let mut tools = self.tool_router.list_all();
+        tools.retain(|tool| crate::mcp::is_static_mcp_tool_allowed(&self.app, tool.name.as_ref()));
         tools.extend(list_plugin_tool_models(&self.app)?);
         tools.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(ListToolsResult {
@@ -806,6 +739,9 @@ impl ServerHandler for TempoMcpServer {
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
         if let Some(tool) = self.tool_router.get(name) {
+            if !crate::mcp::is_static_mcp_tool_allowed(&self.app, name) {
+                return None;
+            }
             return Some(tool.clone());
         }
         match crate::plugins::mcp_bridge::get_exposed_tool(&self.app, name) {
@@ -849,15 +785,13 @@ impl ServerHandler for TempoMcpServer {
 - todos / tasks / 待办 / 任务：list, create, update, complete, pin, delete, subtasks, notes
 - snippets / quick phrases / 快捷短语：list, create, update, delete, groups, copy to clipboard
 - clipboard / 剪贴板历史：search recently copied text
-- pomodoro / 番茄钟 / 专注：get state, start, pause, stop, skip phase
 - usage report / 今日报告 / 屏幕时间 / 使用报告：daily app usage report
 - plugin tools the user has opted into MCP exposure: call their `tempo_plugin_*` tools directly; the two tempo_* plugin meta-tools are compatibility fallbacks
 
 Workflow tips:
 1. For "what's on my list" → list_todos first; use get_todo only when full details are needed.
-2. For focus tied to a task → list_todos or get_todo, then start_pomodoro with todo_id.
-3. For "find that phrase I saved" → list_snippets (optional query) before create.
-4. Image clipboard entries are summarized as "[image]"; text content is returned as-is.
+2. For "find that phrase I saved" → list_snippets (optional query) before create.
+3. Image clipboard entries are summarized as "[image]"; text content is returned as-is.
 
 Requirement: the Tempo desktop app must be running with MCP enabled. If tools fail, tell the user to open Tempo and check Settings → MCP / AI."#
                     .to_string(),

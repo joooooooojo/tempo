@@ -17,9 +17,8 @@
 @import "./components/todo-calendar.css";
 @import "./components/ui.css";
 @import "./components/shelf-card.css";
-@import "./overlays/eye-care.css";
+@import "./components/settings.css";
 @import "./overlays/main-panel.css";
-@import "./overlays/pomodoro-float.css";
 @import "./overlays/shelf-picker.css";
 @import "@platform-styles";
 @import "./layer.css";

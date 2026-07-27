@@ -20,12 +20,12 @@ _以 Rust + Tauri 为宿主，统一搜索启动本机应用、官方能力与�
 - 🧩 **插件平台** — UI 插件与无界面插件共用 `manifest.json` 与 Host Bridge；本地目录/压缩包导入、显式信任、可选独立 Node Runtime，进程隔离负责生命周期与稳定性
 - ⚡ **高性能宿主** — Tauri 2 + Rust 承担 IPC、剪贴板监听、前台应用统计与系统调用；主进程后台驻留，主面板与选择器按需弹出，内存与体积显著低于典型 Electron 启动器
 - 🚀 **快速启动** — 全局快捷键唤起面板，拼音/关键词搜索内置应用、已启用插件、本机程序与快捷操作；支持固定、最近使用与会话恢复
-- 📋 **效率扩展** — 自带剪贴板历史、快捷短语、待办与番茄、屏幕时间等官方扩展，能力边界由插件生态扩展
-- 🤖 **MCP** — 本机 `127.0.0.1` HTTP 服务，Bearer 鉴权，供 Cursor 等客户端操作待办、短语、剪贴板、番茄钟与日报
+- 📋 **效率扩展** — 自带剪贴板历史、快捷短语、待办、屏幕时间等官方扩展，能力边界由插件生态扩展
+- 🤖 **MCP** — 本机 `127.0.0.1` HTTP 服务，Bearer 鉴权，供 Cursor 等客户端操作待办、短语、剪贴板与日报
 - 🎨 **主题与体验** — 亮/暗/跟随系统，托盘驻留、快捷键可配置、GitHub Releases 自动更新
 - 🔒 **本地优先** — SQLite 离线存储，不上传使用数据；第三方插件仅在用户确认信任后执行本机代码
 
-> 安装包内的待办、番茄钟、屏幕时间、Hosts、端口管理、翻译等属于**官方内置扩展**，用于演示面板与宿主 API；长期新能力以插件为主。
+> 安装包内的待办、屏幕时间、Hosts、端口管理、翻译等属于**官方内置扩展**，用于演示面板与宿主 API；长期新能力以插件为主。
 
 ## 🚀 快速开始
 
@@ -99,7 +99,7 @@ com.example.myplugin/
 
 `manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`contributes.apps` / `actions` / `commands` / `mcpTools`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `examples/plugins/com.example.hello/manifest.json`。
 
-开发资料：[插件开发指南](./docs/plugin-development.md) · [Host API 参考](./docs/plugin-host-api.md) · [manifest.json JSON Schema](./docs/schemas/plugin-manifest.schema.json)
+开发资料：[插件开发指南](./docs/plugin-development.md) · [Plugin SDK](./docs/plugin-sdk.md) · [Host API 参考](./docs/plugin-host-api.md) · [manifest.json JSON Schema](./docs/schemas/plugin-manifest.schema.json)
 
 ### 安装与试用（Hello 示例）
 
@@ -108,12 +108,14 @@ com.example.myplugin/
 3. 导入后为**未信任、已禁用**；点击 **信任** → 打开 **启用**  
 4. 主面板搜索「Hello 示例」「Hello 独立窗口」或快捷操作「Hello 一下」
 
-面板内 UI 自动注入 `window.plugin`（无需单独 SDK 即可起步）：
+面板内 UI 自动注入 `window.plugin`。推荐使用官方 SDK：
 
-```js
-await window.plugin.invoke("hello", { who: "Tempo" });      // 调用 Runtime 命令
-await window.plugin.host("notify.show", { title: "Hi" });    // 调用宿主 API
-window.plugin.on("greeted", (payload) => console.log(payload));
+```ts
+import { createPluginClient } from "@tempo/plugin-sdk";
+
+const tempo = await createPluginClient();
+await tempo.invoke("hello", { who: "Tempo" });
+await tempo.notify.show({ title: "Hi" });
 ```
 
 Action 可通过 `accepts: ["text" | "image"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一；两种目标都会收到结构化的 `{ actionId, query, input }`。
@@ -124,7 +126,7 @@ Action 可通过 `accepts: ["text" | "image"]` 匹配主面板输入，并在 `a
 
 ### 插件 SDK
 
-`packages/plugin-sdk` 提供类型与封装（持续演进），用于在 TypeScript 中更稳妥地调用 Bridge 与 Runtime；入门可直接使用 `window.plugin`。
+`@tempo/plugin-sdk`（与主包同版本）统一导出 `definePlugin` / `createPluginClient` 等 API，详见 [Plugin SDK](./docs/plugin-sdk.md)。示例 Hello 已 vendoring 打包后的 SDK。
 
 ## 🤖 MCP
 
@@ -146,7 +148,7 @@ Action 可通过 `accepts: ["text" | "image"]` 匹配主面板输入，并在 `a
 - 健康检查：`GET http://127.0.0.1:17832/health`（无需鉴权）  
 - Tempo 未运行或 MCP 关闭时客户端无法连接  
 
-**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、番茄钟状态与控制、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，但**默认不向 AI 暴露**；用户在插件设置中确认后，插件工具会以 `tempo_plugin_*` 一级 MCP 工具提供给外部客户端。旧的 `tempo_list_exposed_plugin_tools` / `tempo_call_plugin_tool` 入口暂时保留兼容。
+**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，但**默认不向 AI 暴露**；用户在插件设置中确认后，插件工具会以 `tempo_plugin_*` 一级 MCP 工具提供给外部客户端。旧的 `tempo_list_exposed_plugin_tools` / `tempo_call_plugin_tool` 入口暂时保留兼容。
 
 ## 🛠️ 技术栈
 

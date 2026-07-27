@@ -6,9 +6,13 @@
     "lib": ["ES2022", "DOM"],
     "strict": true,
     "declaration": true,
-    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    "sourceMap": true,
     "outDir": "dist",
-    "skipLibCheck": true
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
   "include": ["src"]
 }

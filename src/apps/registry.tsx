@@ -8,7 +8,6 @@ import {
   ListTodo,
   Settings,
   TextQuote,
-  Timer,
 } from "lucide-react";
 import {
   lucideIcon,
@@ -18,7 +17,6 @@ import {
 } from "@/apps/types";
 import { BUILTIN_OWNER } from "@/apps/constants";
 import { ClipboardPage } from "@/pages/ClipboardPage";
-import { PomodoroPage } from "@/pages/PomodoroPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SnippetsPage } from "@/pages/SnippetsPage";
@@ -55,13 +53,6 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     keywords: ["todo", "任务", "待办", "todos"],
     icon: lucideIcon(ListTodo),
     component: wrapPage(TodoPage),
-  }),
-  reactApp({
-    id: "pomodoro",
-    name: "番茄时钟",
-    keywords: ["pomodoro", "番茄", "专注", "计时"],
-    icon: lucideIcon(Timer),
-    component: wrapPage(PomodoroPage),
   }),
   reactApp({
     id: "reports",

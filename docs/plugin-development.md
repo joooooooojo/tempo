@@ -91,7 +91,7 @@ com.example.my-plugin/
 </html>
 ```
 
-Tempo 会在插件页面加载前注入 `window.plugin`。插件不应自行引入 Tauri API，也不需要单独安装 UI SDK。
+Tempo 会在插件页面加载前注入 `window.plugin`。推荐使用 [`@tempo/plugin-sdk`](./plugin-sdk.md) 的 `createPluginClient()`；也可以继续直接调用 bridge。插件不应自行引入 Tauri API。
 
 `index.js`：
 
@@ -286,6 +286,80 @@ Hook 将宿主事件映射到 Runtime command。目前已实现的事件：
 Hook 是异步触发，不等待插件结果；失败只写入宿主日志。
 
 需要在 Tempo 启动时提前激活 Runtime，可在根级声明 `"activationEvents": ["onStartup"]`。没有 `main` 的纯 UI 插件不能使用该字段。其它 Runtime 默认在第一次 command、Hook 或 MCP 调用时懒启动。
+
+### settings
+
+在「设置 → 插件管理 → 更多 → 插件配置」中由宿主集中渲染的设置项。最多 64 项；值保存在插件私有存储键 `__tempo/settings`（JSON object）。
+
+推荐用 SDK 读取：
+
+```js
+// Runtime
+const loud = await tempo.settings.get("loud", false);
+const all = await tempo.settings.getAll();
+tempo.settings.subscribe((values) => { /* ... */ });
+
+// UI
+const tempo = await createPluginClient();
+const who = await tempo.settings.get("default-who", "world");
+```
+
+裸 API：`storage.plugin.get("__tempo/settings")`。宿主写入后会向打开的 UI / 运行中的 Runtime 推送 `settings.changed`（payload：`{ values }`）。
+
+第一批控件按 UI 命名（对照 VS Code `contributes.configuration` 的数据类型思路，但声明的是宿主要渲染的控件）：
+
+| type | 控件 | default | 其它字段 |
+|---|---|---|---|
+| `switch` | 开关 | boolean | 不可有 `options` |
+| `select` | 单选下拉 | string（须为某个 option.value） | 必填 `options: [{ value, label? }]` |
+| `multiselect` | 多选下拉 | string[]（每项须为 option.value，可空） | 必填 `options` |
+| `input` | 文本输入 | string | 可选 `placeholder`；不可有 `options` |
+
+```json
+{
+  "settings": [
+    {
+      "id": "loud",
+      "type": "switch",
+      "title": "大声打招呼",
+      "description": "通知文案使用大写",
+      "default": false
+    },
+    {
+      "id": "theme",
+      "type": "select",
+      "title": "主题",
+      "default": "auto",
+      "options": [
+        { "value": "auto", "label": "跟随系统" },
+        { "value": "light", "label": "浅色" },
+        { "value": "dark", "label": "深色" }
+      ]
+    },
+    {
+      "id": "langs",
+      "type": "multiselect",
+      "title": "语言",
+      "default": ["zh"],
+      "options": [
+        { "value": "zh", "label": "中文" },
+        { "value": "en", "label": "English" }
+      ]
+    },
+    {
+      "id": "greeting",
+      "type": "input",
+      "title": "默认称呼",
+      "default": "world",
+      "placeholder": "world"
+    }
+  ]
+}
+```
+
+`options` 最多 64 项，`value` 不可重复；`label` 缺省时 UI 显示 `value`。
+
+若同时声明了 `mcpTools`，同一 Dialog 内还会显示 MCP 总开关与各方法开关。
 
 ### mcpTools
 

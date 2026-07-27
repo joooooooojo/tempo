@@ -35,7 +35,7 @@ debug = 0
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# macos-private-api: required for transparent overlay windows (quick todo, eye-care) on macOS
+# macos-private-api: required for transparent overlay windows (shelf) on macOS
 tauri = { version = "2", features = ["protocol-asset", "tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
@@ -85,7 +85,20 @@ core-foundation-sys = "0.8"
 appkit-nsworkspace-bindings = "0.1"
 objc = "0.2"
 block = "0.1"
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSBundle"] }
+objc2-user-notifications = { version = "0.3", features = [
+  "UNUserNotificationCenter",
+  "UNNotificationContent",
+  "UNNotificationRequest",
+  "UNNotificationSettings",
+  "block2",
+] }
 window-vibrancy = "0.6"
+# Feature-unify with tauri-plugin-notification's notify-rust so packaged .app
+# builds use UNUserNotificationCenter (NSUserNotificationCenter is dead on modern macOS).
+notify-rust = { version = "4.18", default-features = false, features = ["preview-macos-un"] }
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"

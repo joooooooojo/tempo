@@ -19,7 +19,8 @@ use super::host::PluginHost;
 use super::manifest::{ContributedMcpToolAnnotations, PluginManifest};
 use super::paths::packages_dir;
 use super::trust::{
-    ensure_plugin_tables, is_plugin_mcp_exposed, list_installed_plugins, InstalledPluginRow,
+    ensure_plugin_tables, is_plugin_mcp_exposed, is_plugin_mcp_tool_enabled,
+    list_installed_plugins, InstalledPluginRow,
 };
 
 const EXTERNAL_TOOL_PREFIX: &str = "tempo_plugin_";
@@ -142,7 +143,15 @@ pub fn list_exposed_tools(app: &AppHandle) -> Result<Vec<ExposedPluginTool>, Str
             continue;
         }
 
+        let disabled = {
+            let conn = state.db.lock();
+            super::trust::get_plugin_mcp_disabled_tools(&conn, &row.id).unwrap_or_default()
+        };
+
         for tool in &manifest.contributes.mcp_tools {
+            if disabled.iter().any(|name| name == &tool.name) {
+                continue;
+            }
             let external_name = external_tool_name(&row.id, &tool.name);
             if !external_names.insert(external_name.clone()) {
                 tracing::warn!(
@@ -240,6 +249,9 @@ async fn call_exposed_tool_inner(
         let conn = state.db.lock();
         if !is_plugin_mcp_exposed(&conn, plugin_id, &fingerprint) {
             return Err("plugin MCP approval is missing or stale".into());
+        }
+        if !is_plugin_mcp_tool_enabled(&conn, plugin_id, tool_name) {
+            return Err(format!("plugin MCP tool is disabled: {tool_name}"));
         }
     }
     let tool = manifest

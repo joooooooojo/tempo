@@ -133,19 +133,6 @@ pub struct Settings {
     pub autostart: bool,
     pub sound_enabled: bool,
     pub theme: String,
-    pub eye_care_enabled: bool,
-    pub eye_care_interval_minutes: u32,
-    pub night_reminder_enabled: bool,
-    pub night_reminder_start: String,
-    pub night_reminder_end: String,
-    pub pomodoro_work_minutes: u32,
-    pub pomodoro_short_break_minutes: u32,
-    pub pomodoro_long_break_minutes: u32,
-    pub pomodoro_sessions_per_cycle: u32,
-    pub pomodoro_float_enabled: bool,
-    pub pomodoro_float_auto_show: bool,
-    pub pomodoro_float_x: Option<i32>,
-    pub pomodoro_float_y: Option<i32>,
     pub clipboard_monitor_enabled: bool,
     pub clipboard_max_entries: u32,
     pub clipboard_paste_mode: String,
@@ -158,6 +145,9 @@ pub struct Settings {
     pub mcp_enabled: bool,
     pub mcp_port: u16,
     pub mcp_token: String,
+    /// Builtin app ids hidden from the launcher (settings itself cannot be disabled).
+    #[serde(default)]
+    pub disabled_builtin_apps: Vec<String>,
 }
 
 pub const DEFAULT_MAIN_PANEL_SHORTCUT: &str = "Alt+Space";
@@ -170,19 +160,6 @@ impl Default for Settings {
             autostart: false,
             sound_enabled: false,
             theme: "system".into(),
-            eye_care_enabled: true,
-            eye_care_interval_minutes: 45,
-            night_reminder_enabled: true,
-            night_reminder_start: "23:00".into(),
-            night_reminder_end: "06:00".into(),
-            pomodoro_work_minutes: 25,
-            pomodoro_short_break_minutes: 5,
-            pomodoro_long_break_minutes: 15,
-            pomodoro_sessions_per_cycle: 4,
-            pomodoro_float_enabled: false,
-            pomodoro_float_auto_show: true,
-            pomodoro_float_x: None,
-            pomodoro_float_y: None,
             clipboard_monitor_enabled: true,
             clipboard_max_entries: 200,
             clipboard_paste_mode: "clipboard".into(),
@@ -195,6 +172,7 @@ impl Default for Settings {
             mcp_enabled: true,
             mcp_port: DEFAULT_MCP_PORT,
             mcp_token: String::new(),
+            disabled_builtin_apps: Vec::new(),
         }
     }
 }
@@ -212,79 +190,29 @@ pub fn normalize_mcp_port(value: u64) -> u16 {
     value.clamp(1024, 65535) as u16
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PomodoroStatus {
-    Idle,
-    Running,
-    Paused,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PomodoroPhase {
-    Work,
-    ShortBreak,
-    LongBreak,
-}
-
-#[derive(Debug)]
-pub struct PomodoroRuntime {
-    pub status: PomodoroStatus,
-    pub phase: PomodoroPhase,
-    pub remaining_seconds: i64,
-    pub phase_total_seconds: i64,
-    pub cycle_count: u32,
-    pub active_todo_id: Option<i64>,
-    pub work_session_id: Option<i64>,
-}
-
-impl Default for PomodoroRuntime {
-    fn default() -> Self {
-        Self {
-            status: PomodoroStatus::Idle,
-            phase: PomodoroPhase::Work,
-            remaining_seconds: 0,
-            phase_total_seconds: 0,
-            cycle_count: 0,
-            active_todo_id: None,
-            work_session_id: None,
+pub fn normalize_disabled_builtin_apps(ids: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in ids {
+        let id = id.trim();
+        if id.is_empty() || id == "settings" {
+            continue;
+        }
+        if !out.iter().any(|existing| existing == id) {
+            out.push(id.to_string());
         }
     }
+    out
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PomodoroState {
-    pub status: String,
-    pub phase: String,
-    pub remaining_seconds: i64,
-    pub phase_total_seconds: i64,
-    pub sessions_today: u32,
-    pub cycle_count: u32,
-    pub active_todo_id: Option<i64>,
-    pub active_todo_title: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TodoFocusSummary {
-    pub todo_id: i64,
-    pub sessions_today: u32,
-    pub total_seconds_today: i64,
-    pub total_seconds_all: i64,
-    pub sessions_all: u32,
-    pub last_focused_at: Option<String>,
-}
-
-pub struct TrackerState {
-    pub continuous_seconds: i64,
-    pub last_date: String,
-    pub night_reminded_today: bool,
-}
-
-impl Default for TrackerState {
-    fn default() -> Self {
-        Self {
-            continuous_seconds: 0,
-            last_date: today_str(),
-            night_reminded_today: false,
+pub fn parse_disabled_builtin_apps(raw: &str) -> Vec<String> {
+    if raw.trim().is_empty() {
+        return Vec::new();
+    }
+    match serde_json::from_str::<Vec<String>>(raw) {
+        Ok(ids) => normalize_disabled_builtin_apps(&ids),
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to parse disabled_builtin_apps");
+            Vec::new()
         }
     }
 }
@@ -323,8 +251,6 @@ pub struct CachedClipboardImage {
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
-    pub tracker: Arc<Mutex<TrackerState>>,
-    pub pomodoro: Arc<Mutex<PomodoroRuntime>>,
     pub clipboard: Arc<Mutex<ClipboardRuntime>>,
 }
 
@@ -502,16 +428,6 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE,
             UNIQUE(todo_id, name)
         );
-        CREATE TABLE IF NOT EXISTS pomodoro_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            todo_id INTEGER,
-            started_at TEXT NOT NULL,
-            ended_at TEXT,
-            duration_seconds INTEGER NOT NULL DEFAULT 0,
-            completed INTEGER NOT NULL DEFAULT 0,
-            skipped INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE SET NULL
-        );
         CREATE TABLE IF NOT EXISTS clipboard_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             content TEXT NOT NULL,
@@ -609,6 +525,13 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             plugin_id TEXT PRIMARY KEY,
             exposed INTEGER NOT NULL DEFAULT 0,
             toolset_fingerprint TEXT NOT NULL DEFAULT '',
+            disabled_tools TEXT NOT NULL DEFAULT '[]',
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS builtin_mcp_exposure (
+            app_id TEXT PRIMARY KEY,
+            exposed INTEGER NOT NULL DEFAULT 1,
+            disabled_tools TEXT NOT NULL DEFAULT '[]',
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_clipboard_history_created
@@ -679,63 +602,6 @@ pub fn load_settings(conn: &Connection) -> Settings {
         autostart: get_setting(conn, "autostart", "false") == "true",
         sound_enabled: get_setting(conn, "sound_enabled", "false") == "true",
         theme: get_setting(conn, "theme", "system"),
-        eye_care_enabled: get_setting(conn, "eye_care_enabled", "true") == "true",
-        eye_care_interval_minutes: get_setting(conn, "eye_care_interval_minutes", "45")
-            .parse()
-            .unwrap_or(45),
-        night_reminder_enabled: get_setting(conn, "night_reminder_enabled", "true") == "true",
-        night_reminder_start: get_setting(conn, "night_reminder_start", "23:00"),
-        night_reminder_end: get_setting(conn, "night_reminder_end", "06:00"),
-        pomodoro_work_minutes: get_setting(conn, "pomodoro_work_minutes", "25")
-            .parse()
-            .unwrap_or(25),
-        pomodoro_short_break_minutes: get_setting(conn, "pomodoro_short_break_minutes", "5")
-            .parse()
-            .unwrap_or(5),
-        pomodoro_long_break_minutes: get_setting(conn, "pomodoro_long_break_minutes", "15")
-            .parse()
-            .unwrap_or(15),
-        pomodoro_sessions_per_cycle: get_setting(conn, "pomodoro_sessions_per_cycle", "4")
-            .parse()
-            .unwrap_or(4),
-        pomodoro_float_enabled: get_setting(conn, "pomodoro_float_enabled", "false") == "true",
-        pomodoro_float_auto_show: get_setting(conn, "pomodoro_float_auto_show", "true") == "true",
-        pomodoro_float_x: {
-            let raw = get_setting(conn, "pomodoro_float_x", "");
-            if raw.is_empty() {
-                None
-            } else {
-                match raw.parse() {
-                    Ok(value) => Some(value),
-                    Err(error) => {
-                        tracing::debug!(
-                            setting_key = "pomodoro_float_x",
-                            error = %error,
-                            "failed to parse numeric setting"
-                        );
-                        None
-                    }
-                }
-            }
-        },
-        pomodoro_float_y: {
-            let raw = get_setting(conn, "pomodoro_float_y", "");
-            if raw.is_empty() {
-                None
-            } else {
-                match raw.parse() {
-                    Ok(value) => Some(value),
-                    Err(error) => {
-                        tracing::debug!(
-                            setting_key = "pomodoro_float_y",
-                            error = %error,
-                            "failed to parse numeric setting"
-                        );
-                        None
-                    }
-                }
-            }
-        },
         clipboard_monitor_enabled: get_setting(conn, "clipboard_monitor_enabled", "true") == "true",
         clipboard_max_entries: get_setting(conn, "clipboard_max_entries", "200")
             .parse()
@@ -772,6 +638,11 @@ pub fn load_settings(conn: &Connection) -> Settings {
                 existing
             }
         },
+        disabled_builtin_apps: parse_disabled_builtin_apps(&get_setting(
+            conn,
+            "disabled_builtin_apps",
+            "[]",
+        )),
     }
 }
 
@@ -779,59 +650,6 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
     set_setting(conn, "autostart", &settings.autostart.to_string());
     set_setting(conn, "sound_enabled", &settings.sound_enabled.to_string());
     set_setting(conn, "theme", &settings.theme);
-    set_setting(
-        conn,
-        "eye_care_enabled",
-        &settings.eye_care_enabled.to_string(),
-    );
-    set_setting(
-        conn,
-        "eye_care_interval_minutes",
-        &settings.eye_care_interval_minutes.to_string(),
-    );
-    set_setting(
-        conn,
-        "night_reminder_enabled",
-        &settings.night_reminder_enabled.to_string(),
-    );
-    set_setting(conn, "night_reminder_start", &settings.night_reminder_start);
-    set_setting(conn, "night_reminder_end", &settings.night_reminder_end);
-    set_setting(
-        conn,
-        "pomodoro_work_minutes",
-        &settings.pomodoro_work_minutes.to_string(),
-    );
-    set_setting(
-        conn,
-        "pomodoro_short_break_minutes",
-        &settings.pomodoro_short_break_minutes.to_string(),
-    );
-    set_setting(
-        conn,
-        "pomodoro_long_break_minutes",
-        &settings.pomodoro_long_break_minutes.to_string(),
-    );
-    set_setting(
-        conn,
-        "pomodoro_sessions_per_cycle",
-        &settings.pomodoro_sessions_per_cycle.to_string(),
-    );
-    set_setting(
-        conn,
-        "pomodoro_float_enabled",
-        &settings.pomodoro_float_enabled.to_string(),
-    );
-    set_setting(
-        conn,
-        "pomodoro_float_auto_show",
-        &settings.pomodoro_float_auto_show.to_string(),
-    );
-    if let Some(x) = settings.pomodoro_float_x {
-        set_setting(conn, "pomodoro_float_x", &x.to_string());
-    }
-    if let Some(y) = settings.pomodoro_float_y {
-        set_setting(conn, "pomodoro_float_y", &y.to_string());
-    }
     set_setting(
         conn,
         "clipboard_monitor_enabled",
@@ -867,6 +685,14 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
     set_setting(conn, "mcp_enabled", &settings.mcp_enabled.to_string());
     set_setting(conn, "mcp_port", &settings.mcp_port.to_string());
     set_setting(conn, "mcp_token", &settings.mcp_token);
+    let disabled_builtin_apps = match serde_json::to_string(&settings.disabled_builtin_apps) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to serialize disabled_builtin_apps");
+            "[]".into()
+        }
+    };
+    set_setting(conn, "disabled_builtin_apps", &disabled_builtin_apps);
 }
 
 pub fn normalize_clipboard_paste_mode(value: &str) -> String {
@@ -888,136 +714,6 @@ pub fn normalize_clipboard_history_retention(value: &str) -> String {
         "permanent" => "permanent".into(),
         _ => "days".into(),
     }
-}
-
-pub fn get_pomodoro_sessions_today(conn: &Connection) -> u32 {
-    let today = today_str();
-    match conn.query_row(
-        "SELECT COUNT(*) FROM pomodoro_sessions
-         WHERE date(started_at) = ?1
-           AND ended_at IS NOT NULL
-           AND (completed = 1 OR skipped = 1)",
-        [today],
-        |row| row.get::<_, i64>(0),
-    ) {
-        Ok(count) => count.max(0) as u32,
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to count today's pomodoro sessions");
-            0
-        }
-    }
-}
-
-pub fn active_todo_title(conn: &Connection, todo_id: i64) -> Option<String> {
-    match conn.query_row(
-        "SELECT title FROM todos WHERE id = ?1 AND completed = 0",
-        [todo_id],
-        |row| row.get(0),
-    ) {
-        Ok(title) => Some(title),
-        Err(SqliteError::QueryReturnedNoRows) => None,
-        Err(error) => {
-            tracing::warn!(
-                todo_id = todo_id,
-                error = %error,
-                "failed to load active todo title"
-            );
-            None
-        }
-    }
-}
-
-pub fn start_pomodoro_work_session(
-    conn: &Connection,
-    todo_id: Option<i64>,
-    started_at: &str,
-) -> Result<i64, rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO pomodoro_sessions (todo_id, started_at, duration_seconds, completed, skipped)
-         VALUES (?1, ?2, 0, 0, 0)",
-        params![todo_id, started_at],
-    )?;
-    Ok(conn.last_insert_rowid())
-}
-
-pub fn finalize_pomodoro_work_session(
-    conn: &Connection,
-    session_id: i64,
-    ended_at: &str,
-    duration_seconds: i64,
-    completed: bool,
-    skipped: bool,
-) {
-    if let Err(error) = conn.execute(
-        "UPDATE pomodoro_sessions
-         SET ended_at = ?1,
-             duration_seconds = ?2,
-             completed = ?3,
-             skipped = ?4
-         WHERE id = ?5",
-        params![
-            ended_at,
-            duration_seconds.max(0),
-            if completed { 1 } else { 0 },
-            if skipped { 1 } else { 0 },
-            session_id
-        ],
-    ) {
-        tracing::warn!(
-            session_id = session_id,
-            error = %error,
-            "failed to finalize pomodoro work session"
-        );
-    }
-}
-
-pub fn get_todo_focus_summary(conn: &Connection, todo_id: i64) -> TodoFocusSummary {
-    let today = today_str();
-    match conn.query_row(
-        "SELECT
-            COALESCE(SUM(CASE WHEN completed = 1 AND date(started_at) = ?1 THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN date(started_at) = ?1 THEN duration_seconds ELSE 0 END), 0),
-            COALESCE(SUM(duration_seconds), 0),
-            COALESCE(SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END), 0),
-            MAX(started_at)
-         FROM pomodoro_sessions
-         WHERE todo_id = ?2",
-        params![today, todo_id],
-        |row| {
-            Ok(TodoFocusSummary {
-                todo_id,
-                sessions_today: row.get::<_, i64>(0)? as u32,
-                total_seconds_today: row.get(1)?,
-                total_seconds_all: row.get(2)?,
-                sessions_all: row.get::<_, i64>(3)? as u32,
-                last_focused_at: row.get(4)?,
-            })
-        },
-    ) {
-        Ok(summary) => summary,
-        Err(error) => {
-            tracing::warn!(
-                todo_id = todo_id,
-                error = %error,
-                "failed to load todo focus summary"
-            );
-            TodoFocusSummary {
-                todo_id,
-                sessions_today: 0,
-                total_seconds_today: 0,
-                total_seconds_all: 0,
-                sessions_all: 0,
-                last_focused_at: None,
-            }
-        }
-    }
-}
-
-pub fn get_todo_focus_summaries(conn: &Connection, todo_ids: &[i64]) -> Vec<TodoFocusSummary> {
-    todo_ids
-        .iter()
-        .map(|todo_id| get_todo_focus_summary(conn, *todo_id))
-        .collect()
 }
 
 pub fn categorize(name: &str, process: &str) -> &'static str {

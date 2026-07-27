@@ -129,6 +129,8 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const resultRef = useRef<HTMLTextAreaElement>(null);
   const translateRequestId = useRef(0);
+  /** Skip auto-translate while IME composition is in progress (拼音选词等). */
+  const [imeComposing, setImeComposing] = useState(false);
 
   useEffect(() => {
     const el = sourceRef.current;
@@ -295,6 +297,8 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
   );
 
   useEffect(() => {
+    if (imeComposing) return;
+
     const text = source.trim();
     if (!text) {
       translateRequestId.current += 1;
@@ -309,7 +313,7 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
     }, TRANSLATE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [source, from, to, provider, compareMode, configuredProviders, runTranslate]);
+  }, [source, from, to, provider, compareMode, configuredProviders, runTranslate, imeComposing]);
 
   const copyText = async (text: string) => {
     try {
@@ -411,6 +415,8 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
                 value={source}
                 rows={1}
                 onChange={(e) => setSource(e.target.value)}
+                onCompositionStart={() => setImeComposing(true)}
+                onCompositionEnd={() => setImeComposing(false)}
                 className={cn(
                   "block w-full resize-none overflow-hidden border-0 bg-transparent px-3 pt-3 pb-3",
                   "min-h-full! text-[13px] leading-6 text-foreground outline-none",

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for Tempo-owned host windows",
-  "windows": ["main-panel", "eye-care-reminder*", "pomodoro-float", "shelf-picker", "shelf-backdrop", "plugin-window-*"],
+  "windows": ["main-panel", "shelf-picker", "shelf-backdrop", "plugin-window-*"],
   "permissions": [
     "core:default",
     "core:window:allow-show",

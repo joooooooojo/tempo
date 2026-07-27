@@ -217,10 +217,71 @@
             "$ref": "#/$defs/mcpTool"
           },
           "default": []
+        },
+        "settings": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/setting"
+          },
+          "default": [],
+          "description": "Host-rendered settings shown in Tempo Settings → Plugins → 插件配置."
         }
       },
       "additionalProperties": false,
       "default": {}
+    },
+    "setting": {
+      "type": "object",
+      "required": ["id", "type", "title", "default"],
+      "additionalProperties": false,
+      "description": "Host-rendered setting row. v1 controls: switch / select / multiselect / input.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["switch", "select", "multiselect", "input"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "default": true,
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/settingOption"
+          }
+        },
+        "placeholder": {
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    },
+    "settingOption": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "app": {
       "type": "object",

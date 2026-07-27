@@ -17,15 +17,15 @@ import type {
   PluginContributionBundle,
   PluginAppRect,
   PluginMcpToolInfo,
+  PluginSettingsBundle,
+  BuiltinMcpStatus,
   PluginRuntimeStatus,
   PluginUiPrepareResult,
   PluginWindowContext,
   PortRecord,
-  PomodoroState,
   Settings,
   Snippet,
   SnippetGroup,
-  TodoFocusSummary,
   TodoImage,
   TodoItem,
   TodoNote,
@@ -151,27 +151,6 @@ export const api = {
     invoke<string>("save_markdown_image", { dataUrl, mimeType }),
   debugLog: (scope: string, message: string) =>
     invoke<void>("debug_log", { scope, message }),
-  getPomodoroState: () => invoke<PomodoroState>("get_pomodoro_state"),
-  setPomodoroTodo: (todoId: number | null) =>
-    invoke<PomodoroState>("set_pomodoro_todo", { todoId }),
-  startPomodoro: (todoId?: number | null) =>
-    invoke<PomodoroState>("start_pomodoro", { todoId: todoId ?? null }),
-  pausePomodoro: () => invoke<PomodoroState>("pause_pomodoro"),
-  stopPomodoro: () => invoke<PomodoroState>("stop_pomodoro"),
-  skipPomodoroPhase: () => invoke<PomodoroState>("skip_pomodoro_phase"),
-  getTodoFocusSummary: (todoId: number) =>
-    invoke<TodoFocusSummary>("get_todo_focus_summary", { todoId }),
-  getTodoFocusSummaries: (todoIds: number[]) =>
-    invoke<TodoFocusSummary[]>("get_todo_focus_summaries", { todoIds }),
-  showPomodoroFloat: () => invoke<void>("show_pomodoro_float"),
-  hidePomodoroFloat: () => invoke<void>("hide_pomodoro_float"),
-  togglePomodoroFloat: () => invoke<boolean>("toggle_pomodoro_float"),
-  isPomodoroFloatVisible: () => invoke<boolean>("is_pomodoro_float_visible_command"),
-  setPomodoroFloatExpanded: (expanded: boolean) =>
-    invoke<void>("set_pomodoro_float_expanded", { expanded }),
-  savePomodoroFloatPosition: (x: number, y: number) =>
-    invoke<void>("save_pomodoro_float_position", { x, y }),
-  popupPomodoroFloatMenu: () => invoke<void>("popup_pomodoro_float_menu"),
   getClipboardHistory: (query?: string, limit?: number, offset?: number) =>
     invoke<ClipboardHistoryPage>("get_clipboard_history", { query, limit, offset }),
   deleteClipboardEntry: (id: number) =>
@@ -305,10 +284,34 @@ export const api = {
     invoke<void>("set_plugin_mcp_exposed", {
       args: { pluginId, exposed: Boolean(exposed) },
     }),
+  setPluginMcpToolEnabled: (pluginId: string, toolName: string, enabled: boolean) =>
+    invoke<void>("set_plugin_mcp_tool_enabled", {
+      args: { pluginId, toolName, enabled: Boolean(enabled) },
+    }),
   listPluginMcpTools: (pluginId: string) =>
     invoke<PluginMcpToolInfo[]>("list_plugin_mcp_tools", { pluginId }),
   promotePluginPendingVersion: (pluginId: string) =>
     invoke<string>("promote_plugin_pending_version", { pluginId }),
+
+  getPluginSettingsBundle: (pluginId: string) =>
+    invoke<PluginSettingsBundle>("get_plugin_settings_bundle", { pluginId }),
+  setPluginSettingsValues: (pluginId: string, values: Record<string, unknown>) =>
+    invoke<Record<string, unknown>>("set_plugin_settings_values", {
+      args: { pluginId, values },
+    }),
+  listBuiltinMcpTools: (appId: string) =>
+    invoke<PluginMcpToolInfo[]>("list_builtin_mcp_tools", { appId }),
+  getBuiltinMcpStatus: (appId: string) =>
+    invoke<BuiltinMcpStatus>("get_builtin_mcp_status", { appId }),
+  setBuiltinMcpExposed: (appId: string, exposed: boolean) =>
+    invoke<void>("set_builtin_mcp_exposed", {
+      args: { appId, exposed: Boolean(exposed) },
+    }),
+  setBuiltinMcpToolEnabled: (appId: string, toolName: string, enabled: boolean) =>
+    invoke<void>("set_builtin_mcp_tool_enabled", {
+      args: { appId, toolName, enabled: Boolean(enabled) },
+    }),
+  builtinOpenDataDir: (appId: string) => invoke<void>("builtin_open_data_dir", { appId }),
 
   // Tools — Hosts
   getHostsWorkspace: () => invoke<HostsWorkspace>("get_hosts_workspace"),

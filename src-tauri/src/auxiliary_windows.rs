@@ -1,4 +1,3 @@
-use tauri::menu::{Menu, MenuItem};
 use tauri::window::Color;
 #[cfg(target_os = "macos")]
 use tauri::PhysicalPosition;
@@ -7,13 +6,10 @@ use tauri::{
     WebviewWindowBuilder,
 };
 #[cfg(not(target_os = "macos"))]
-use tauri::{Monitor, PhysicalPosition};
+use tauri::PhysicalPosition;
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-const EYE_CARE_PRIMARY_LABEL: &str = "eye-care-reminder";
-pub const POMODORO_FLOAT_LABEL: &str = "pomodoro-float";
 
 pub const MAIN_PANEL_LABEL: &str = "main-panel";
 pub const MAIN_PANEL_WIDTH: f64 = 800.0;
@@ -21,9 +17,6 @@ pub const MAIN_PANEL_MAX_WIDTH: f64 = 920.0;
 pub const MAIN_PANEL_INITIAL_HEIGHT: f64 = 370.0;
 pub const MAIN_PANEL_MIN_HEIGHT: f64 = 58.0;
 pub const MAIN_PANEL_MAX_HEIGHT: f64 = 760.0;
-
-pub const POMODORO_FLOAT_PANEL_WIDTH: f64 = 300.0;
-pub const POMODORO_FLOAT_PANEL_HEIGHT: f64 = 56.0;
 
 pub const SHELF_PICKER_LABEL: &str = "shelf-picker";
 pub const SHELF_HEIGHT: f64 = 292.0;
@@ -49,10 +42,6 @@ pub fn main_panel_window_size() -> (f64, f64) {
     (MAIN_PANEL_WIDTH, MAIN_PANEL_INITIAL_HEIGHT)
 }
 
-pub fn pomodoro_float_window_size() -> (f64, f64) {
-    (POMODORO_FLOAT_PANEL_WIDTH, POMODORO_FLOAT_PANEL_HEIGHT)
-}
-
 fn emit_to_debug<P>(app: &AppHandle, target: &str, event: &str, payload: P)
 where
     P: serde::Serialize + Clone,
@@ -63,62 +52,12 @@ where
     );
 }
 
-fn emit_debug<P>(app: &AppHandle, event: &str, payload: P)
-where
-    P: serde::Serialize + Clone,
-{
-    crate::logging::debug_if_err(app.emit(event, payload), "emit auxiliary app event");
-}
-
 pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(MAIN_PANEL_LABEL).is_none() {
         let (width, height) = main_panel_window_size();
         let window = build_main_panel_window(app, width, height)?;
         polish_main_panel_window(&window);
         crate::logging::debug_if_err(window.hide(), "precache hide main panel window");
-    }
-
-    // Pre-create eye-care overlays during startup so the first reminder does not
-    // build a WebView inside the invoke handler (Windows WebView2 can deadlock IPC).
-    #[cfg(target_os = "macos")]
-    {
-        if app.get_webview_window(EYE_CARE_PRIMARY_LABEL).is_none() {
-            let window = build_eye_care_overlay_window(app, EYE_CARE_PRIMARY_LABEL)?;
-            crate::logging::debug_if_err(window.hide(), "precache hide eye care window");
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let monitors = match ordered_monitors(app) {
-            Ok(monitors) => monitors,
-            Err(error) => {
-                tracing::debug!(error = %error, "failed to resolve monitors for eye care precache");
-                Vec::new()
-            }
-        };
-        let count = monitors.len().max(1);
-        for index in 0..count {
-            let label = eye_care_label(index);
-            let window = if let Some(window) = app.get_webview_window(&label) {
-                window
-            } else {
-                build_eye_care_overlay_window(app, &label)?
-            };
-
-            if let Some(monitor) = monitors.get(index) {
-                place_eye_care_window_on_monitor(&window, monitor);
-            }
-            crate::logging::debug_if_err(window.hide(), "precache hide eye care window");
-        }
-    }
-
-    if app.get_webview_window(POMODORO_FLOAT_LABEL).is_none() {
-        let (width, height) = pomodoro_float_window_size();
-        let window = build_pomodoro_float_window(app, width, height)?;
-        attach_pomodoro_float_menu_handler(app, &window);
-        polish_pomodoro_float_window(&window);
-        crate::logging::debug_if_err(window.hide(), "precache hide pomodoro float window");
     }
 
     if app.get_webview_window(SHELF_PICKER_LABEL).is_none() {
@@ -365,7 +304,10 @@ fn place_main_panel_window(
         let height = requested_height.clamp(MAIN_PANEL_MIN_HEIGHT, MAIN_PANEL_MAX_HEIGHT);
         let width = requested_width.clamp(320.0, max_width);
         window.set_size(LogicalSize::new(width, height))?;
-        return window.center();
+        if follow_cursor {
+            return window.center();
+        }
+        return Ok(());
     };
 
     let scale = monitor.scale_factor();
@@ -380,9 +322,12 @@ fn place_main_panel_window(
 
     let physical_width = (width * scale).round() as i32;
     let physical_height = (height * scale).round() as u32;
-    let x = work_area.position.x + (work_area.size.width as i32 - physical_width) / 2;
-    let y = work_area.position.y + (top_offset * scale).round() as i32;
-    window.set_position(PhysicalPosition::new(x, y))?;
+    // Opening follows the cursor/monitor; later resizes keep the user's drag position.
+    if follow_cursor {
+        let x = work_area.position.x + (work_area.size.width as i32 - physical_width) / 2;
+        let y = work_area.position.y + (top_offset * scale).round() as i32;
+        window.set_position(PhysicalPosition::new(x, y))?;
+    }
     window.set_size(PhysicalSize::new(
         physical_width.max(1) as u32,
         physical_height.max(1),
@@ -1069,431 +1014,6 @@ unsafe fn apply_macos_shelf_appearance(ns_window: *mut std::ffi::c_void, topmost
     let _: () = msg_send![ns_window, setHasShadow: true];
 }
 
-pub fn is_pomodoro_float_visible(app: &AppHandle) -> bool {
-    app.get_webview_window(POMODORO_FLOAT_LABEL)
-        .map(|window| window_is_visible(&window, "check pomodoro float visibility"))
-        .unwrap_or(false)
-}
-
-#[tauri::command]
-pub fn show_pomodoro_float(app: AppHandle) -> Result<(), String> {
-    show_pomodoro_float_window(&app).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub fn hide_pomodoro_float(app: AppHandle) -> Result<(), String> {
-    hide_pomodoro_float_window(&app).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub fn toggle_pomodoro_float(app: AppHandle) -> Result<bool, String> {
-    toggle_pomodoro_float_window(&app).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub fn is_pomodoro_float_visible_command(app: AppHandle) -> bool {
-    is_pomodoro_float_visible(&app)
-}
-
-#[tauri::command]
-pub fn set_pomodoro_float_expanded(_app: AppHandle, _expanded: bool) -> Result<(), String> {
-    Ok(())
-}
-
-#[tauri::command]
-pub fn save_pomodoro_float_position(
-    state: tauri::State<crate::db::AppState>,
-    x: i32,
-    y: i32,
-) -> Result<(), String> {
-    let conn = state.db.lock();
-    crate::db::set_setting(&conn, "pomodoro_float_x", &x.to_string());
-    crate::db::set_setting(&conn, "pomodoro_float_y", &y.to_string());
-    Ok(())
-}
-
-pub fn show_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
-    let (width, height) = pomodoro_float_window_size();
-    let window = get_or_create_pomodoro_float_window(app, width, height)?;
-
-    crate::logging::debug_if_err(
-        window.set_size(LogicalSize::new(width, height)),
-        "size pomodoro float window",
-    );
-    place_pomodoro_float_window(app, &window, width, height)?;
-    crate::logging::debug_if_err(
-        window.set_always_on_top(true),
-        "set pomodoro float always on top",
-    );
-    polish_pomodoro_float_window(&window);
-    window.show()?;
-    emit_pomodoro_float_visible(app, true);
-    Ok(())
-}
-
-pub fn hide_pomodoro_float_window(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window(POMODORO_FLOAT_LABEL) {
-        window.hide()?;
-    }
-    emit_pomodoro_float_visible(app, false);
-    Ok(())
-}
-
-fn emit_pomodoro_float_visible(app: &AppHandle, visible: bool) {
-    emit_debug(app, "pomodoro-float-visible", visible);
-    crate::tray_menu::sync_pomodoro_float_checked(app, visible);
-}
-
-pub fn toggle_pomodoro_float_window(app: &AppHandle) -> tauri::Result<bool> {
-    if is_pomodoro_float_visible(app) {
-        hide_pomodoro_float_window(app)?;
-        Ok(false)
-    } else {
-        show_pomodoro_float_window(app)?;
-        Ok(true)
-    }
-}
-
-fn get_or_create_pomodoro_float_window(
-    app: &AppHandle,
-    width: f64,
-    height: f64,
-) -> tauri::Result<WebviewWindow> {
-    if let Some(window) = app.get_webview_window(POMODORO_FLOAT_LABEL) {
-        Ok(window)
-    } else {
-        let window = build_pomodoro_float_window(app, width, height)?;
-        attach_pomodoro_float_menu_handler(app, &window);
-        polish_pomodoro_float_window(&window);
-        Ok(window)
-    }
-}
-
-fn attach_pomodoro_float_menu_handler(app: &AppHandle, window: &WebviewWindow) {
-    let app_handle = app.clone();
-    window.on_menu_event(move |_window, event| {
-        if event.id.as_ref() == "pomodoro-float-hide" {
-            crate::logging::warn_if_err(
-                hide_pomodoro_float_window(&app_handle),
-                "hide pomodoro float from menu",
-            );
-        }
-    });
-}
-
-#[tauri::command]
-pub fn popup_pomodoro_float_menu(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window(POMODORO_FLOAT_LABEL)
-        .ok_or_else(|| "未找到番茄钟悬浮窗".to_string())?;
-    let hide = MenuItem::with_id(
-        &app,
-        "pomodoro-float-hide",
-        "关闭悬浮窗",
-        true,
-        None::<&str>,
-    )
-    .map_err(|error| error.to_string())?;
-    let menu = Menu::with_items(&app, &[&hide]).map_err(|error| error.to_string())?;
-    window.popup_menu(&menu).map_err(|error| error.to_string())
-}
-
-fn place_pomodoro_float_window(
-    app: &AppHandle,
-    window: &WebviewWindow,
-    width: f64,
-    height: f64,
-) -> tauri::Result<()> {
-    if let Some(state) = app.try_state::<crate::db::AppState>() {
-        let settings = {
-            let conn = state.db.lock();
-            crate::db::load_settings(&conn)
-        };
-
-        if let (Some(x), Some(y)) = (settings.pomodoro_float_x, settings.pomodoro_float_y) {
-            crate::logging::debug_if_err(
-                window.set_position(PhysicalPosition::new(x, y)),
-                "position pomodoro float window from settings",
-            );
-            return Ok(());
-        }
-    }
-
-    if let Some(position) = default_pomodoro_float_position(app, width, height) {
-        crate::logging::debug_if_err(
-            window.set_position(position),
-            "position pomodoro float window",
-        );
-    }
-
-    Ok(())
-}
-
-fn default_pomodoro_float_position(
-    app: &AppHandle,
-    width: f64,
-    height: f64,
-) -> Option<PhysicalPosition<i32>> {
-    let monitor = match app.primary_monitor() {
-        Ok(Some(monitor)) => monitor,
-        Ok(None) => {
-            tracing::debug!("no primary monitor available for pomodoro float");
-            return None;
-        }
-        Err(error) => {
-            tracing::debug!(error = %error, "failed to resolve primary monitor for pomodoro float");
-            return None;
-        }
-    };
-    let position = monitor.position();
-    let size = monitor.size();
-    let scale = monitor.scale_factor();
-    let window_width = (width * scale).round() as i32;
-    let _window_height = (height * scale).round() as i32;
-    let margin = (16.0 * scale).round() as i32;
-
-    Some(PhysicalPosition::new(
-        position.x + size.width as i32 - window_width - margin,
-        position.y + margin,
-    ))
-}
-
-pub fn polish_pomodoro_float_window(window: &WebviewWindow) {
-    crate::logging::debug_if_err(
-        window.set_background_color(Some(Color(0, 0, 0, 0))),
-        "set pomodoro float transparent background",
-    );
-
-    #[cfg(target_os = "macos")]
-    {
-        crate::logging::debug_if_err(window.set_shadow(true), "set pomodoro float shadow");
-        polish_macos_pomodoro_float_window(window);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        crate::logging::debug_if_err(window.set_shadow(true), "set pomodoro float shadow");
-        apply_windows_shelf_appearance(window);
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        crate::logging::debug_if_err(window.set_shadow(false), "unset pomodoro float shadow");
-    }
-}
-
-pub fn build_pomodoro_float_window(
-    app: &AppHandle,
-    width: f64,
-    height: f64,
-) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(
-        app,
-        POMODORO_FLOAT_LABEL,
-        WebviewUrl::App("/?view=pomodoro-float".into()),
-    )
-    .title("番茄钟")
-    .inner_size(width, height)
-    .resizable(false)
-    .decorations(false)
-    .transparent(true)
-    .background_color(Color(0, 0, 0, 0))
-    .shadow(cfg!(any(target_os = "macos", target_os = "windows")))
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .visible_on_all_workspaces(true)
-    .visible(false)
-    .focused(false)
-    .build()
-}
-
-#[tauri::command]
-pub fn show_eye_care_overlay(app: AppHandle) -> Result<(), String> {
-    show_eye_care_overlay_window(&app).map_err(|error| error.to_string())
-}
-
-pub fn show_eye_care_overlay_window(app: &AppHandle) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        // macOS: simple fullscreen on the primary display only.
-        // Multi-monitor window overlays look poor and are intentionally skipped.
-        let window = get_or_create_eye_care_window(app, EYE_CARE_PRIMARY_LABEL)?;
-        crate::logging::debug_if_err(
-            window.set_simple_fullscreen(true),
-            "set eye care fullscreen",
-        );
-        polish_macos_eye_care_overlay(&window);
-        present_eye_care_window(&window)?;
-        emit_debug(app, "eye-care:reveal", ());
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let monitors = ordered_monitors(app)?;
-        if monitors.is_empty() {
-            return Err(tauri::Error::WindowNotFound);
-        }
-
-        for (index, monitor) in monitors.iter().enumerate() {
-            let label = eye_care_label(index);
-            let window = get_or_create_eye_care_window(app, &label)?;
-            // Place before and after show: first show on a secondary DPI display
-            // can ignore the initial move until the HWND is fully realized.
-            place_eye_care_window_on_monitor(&window, monitor);
-            present_eye_care_window(&window)?;
-            place_eye_care_window_on_monitor(&window, monitor);
-        }
-
-        // Drop overlays left over from a previous session with more displays.
-        close_extra_eye_care_windows(app, monitors.len());
-
-        if let Some(primary) = app.get_webview_window(EYE_CARE_PRIMARY_LABEL) {
-            crate::logging::debug_if_err(primary.set_focus(), "focus primary eye care overlay");
-        }
-
-        emit_debug(app, "eye-care:reveal", ());
-        Ok(())
-    }
-}
-
-#[tauri::command]
-pub fn hide_eye_care_overlay(app: AppHandle) -> Result<(), String> {
-    let windows = app.webview_windows();
-    for (label, window) in windows {
-        if !is_eye_care_label(&label) {
-            continue;
-        }
-
-        #[cfg(target_os = "macos")]
-        crate::logging::debug_if_err(
-            window.set_simple_fullscreen(false),
-            "unset eye care fullscreen",
-        );
-
-        if label == EYE_CARE_PRIMARY_LABEL {
-            window.hide().map_err(|error| error.to_string())?;
-        } else {
-            // Keep secondary overlays around so the next reminder does not recreate
-            // WebViews inside the invoke handler (Windows WebView2 can deadlock IPC).
-            crate::logging::debug_if_err(window.hide(), "hide secondary eye care overlay");
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn eye_care_label(index: usize) -> String {
-    if index == 0 {
-        EYE_CARE_PRIMARY_LABEL.to_string()
-    } else {
-        format!("{EYE_CARE_PRIMARY_LABEL}-{index}")
-    }
-}
-
-fn is_eye_care_label(label: &str) -> bool {
-    label == EYE_CARE_PRIMARY_LABEL || label.starts_with(&format!("{EYE_CARE_PRIMARY_LABEL}-"))
-}
-
-fn get_or_create_eye_care_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
-    if let Some(window) = app.get_webview_window(label) {
-        Ok(window)
-    } else {
-        build_eye_care_overlay_window(app, label)
-    }
-}
-
-fn eye_care_background_color(dark: bool) -> Color {
-    if dark {
-        Color(20, 36, 30, 255)
-    } else {
-        Color(239, 251, 244, 255)
-    }
-}
-
-#[tauri::command]
-pub fn sync_eye_care_window_background(app: AppHandle, dark: bool) -> Result<(), String> {
-    let color = eye_care_background_color(dark);
-    for (label, window) in app.webview_windows() {
-        if !is_eye_care_label(&label) {
-            continue;
-        }
-        window
-            .set_background_color(Some(color))
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn present_eye_care_window(window: &WebviewWindow) -> tauri::Result<()> {
-    crate::logging::debug_if_err(
-        window.set_always_on_top(true),
-        "set eye care overlay always on top",
-    );
-    crate::logging::debug_if_err(window.set_shadow(false), "unset eye care overlay shadow");
-    window.show()?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn ordered_monitors(app: &AppHandle) -> tauri::Result<Vec<Monitor>> {
-    let mut monitors = app.available_monitors()?;
-    if let Some(primary) = app.primary_monitor()? {
-        if let Some(index) = monitors
-            .iter()
-            .position(|monitor| same_monitor(monitor, &primary))
-        {
-            let primary_monitor = monitors.remove(index);
-            monitors.insert(0, primary_monitor);
-        } else {
-            monitors.insert(0, primary);
-        }
-    }
-    Ok(monitors)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn same_monitor(left: &Monitor, right: &Monitor) -> bool {
-    left.position() == right.position() && left.size() == right.size()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn place_eye_care_window_on_monitor(window: &WebviewWindow, monitor: &Monitor) {
-    let position = monitor.position();
-    let size = monitor.size();
-    // Use physical pixels so mixed-DPI secondary monitors land correctly.
-    crate::logging::debug_if_err(
-        window.set_position(PhysicalPosition::new(position.x, position.y)),
-        "position eye care overlay",
-    );
-    crate::logging::debug_if_err(
-        window.set_size(PhysicalSize::new(size.width, size.height)),
-        "size eye care overlay",
-    );
-}
-
-#[cfg(not(target_os = "macos"))]
-fn close_extra_eye_care_windows(app: &AppHandle, active_count: usize) {
-    for (label, window) in app.webview_windows() {
-        if !is_eye_care_label(&label) || label == EYE_CARE_PRIMARY_LABEL {
-            continue;
-        }
-
-        let Some(suffix) = label.strip_prefix(&format!("{EYE_CARE_PRIMARY_LABEL}-")) else {
-            continue;
-        };
-        let Ok(index) = suffix.parse::<usize>() else {
-            crate::logging::debug_if_err(window.close(), "close stale eye care overlay");
-            continue;
-        };
-
-        if index >= active_count {
-            crate::logging::debug_if_err(window.close(), "close inactive eye care overlay");
-        }
-    }
-}
-
 pub fn polish_main_panel_window(window: &WebviewWindow) {
     sync_overlay_window_theme(window);
 
@@ -1560,77 +1080,6 @@ pub fn build_main_panel_window(
     .focused(false)
     .center()
     .build()
-}
-
-fn build_eye_care_overlay_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App("/?view=eye-care".into()))
-        .title("")
-        .inner_size(1280.0, 800.0)
-        .decorations(false)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .closable(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .visible_on_all_workspaces(true)
-        .visible(false)
-        .focused(false)
-        .shadow(false)
-        .background_color(Color(239, 251, 244, 255))
-        .build()
-}
-
-#[cfg(target_os = "macos")]
-fn polish_macos_eye_care_overlay(window: &WebviewWindow) {
-    crate::logging::debug_if_err(
-        window.with_webview(|webview| unsafe {
-            apply_macos_overlay_level(webview.ns_window());
-        }),
-        "apply eye care macos overlay level",
-    );
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn apply_macos_overlay_level(ns_window: *mut std::ffi::c_void) {
-    use objc::runtime::Object;
-    use objc::{msg_send, sel, sel_impl};
-
-    let ns_window = ns_window.cast::<Object>();
-    if ns_window.is_null() {
-        return;
-    }
-
-    // NSScreenSaverWindowLevel: cover menu bar and dock.
-    let _: () = msg_send![ns_window, setLevel: 1000_i64];
-    let _: () = msg_send![ns_window, setHasShadow: false];
-}
-
-#[cfg(target_os = "macos")]
-fn polish_macos_pomodoro_float_window(window: &WebviewWindow) {
-    crate::macos_overlay_panel::apply_system_window_chrome(window);
-    crate::logging::debug_if_err(
-        window.with_webview(|webview| unsafe {
-            apply_macos_native_overlay_window(webview.ns_window());
-        }),
-        "apply pomodoro float macos native appearance",
-    );
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn apply_macos_native_overlay_window(ns_window: *mut std::ffi::c_void) {
-    use objc::runtime::{Class, Object};
-    use objc::{msg_send, sel, sel_impl};
-
-    let ns_window = ns_window.cast::<Object>();
-    if ns_window.is_null() {
-        return;
-    }
-
-    let clear_color: *mut Object = msg_send![Class::get("NSColor").unwrap(), clearColor];
-    let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
-    let _: () = msg_send![ns_window, setOpaque: false];
-    let _: () = msg_send![ns_window, setHasShadow: true];
 }
 
 #[cfg(target_os = "macos")]

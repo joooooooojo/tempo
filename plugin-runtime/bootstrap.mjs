@@ -178,11 +178,35 @@ function handleHostFrame(message) {
     case "cancel":
       handleCancel(message);
       return;
+    case "event":
+      dispatchRuntimeEvent(message.event, message.payload);
+      return;
     case "shutdown":
       void handleShutdown();
       return;
     default:
       return;
+  }
+}
+
+// -- Host → runtime events --------------------------------------------------------------
+
+const runtimeEventListeners = new Map();
+
+function onRuntimeEvent(event, handler) {
+  if (!runtimeEventListeners.has(event)) runtimeEventListeners.set(event, new Set());
+  runtimeEventListeners.get(event).add(handler);
+  return () => runtimeEventListeners.get(event)?.delete(handler);
+}
+
+function dispatchRuntimeEvent(event, payload) {
+  const name = String(event ?? "");
+  for (const handler of runtimeEventListeners.get(name) ?? []) {
+    try {
+      handler(payload ?? null);
+    } catch (error) {
+      log("warn", `runtime event handler failed for ${name}: ${error}`);
+    }
   }
 }
 
@@ -238,6 +262,7 @@ function buildContext(descriptor) {
     runtime: {
       nodeVersion: descriptor.nodeVersion,
     },
+    on: onRuntimeEvent,
   };
 }
 
@@ -303,9 +328,17 @@ async function main() {
 
   try {
     pluginModule = await import(pathToFileUrl(descriptor.mainPath));
-    if (typeof pluginModule.activate !== "function") {
+    const entry =
+      pluginModule &&
+      typeof pluginModule.default === "object" &&
+      pluginModule.default &&
+      typeof pluginModule.default.activate === "function"
+        ? pluginModule.default
+        : pluginModule;
+    if (typeof entry.activate !== "function") {
       throw new Error("plugin main does not export an activate(ctx) function");
     }
+    pluginModule = entry;
     await pluginModule.activate(ctx);
     send({ type: "ready", ok: true });
   } catch (error) {

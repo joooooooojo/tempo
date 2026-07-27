@@ -9,7 +9,6 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
 import { isBlurHideSuppressed } from "@/lib/blurHideGuard";
 import {
   LoaderCircle,
@@ -52,7 +51,6 @@ import {
   applyTheme,
   emitThemeChange,
   subscribeThemeChanges,
-  syncEyeCareWindowBackground,
   watchSystemTheme,
 } from "@/lib/theme";
 import { appToastOptions } from "@/lib/toastOptions";
@@ -87,15 +85,15 @@ const DEFAULT_APP_HEIGHT = 580;
 const APP_CHROME_HEIGHT = 58;
 const BUILTIN_USAGE_PREFIX = "builtin:";
 const PLUGIN_USAGE_PREFIX = "plugin:";
-/** Tool pages already have their own edge-to-edge chrome; skip host padding. */
-const FLUSH_APP_IDS = new Set(["hosts", "translate", "port-manager"]);
+/** Skip host padding: edge-to-edge builtins, and all plugins (authors pad themselves). */
+const FLUSH_APP_IDS = new Set(["hosts", "translate", "port-manager", "settings"]);
 /** Fill host via h-full/flex ? do not wrap in ScrollArea (breaks height chain). */
 const FILL_HEIGHT_APP_IDS = new Set([
   "hosts",
   "translate",
   "port-manager",
   "todo",
-  "pomodoro",
+  "settings",
 ]);
 
 type MainPanelMode = "search" | "app";
@@ -169,22 +167,79 @@ export function MainPanelPage() {
   /** After leaving a plugin, size once to measured search content (skip placeholder 370). */
   const needsSearchSizeRef = useRef(false);
   const isTauri = isTauriRuntime();
+
+  /** Empty search field: drag to move (Raycast-style). Non-empty: keep text selection/caret. */
+  const beginMainPanelDrag = useCallback(
+    (event: React.MouseEvent) => {
+      if (event.button !== 0 || !isTauri) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("button, a, [data-no-drag]")) return;
+      // Only gate on query while the search input is showing.
+      if (modeRef.current === "search" && queryRef.current.trim().length > 0) return;
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let started = false;
+
+      const onMove = (moveEvent: MouseEvent) => {
+        if (started) return;
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        if (dx * dx + dy * dy < 25) return;
+        started = true;
+        cleanup();
+        void getCurrentWindow().startDragging();
+      };
+
+      const cleanup = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", cleanup);
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", cleanup);
+    },
+    [isTauri]
+  );
+
   const [appsRevision, setAppsRevision] = useState(0);
+  const [disabledBuiltinIds, setDisabledBuiltinIds] = useState<Set<string>>(new Set());
   const builtinApps = useMemo(() => listBuiltinApps(), [appsRevision]);
-  const builtinAppsRef = useRef(builtinApps);
-  builtinAppsRef.current = builtinApps;
+  const enabledBuiltinApps = useMemo(
+    () => builtinApps.filter((app) => !disabledBuiltinIds.has(app.id)),
+    [builtinApps, disabledBuiltinIds]
+  );
+  const builtinAppsRef = useRef(enabledBuiltinApps);
+  builtinAppsRef.current = enabledBuiltinApps;
 
   useEffect(() => {
     const unsubscribe = subscribeApps(() => setAppsRevision((current) => current + 1));
     return unsubscribe;
   }, []);
 
+  const refreshDisabledBuiltins = useCallback(() => {
+    if (!isTauri) return;
+    void api
+      .getSettings()
+      .then((settings) => {
+        setDisabledBuiltinIds(new Set(settings.disabled_builtin_apps ?? []));
+      })
+      .catch(() => {
+        /* ignore */
+      });
+  }, [isTauri]);
+
+  useEffect(() => {
+    refreshDisabledBuiltins();
+  }, [refreshDisabledBuiltins]);
+
   useEffect(() => {
     if (!isTauri) return;
     let cancelled = false;
     void api
       .syncMainPanelSearchContributions(
-        builtinApps.map((app) => ({
+        enabledBuiltinApps.map((app) => ({
           id: app.id,
           name: app.name,
           keywords: app.keywords,
@@ -202,7 +257,7 @@ export function MainPanelPage() {
     return () => {
       cancelled = true;
     };
-  }, [builtinApps, isTauri]);
+  }, [enabledBuiltinApps, isTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -241,6 +296,7 @@ export function MainPanelPage() {
   }, []);
 
   const resetMainPanelState = useCallback(() => {
+    toast.dismiss();
     resetSearchState();
     setMode("search");
     setActiveAppId(null);
@@ -322,6 +378,7 @@ export function MainPanelPage() {
   }, []);
 
   const backToSearch = useCallback(() => {
+    toast.dismiss();
     clearMainPanelSession();
     setMode("search");
     setActiveAppId(null);
@@ -451,7 +508,6 @@ export function MainPanelPage() {
         .then((settings) => {
           currentTheme = settings.theme;
           applyTheme(currentTheme);
-          void syncEyeCareWindowBackground();
         })
         .catch(() => applyTheme("system"));
     } else {
@@ -483,17 +539,6 @@ export function MainPanelPage() {
     if (!isTauri) return;
 
     const unlistenReminder = listen<ReminderEvent>("reminder", (e) => {
-      if (e.payload.type === "eye_care") {
-        void openEyeCareReminderWindow();
-        return;
-      }
-
-      if (e.payload.type === "pomodoro_phase_end") {
-        void api.getSettings().then((s) => {
-          if (s.sound_enabled) playNotificationSound();
-        });
-      }
-
       if (e.payload.type === "todo_due") {
         void api.getSettings().then((s) => {
           if (s.sound_enabled) playNotificationSound();
@@ -570,6 +615,7 @@ export function MainPanelPage() {
       armed = false;
       window.clearTimeout(armTimer);
       setOpenRevision((current) => current + 1);
+      refreshDisabledBuiltins();
       const restored = restoreSessionIfNeeded();
       if (!restored && modeRef.current === "search") {
         setSelectedKey(null);
@@ -633,7 +679,14 @@ export function MainPanelPage() {
       void unlistenIndex.then((unlisten) => unlisten());
       unlistenBlur?.();
     };
-  }, [applyClipboardSeedFromBackend, hidePreservingSession, isTauri, loadApps, openBuiltinApp]);
+  }, [
+    applyClipboardSeedFromBackend,
+    hidePreservingSession,
+    isTauri,
+    loadApps,
+    openBuiltinApp,
+    refreshDisabledBuiltins,
+  ]);
 
   // Rust owns matching and ranking. A short debounce avoids one IPC + SQLite lookup per
   // keystroke, while cancellation prevents stale responses from replacing current results.
@@ -694,6 +747,7 @@ export function MainPanelPage() {
 
       if (usage.id.startsWith(BUILTIN_USAGE_PREFIX)) {
         const builtinId = usage.id.slice(BUILTIN_USAGE_PREFIX.length);
+        if (disabledBuiltinIds.has(builtinId)) continue;
         const app = getBuiltinApp(builtinId);
         if (!app) continue;
         entries.push({
@@ -708,6 +762,7 @@ export function MainPanelPage() {
 
       if (usage.id.startsWith(PLUGIN_USAGE_PREFIX)) {
         const runtimeAppId = usage.id.slice(PLUGIN_USAGE_PREFIX.length);
+        if (disabledBuiltinIds.has(runtimeAppId)) continue;
         const app = getBuiltinApp(runtimeAppId);
         if (!app) continue;
         entries.push({
@@ -742,7 +797,7 @@ export function MainPanelPage() {
       last_used_at: app.last_used_at ?? null,
       use_count: app.use_count,
     }));
-  }, [apps, usageItems]);
+  }, [apps, disabledBuiltinIds, usageItems]);
   const pinnedApps = useMemo(() => apps.filter((app) => app.pinned), [apps]);
   // Pinned apps have their own row — keep them out of "最近使用".
   const recentWithoutPinned = useMemo(
@@ -1130,7 +1185,9 @@ export function MainPanelPage() {
   );
   const appBodyHeight = Math.max(0, appWindowHeight - APP_CHROME_HEIGHT);
   const showApp = Boolean(mode === "app" && activeApp);
-  const flushApp = Boolean(activeApp && FLUSH_APP_IDS.has(activeApp.id));
+  const flushApp = Boolean(
+    activeApp && (FLUSH_APP_IDS.has(activeApp.id) || activeApp.source === "plugin")
+  );
   const fillAppHeight = Boolean(
     activeApp && (activeApp.ui.type !== "react" || FILL_HEIGHT_APP_IDS.has(activeApp.id))
   );
@@ -1163,12 +1220,21 @@ export function MainPanelPage() {
           onMouseDownCapture={(event) => {
             if (!showApp) {
               if (event.target === inputRef.current) return;
+              const target = event.target;
+              if (
+                target instanceof Element &&
+                target.closest(
+                  ".main-panel-search, button, input, textarea, a, [data-no-drag]"
+                )
+              ) {
+                return;
+              }
               event.preventDefault();
               keepSearchFocused();
             }
           }}
         >
-          <header className="main-panel-search">
+          <header className="main-panel-search" onMouseDown={beginMainPanelDrag}>
             {showApp && activeApp ? (
               <>
                 <Button
@@ -1176,6 +1242,7 @@ export function MainPanelPage() {
                   variant="ghost"
                   size="icon-lg"
                   className="main-panel-back-button"
+                  data-no-drag
                   aria-label="返回搜索"
                   title="返回搜索 (Esc)"
                   onClick={backToSearch}
@@ -1194,6 +1261,7 @@ export function MainPanelPage() {
                   {clipboardChip ? (
                     <div
                       className="main-panel-clipboard-chip"
+                      data-no-drag
                       title={
                         clipboardChip.kind === "text"
                           ? clipboardChip.fullText
@@ -1266,6 +1334,7 @@ export function MainPanelPage() {
                   variant="ghost"
                   size="icon-lg"
                   className="main-panel-logo-button"
+                  data-no-drag
                   aria-label="打开设置"
                   title="打开设置"
                   onClick={() => openBuiltinApp("settings")}
@@ -1780,16 +1849,12 @@ async function hideMainPanel() {
   await getCurrentWindow().hide();
 }
 
-async function openEyeCareReminderWindow() {
-  try {
-    await invoke("show_eye_care_overlay");
-  } catch (error) {
-    console.error("Failed to open eye-care overlay", error);
-  }
-}
-
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
   return fallback;
 }

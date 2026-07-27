@@ -4,7 +4,7 @@ Tempo 插件系统 Phase 1 的最小混合插件示例：一个面板应用、�
 三者共用同一个 `main` Runtime 命令 `hello`。用于验证插件导入、信任、启用、Runtime 激活和
 Host Bridge 的完整链路。
 
-完整参考：[插件开发指南](../../../docs/plugin-development.md) · [Host API](../../../docs/plugin-host-api.md) · [Manifest Schema](../../../docs/schemas/plugin-manifest.schema.json)
+完整参考：[插件开发指南](../../../docs/plugin-development.md) · [Host API](../../../docs/plugin-host-api.md) · [Plugin SDK](../../../docs/plugin-sdk.md) · [Manifest Schema](../../../docs/schemas/plugin-manifest.schema.json)
 
 ```text
 com.example.hello/
@@ -52,32 +52,51 @@ com.example.hello/
 
 ## 5. 使用
 
-UI 侧宿主会自动挂载 `window.plugin`（无需 SDK）：
+本示例已通过 `vendor/tempo-sdk.mjs` 引入官方 SDK（见 [Plugin SDK](../../../docs/plugin-sdk.md)）：
 
 ```js
-await window.plugin.invoke("hello", { who: "Tempo" });       // Runtime only
-await window.plugin.host("notify.show", { title: "Hi" });   // Host only
-window.plugin.on("greeted", (p) => console.log(p));
+// main.mjs
+import { definePlugin } from "./vendor/tempo-sdk.mjs";
+export default definePlugin({
+  async activate(tempo) {
+    const loud = await tempo.settings.get("loud", false);
+    tempo.commands.register("hello", async (params) => { /* ... */ });
+  },
+});
+
+// index.js
+import { createPluginClient } from "./vendor/tempo-sdk.mjs";
+const tempo = await createPluginClient();
+await tempo.invoke("hello", { who: "Tempo" });
+await tempo.settings.getAll();
 ```
+
+正式工程请使用：
+
+```ts
+import { definePlugin, createPluginClient } from "@tempo/plugin-sdk";
+```
+
+底层注入的 `window.plugin` 仍然存在；SDK 是推荐用法。
 
 - **上下文操作**：复制文字或图片后打开主面板，选择「使用当前输入」；它通过 `app` 打开 UI，并在 `context.params.input` 中携带输入
 - **面板应用**：主面板搜索「Hello 示例」打开，点「打招呼（Runtime）」
 - **独立窗口**：主面板搜索「Hello 独立窗口」打开；它使用原生标题栏，并出现在任务栏或 Dock 中
 - **快捷操作**：搜索「Hello 一下」执行同一个 `hello` 命令
-- **MCP 工具**：在插件设置中开启「向 MCP 暴露工具」后，外部客户端可直接调用 `tempo_plugin_com_example_hello__say_hello`
+- **插件配置**：设置 → 插件管理 → Hello → 插件配置（`loud` / `default-who`）
+- **MCP 工具**：在插件配置中开启 MCP 后，外部客户端可直接调用 `tempo_plugin_com_example_hello__say_hello`
 
 应用用 `apps[].windowMode` 选择 `normal`（主面板）或 `standalone`（独立窗口），两种模式共用 `rect`。窗口内还可以调整自身矩形或主动关闭：
 
 ```js
-await window.plugin.host("window.setRect", {
+await tempo.window.setRect({
   width: "80%",
   height: 560,
   x: "center",
   y: "10%"
 });
-await window.plugin.host("window.close");
+await tempo.window.close();
 ```
-
 ## 6. 卸载 / 清理
 
 - 「打开数据目录」可查看 `hello.log` 等 Runtime 写入的文件

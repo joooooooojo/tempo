@@ -1,6 +1,0 @@
-/* Defer window rounding to AppKit; do not paint a CSS radius on the float chrome. */
-.pomodoro-float-panel {
-  border-radius: 0;
-  background: hsl(var(--background));
-  backdrop-filter: none;
-}

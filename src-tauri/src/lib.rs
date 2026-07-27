@@ -1,8 +1,8 @@
 mod commands;
 mod db;
+mod notify;
 mod platform;
 mod plugins;
-mod pomodoro;
 
 mod app_icons;
 mod asset_protocol;
@@ -28,8 +28,8 @@ mod tests;
 extern crate objc;
 
 use db::{
-    db_path, init_db, AppState, PomodoroRuntime, TrackerState, DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
-    DEFAULT_MAIN_PANEL_SHORTCUT, DEFAULT_SNIPPET_PICKER_SHORTCUT,
+    db_path, init_db, AppState, DEFAULT_CLIPBOARD_PICKER_SHORTCUT, DEFAULT_MAIN_PANEL_SHORTCUT,
+    DEFAULT_SNIPPET_PICKER_SHORTCUT,
 };
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -207,8 +207,6 @@ pub fn run() {
             }
             let state = AppState {
                 db: Arc::new(Mutex::new(conn)),
-                tracker: Arc::new(Mutex::new(TrackerState::default())),
-                pomodoro: Arc::new(Mutex::new(PomodoroRuntime::default())),
                 clipboard: Arc::new(Mutex::new(db::ClipboardRuntime::default())),
             };
             commands::launcher::restore_launcher_index_snapshot(&state);
@@ -308,19 +306,6 @@ pub fn run() {
             }
             auxiliary_windows::precache_auxiliary_windows(app.handle())?;
 
-            if let Some(state) = app.try_state::<AppState>() {
-                let should_restore_float = {
-                    let runtime = state.pomodoro.lock();
-                    runtime.status != db::PomodoroStatus::Idle
-                };
-                if should_restore_float {
-                    logging::warn_if_err(
-                        auxiliary_windows::show_pomodoro_float_window(app.handle()),
-                        "restore pomodoro float window",
-                    );
-                }
-            }
-
             #[cfg(target_os = "macos")]
             {
                 // Belt-and-suspenders after setup work; primary policy is set pre-run above.
@@ -375,26 +360,9 @@ pub fn run() {
             commands::markdown::save_markdown_image,
             commands::window::quit_app,
             commands::window::debug_log,
-            commands::pomodoro_cmds::get_pomodoro_state,
-            commands::pomodoro_cmds::set_pomodoro_todo,
-            commands::pomodoro_cmds::start_pomodoro,
-            commands::pomodoro_cmds::get_todo_focus_summary,
-            commands::pomodoro_cmds::get_todo_focus_summaries,
-            commands::pomodoro_cmds::pause_pomodoro,
-            commands::pomodoro_cmds::stop_pomodoro,
-            commands::pomodoro_cmds::skip_pomodoro_phase,
+            notify::show_user_notification,
             commands::port_manager::get_port_records,
             commands::port_manager::terminate_port_process,
-            auxiliary_windows::show_eye_care_overlay,
-            auxiliary_windows::hide_eye_care_overlay,
-            auxiliary_windows::sync_eye_care_window_background,
-            auxiliary_windows::show_pomodoro_float,
-            auxiliary_windows::hide_pomodoro_float,
-            auxiliary_windows::toggle_pomodoro_float,
-            auxiliary_windows::is_pomodoro_float_visible_command,
-            auxiliary_windows::set_pomodoro_float_expanded,
-            auxiliary_windows::save_pomodoro_float_position,
-            auxiliary_windows::popup_pomodoro_float_menu,
             commands::clipboard::get_clipboard_history,
             commands::clipboard::delete_clipboard_history_entry,
             commands::clipboard::clear_clipboard_history_command,
@@ -432,8 +400,16 @@ pub fn run() {
             commands::plugins::plugin_open_data_dir,
             commands::plugins::plugin_uninstall,
             commands::plugins::set_plugin_mcp_exposed,
+            commands::plugins::set_plugin_mcp_tool_enabled,
             commands::plugins::promote_plugin_pending_version,
             commands::plugins::list_plugin_mcp_tools,
+            commands::plugins::get_plugin_settings_bundle,
+            commands::plugins::set_plugin_settings_values,
+            commands::builtins::list_builtin_mcp_tools,
+            commands::builtins::get_builtin_mcp_status,
+            commands::builtins::set_builtin_mcp_exposed,
+            commands::builtins::set_builtin_mcp_tool_enabled,
+            commands::builtins::builtin_open_data_dir,
             commands::hosts::get_hosts_workspace,
             commands::hosts::authorize_hosts_write,
             commands::hosts::save_hosts_public,

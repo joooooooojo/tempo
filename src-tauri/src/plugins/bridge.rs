@@ -312,13 +312,11 @@ async fn dispatch_host_method(
                 .and_then(Value::as_str)
                 .unwrap_or("Tempo Plugin");
             let body = params.get("body").and_then(Value::as_str).unwrap_or("");
-            use tauri_plugin_notification::NotificationExt;
-            app.notification()
-                .builder()
-                .title(title)
-                .body(body)
-                .show()
-                .map_err(|e| RpcError::internal("notify.show", e))?;
+            // Permission / user-facing failures must keep their message — do not scrub via
+            // `RpcError::internal`, or the main panel only shows a generic "操作没有完成".
+            crate::notify::show_notification(app, title, body).map_err(|message| {
+                RpcError::new(codes::FORBIDDEN, message)
+            })?;
             Ok(Value::Null)
         }
         "theme.get" => {

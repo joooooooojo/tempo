@@ -87,24 +87,75 @@ pub fn list_plugins(
     let mut rows = list_installed_plugins(&conn)?;
     let packages = packages_dir(&app).ok();
     for row in &mut rows {
+        // Fallback until the package manifest is read.
+        if row.name.is_empty() {
+            row.name = row.id.clone();
+        }
         if let Some(root) = &packages {
-            let manifest_path = root
-                .join(&row.id)
-                .join(&row.current_version)
-                .join("manifest.json");
+            let install_path = root.join(&row.id).join(&row.current_version);
+            let manifest_path = install_path.join("manifest.json");
             if let Ok(raw) = std::fs::read_to_string(manifest_path) {
                 if let Ok(manifest) = PluginManifest::parse_str(&raw) {
+                    row.name = manifest.name.clone();
                     row.requires_node_runtime = manifest.requires_node_runtime();
+                    row.kind = manifest.resolved_kind().to_string();
                     row.mcp_tool_count = manifest.contributes.mcp_tools.len();
+                    row.settings_count = manifest.contributes.settings.len();
                     let fingerprint = manifest.mcp_toolset_fingerprint().unwrap_or_default();
                     row.mcp_exposed = row.mcp_exposed
                         && row.mcp_tool_count > 0
                         && row.mcp_approved_fingerprint == fingerprint;
+                    let icon_rel = manifest
+                        .contributes
+                        .apps
+                        .iter()
+                        .find_map(|app| app.icon.as_ref())
+                        .or_else(|| {
+                            manifest
+                                .contributes
+                                .actions
+                                .iter()
+                                .find_map(|action| action.icon.as_ref())
+                        });
+                    row.icon_url = icon_rel.and_then(|icon| plugin_icon_data_url(&install_path, icon));
                 }
             }
         }
     }
     Ok(rows)
+}
+
+fn plugin_icon_data_url(install_path: &std::path::Path, rel_path: &str) -> Option<String> {
+    use base64::Engine as _;
+
+    let candidate = install_path.join(rel_path);
+    let canonical_root = install_path.canonicalize().ok()?;
+    let canonical_path = candidate.canonicalize().ok()?;
+    if !canonical_path.starts_with(&canonical_root) || !canonical_path.is_file() {
+        return None;
+    }
+    let bytes = std::fs::read(&canonical_path).ok()?;
+    if bytes.len() > 256 * 1024 {
+        return None;
+    }
+    let mime = match canonical_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    };
+    Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -183,6 +234,8 @@ pub struct PluginMcpToolInfo {
     pub input_schema: Value,
     pub output_schema: Option<Value>,
     pub annotations: Option<crate::plugins::manifest::ContributedMcpToolAnnotations>,
+    /// Per-tool preference; overall plugin exposure still gates MCP visibility.
+    pub enabled: bool,
 }
 
 /// The `contributes.mcpTools` a plugin declares (manifest-local names), for the settings UI to
@@ -197,6 +250,7 @@ pub fn list_plugin_mcp_tools(
     ensure_plugin_tables(&conn)?;
     let row =
         get_installed_plugin(&conn, &plugin_id)?.ok_or_else(|| "plugin not found".to_string())?;
+    let disabled = crate::plugins::trust::get_plugin_mcp_disabled_tools(&conn, &plugin_id)?;
     let install_path = packages_dir(&app)?
         .join(&plugin_id)
         .join(&row.current_version);
@@ -211,8 +265,171 @@ pub fn list_plugin_mcp_tools(
             input_schema: tool.input_schema.clone(),
             output_schema: tool.output_schema.clone(),
             annotations: tool.annotations.clone(),
+            enabled: !disabled.iter().any(|name| name == &tool.name),
         })
         .collect())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSettingField {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub setting_type: crate::plugins::manifest::SettingFieldType,
+    pub title: String,
+    pub description: Option<String>,
+    pub default: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<crate::plugins::manifest::SettingOption>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSettingsBundle {
+    pub plugin_id: String,
+    pub plugin_name: String,
+    pub settings: Vec<PluginSettingField>,
+    pub values: Value,
+    pub mcp_tool_count: usize,
+    pub mcp_exposed: bool,
+}
+
+fn read_plugin_manifest(
+    app: &AppHandle,
+    conn: &rusqlite::Connection,
+    plugin_id: &str,
+) -> Result<(crate::plugins::trust::InstalledPluginRow, PluginManifest), String> {
+    let row =
+        get_installed_plugin(conn, plugin_id)?.ok_or_else(|| "plugin not found".to_string())?;
+    let install_path = packages_dir(app)?
+        .join(plugin_id)
+        .join(&row.current_version);
+    let manifest = ui::read_manifest(&install_path)?;
+    Ok((row, manifest))
+}
+
+#[tauri::command]
+pub fn get_plugin_settings_bundle(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+) -> Result<PluginSettingsBundle, String> {
+    let conn = state.db.lock();
+    ensure_plugin_tables(&conn)?;
+    let (row, manifest) = read_plugin_manifest(&app, &conn, &plugin_id)?;
+    let settings = manifest
+        .contributes
+        .settings
+        .iter()
+        .map(|setting| PluginSettingField {
+            id: setting.id.clone(),
+            setting_type: setting.setting_type,
+            title: setting.title.clone(),
+            description: setting.description.clone(),
+            default: setting.default.clone(),
+            options: setting.options.clone(),
+            placeholder: setting.placeholder.clone(),
+        })
+        .collect();
+    let values = crate::plugins::settings::read_values(
+        &conn,
+        &plugin_id,
+        &manifest.contributes.settings,
+    )?;
+    let fingerprint = manifest.mcp_toolset_fingerprint().unwrap_or_default();
+    let mcp_tool_count = manifest.contributes.mcp_tools.len();
+    let mcp_exposed = row.mcp_exposed
+        && mcp_tool_count > 0
+        && crate::plugins::trust::is_plugin_mcp_exposed(&conn, &plugin_id, &fingerprint);
+    Ok(PluginSettingsBundle {
+        plugin_id,
+        plugin_name: manifest.name,
+        settings,
+        values: Value::Object(values),
+        mcp_tool_count,
+        mcp_exposed,
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPluginSettingsValuesArgs {
+    pub plugin_id: String,
+    pub values: Value,
+}
+
+#[tauri::command]
+pub fn set_plugin_settings_values(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    args: SetPluginSettingsValuesArgs,
+) -> Result<Value, String> {
+    let patch = args
+        .values
+        .as_object()
+        .ok_or_else(|| "values must be an object".to_string())?;
+    let conn = state.db.lock();
+    ensure_plugin_tables(&conn)?;
+    let (_row, manifest) = read_plugin_manifest(&app, &conn, &args.plugin_id)?;
+    if manifest.contributes.settings.is_empty() {
+        return Err("plugin does not declare settings".into());
+    }
+    let next = crate::plugins::settings::write_values(
+        &conn,
+        &args.plugin_id,
+        &manifest.contributes.settings,
+        patch,
+    )?;
+    drop(conn);
+    crate::plugins::settings::notify_settings_changed(&app, &args.plugin_id, &next);
+    Ok(Value::Object(next))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPluginMcpToolEnabledArgs {
+    pub plugin_id: String,
+    pub tool_name: String,
+    pub enabled: bool,
+}
+
+/// Per-tool enable preference under the plugin-level MCP exposure master switch.
+#[tauri::command]
+pub fn set_plugin_mcp_tool_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    args: SetPluginMcpToolEnabledArgs,
+) -> Result<(), String> {
+    let conn = state.db.lock();
+    ensure_plugin_tables(&conn)?;
+    let row = get_installed_plugin(&conn, &args.plugin_id)?
+        .ok_or_else(|| "plugin not found".to_string())?;
+    if !row.trusted {
+        return Err("信任插件后才能配置 MCP 工具".into());
+    }
+    let install_path = packages_dir(&app)?
+        .join(&args.plugin_id)
+        .join(&row.current_version);
+    let manifest = ui::read_manifest(&install_path)?;
+    if !manifest
+        .contributes
+        .mcp_tools
+        .iter()
+        .any(|tool| tool.name == args.tool_name)
+    {
+        return Err(format!("plugin does not declare MCP tool {}", args.tool_name));
+    }
+    crate::plugins::trust::set_plugin_mcp_tool_enabled(
+        &conn,
+        &args.plugin_id,
+        &args.tool_name,
+        args.enabled,
+    )?;
+    drop(conn);
+    crate::mcp::notify_plugin_tools_changed(&app);
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -337,13 +554,16 @@ fn refresh_contributions(
     Ok(bundles)
 }
 
+/// Read-only scan used by the frontend sync listener. Must not emit
+/// `plugin-contributions-changed`, or list→emit→list loops forever.
 #[tauri::command]
 pub fn list_plugin_contributions(
     app: AppHandle,
     state: State<'_, AppState>,
     host: State<'_, Arc<PluginHost>>,
 ) -> Result<Vec<PluginContributionBundle>, String> {
-    refresh_contributions(&app, &state, &host)
+    let conn = state.db.lock();
+    scan_enabled_contributions(&app, &host, &conn)
 }
 
 #[derive(Debug, serde::Deserialize)]

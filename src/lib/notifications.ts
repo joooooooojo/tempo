@@ -1,19 +1,9 @@
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { invoke } from "@tauri-apps/api/core";
 
+/** Show a system notification via the host (macOS uses UNUserNotificationCenter). */
 export async function notifyUser(title: string, body: string) {
   try {
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const permission = await requestPermission();
-      granted = permission === "granted";
-    }
-    if (granted) {
-      await sendNotification({ title, body });
-    }
+    await invoke("show_user_notification", { title, body });
   } catch (error) {
     console.error("Failed to send notification", error);
   }

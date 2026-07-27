@@ -1,9 +1,9 @@
+pub mod builtins;
 pub mod clipboard;
 pub mod hosts;
 pub mod launcher;
 pub mod markdown;
 pub mod plugins;
-pub mod pomodoro_cmds;
 pub mod port_manager;
 pub mod reports;
 pub mod settings;

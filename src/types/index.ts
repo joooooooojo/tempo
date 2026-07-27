@@ -128,17 +128,6 @@ export interface Settings {
   autostart: boolean;
   sound_enabled: boolean;
   theme: "light" | "dark" | "system";
-  eye_care_enabled: boolean;
-  eye_care_interval_minutes: number;
-  night_reminder_enabled: boolean;
-  night_reminder_start: string;
-  night_reminder_end: string;
-  pomodoro_work_minutes: number;
-  pomodoro_short_break_minutes: number;
-  pomodoro_long_break_minutes: number;
-  pomodoro_sessions_per_cycle: number;
-  pomodoro_float_enabled: boolean;
-  pomodoro_float_auto_show: boolean;
   clipboard_monitor_enabled: boolean;
   clipboard_max_entries: number;
   clipboard_paste_mode: "clipboard" | "active_app";
@@ -151,6 +140,8 @@ export interface Settings {
   mcp_enabled: boolean;
   mcp_port: number;
   mcp_token: string;
+  /** Builtin app ids hidden from the launcher. `settings` cannot be disabled. */
+  disabled_builtin_apps: string[];
 }
 
 export interface ClipboardEntry {
@@ -208,30 +199,7 @@ export interface SnippetGroup {
   updated_at: string;
 }
 
-export interface PomodoroState {
-  status: "idle" | "running" | "paused";
-  phase: "work" | "short_break" | "long_break";
-  remaining_seconds: number;
-  phase_total_seconds: number;
-  sessions_today: number;
-  cycle_count: number;
-  active_todo_id: number | null;
-  active_todo_title: string | null;
-}
-
-export interface TodoFocusSummary {
-  todo_id: number;
-  sessions_today: number;
-  total_seconds_today: number;
-  total_seconds_all: number;
-  sessions_all: number;
-  last_focused_at: string | null;
-}
-
 export type ReminderEvent =
-  | { type: "eye_care" }
-  | { type: "night" }
-  | { type: "pomodoro_phase_end"; phase: "work" | "short_break" | "long_break"; skipped: boolean }
   | { type: "todo_due"; todo_id: number; title: string; lead: "1d" | "1h" | "due" | "custom"; hours?: number };
 
 export interface HostsWorkspace {
@@ -333,6 +301,8 @@ export interface InstalledPackage {
 
 export interface InstalledPlugin {
   id: string;
+  name: string;
+  iconUrl?: string | null;
   currentVersion: string;
   pendingVersion?: string | null;
   enabled: boolean;
@@ -343,17 +313,54 @@ export interface InstalledPlugin {
   signatureStatus: string;
   displayPublisher?: string | null;
   requiresNodeRuntime: boolean;
+  /** Behavior-derived: `ui` | `hybrid` | `headless`. */
+  kind: "ui" | "hybrid" | "headless" | string;
   lastError?: string | null;
   /** User opt-in for exposing this plugin's `contributes.mcpTools` to MCP/AI (design §11). */
   mcpExposed: boolean;
   /** Number of `contributes.mcpTools` this plugin declares (0 = nothing to expose). */
   mcpToolCount: number;
+  /** Number of `contributes.settings` entries from the current package. */
+  settingsCount: number;
+  /** First install time for this plugin id (ISO / RFC3339). */
+  installedAt: string;
+}
+
+/** Host-rendered control kinds for `contributes.settings` (v1). */
+export type PluginSettingFieldType =
+  | "switch"
+  | "select"
+  | "multiselect"
+  | "input";
+
+export interface PluginSettingOption {
+  value: string;
+  label?: string | null;
+}
+
+export interface PluginSettingField {
+  id: string;
+  type: PluginSettingFieldType;
+  title: string;
+  description?: string | null;
+  default: unknown;
+  options?: PluginSettingOption[] | null;
+  placeholder?: string | null;
+}
+
+export interface PluginSettingsBundle {
+  pluginId: string;
+  pluginName: string;
+  settings: PluginSettingField[];
+  values: Record<string, unknown>;
+  mcpToolCount: number;
+  mcpExposed: boolean;
 }
 
 export interface PluginMcpToolInfo {
   name: string;
   description: string;
-  inputSchema: unknown;
+  inputSchema?: unknown;
   outputSchema?: unknown;
   annotations?: {
     readOnlyHint?: boolean;
@@ -361,7 +368,17 @@ export interface PluginMcpToolInfo {
     idempotentHint?: boolean;
     openWorldHint?: boolean;
   } | null;
+  /** Per-tool preference under the plugin-level MCP master switch. */
+  enabled: boolean;
 }
+
+export interface BuiltinMcpStatus {
+  exposed: boolean;
+  toolCount: number;
+}
+
+/** Shared shape for MCP method rows in settings dialogs. */
+export type McpToolInfo = Pick<PluginMcpToolInfo, "name" | "description" | "enabled">;
 
 export type PluginWindowMode = "normal" | "standalone";
 export type PluginRectValue = number | string;

@@ -5,15 +5,14 @@ import {
   MoreVertical,
   Pencil,
   Pin,
-  Timer,
   Trash2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn, formatDurationShort } from "@/lib/utils";
-import type { TodoFocusSummary, TodoImage, TodoNote, TodoNoteImage } from "@/types";
+import { cn } from "@/lib/utils";
+import type { TodoImage, TodoNote, TodoNoteImage } from "@/types";
 import {
   escapeRegExp,
   formatTodoDate,
@@ -118,28 +117,9 @@ export function HighlightText({ value, query }: { value: string; query: string }
   );
 }
 
-export function TodoFocusStats({ summary }: { summary: TodoFocusSummary }) {
-  return (
-    <div className="mb-4 rounded-lg border border-emerald-500/15 bg-emerald-500/8 px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700/80 dark:text-emerald-300/80">
-        专注记录
-      </p>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-emerald-950/75 dark:text-emerald-50/75">
-        <span>今日 {summary.sessions_today} 轮 · {formatDurationShort(summary.total_seconds_today)}</span>
-        <span>累计 {summary.sessions_all} 轮 · {formatDurationShort(summary.total_seconds_all)}</span>
-        {summary.last_focused_at && (
-          <span>上次专注 {formatTodoDate(summary.last_focused_at)}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function TodoRowActionMenu({
   open,
   onOpenChange,
-  showStartFocus,
-  onStartFocus,
   pinned,
   onTogglePinned,
   onAddNote,
@@ -148,8 +128,6 @@ export function TodoRowActionMenu({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  showStartFocus?: boolean;
-  onStartFocus?: () => void;
   pinned: boolean;
   onTogglePinned: () => void;
   onAddNote: () => void;
@@ -173,16 +151,6 @@ export function TodoRowActionMenu({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" side="bottom" className="w-36 p-1">
-        {showStartFocus && onStartFocus && (
-          <button
-            type="button"
-            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-popover-foreground transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
-            onClick={onStartFocus}
-          >
-            <Timer className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-300" />
-            开始专注
-          </button>
-        )}
         <button
           type="button"
           className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-popover-foreground transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"

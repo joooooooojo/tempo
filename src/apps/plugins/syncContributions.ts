@@ -111,14 +111,27 @@ function applyBundles(bundles: PluginContributionBundle[], previousPluginIds: Se
 export function startPluginContributionSync(): Registration {
   let knownPluginIds = new Set<string>();
   let disposed = false;
+  let reloadInFlight = false;
+  let reloadQueued = false;
 
   const reload = async () => {
+    if (disposed) return;
+    if (reloadInFlight) {
+      reloadQueued = true;
+      return;
+    }
+    reloadInFlight = true;
     try {
-      const bundles = await api.listPluginContributions();
-      if (disposed) return;
-      knownPluginIds = applyBundles(bundles, knownPluginIds);
+      do {
+        reloadQueued = false;
+        const bundles = await api.listPluginContributions();
+        if (disposed) return;
+        knownPluginIds = applyBundles(bundles, knownPluginIds);
+      } while (reloadQueued && !disposed);
     } catch (error) {
       console.error("failed to load plugin contributions", error);
+    } finally {
+      reloadInFlight = false;
     }
   };
 

@@ -12,6 +12,7 @@
     "sync:version": "node ./scripts/sync-version.mjs",
     "version": "node ./scripts/sync-version.mjs",
     "build": "node ./scripts/sync-version.mjs && tsc && node ./scripts/run-tauri-build.mjs",
+    "build:plugin-sdk": "npm run build --prefix ./packages/plugin-sdk && npx --yes esbuild@0.25.12 ./packages/plugin-sdk/dist/index.js --bundle --format=esm --platform=neutral --outfile=./examples/plugins/com.example.hello/vendor/tempo-sdk.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

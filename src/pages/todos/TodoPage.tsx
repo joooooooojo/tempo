@@ -10,12 +10,10 @@ import {
   List,
   Pin,
   Search,
-  Timer,
   Upload,
   X,
 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { useOptionalBuiltinAppNavigation } from "@/apps/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -34,8 +32,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api";
 import { recurrenceLabel, subtaskProgress, todoReminderLabel } from "@/lib/todoMeta";
-import { cn, formatDurationShort } from "@/lib/utils";
-import type { TodoImage, TodoItem, TodoNote, TodoRecurrence, TodoSubtask, TodoFocusSummary } from "@/types";
+import { cn } from "@/lib/utils";
+import type { TodoImage, TodoItem, TodoNote, TodoRecurrence, TodoSubtask } from "@/types";
 import { TodoPagination } from "./TodoPagination";
 import { TodoCalendarView } from "./TodoCalendarView";
 import {
@@ -43,7 +41,6 @@ import {
   NoteComposer,
   TodoEmptyState,
   TodoExpandableSection,
-  TodoFocusStats,
   TodoImages,
   TodoNotes,
   TodoRowActionMenu,
@@ -81,7 +78,6 @@ const filters: Array<{ value: TodoFilter; label: string }> = [
 ];
 
 export function TodoPage() {
-  const appNav = useOptionalBuiltinAppNavigation();
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -127,8 +123,6 @@ export function TodoPage() {
   const [editRemind1h, setEditRemind1h] = useState(false);
   const [editRemindCustomHours, setEditRemindCustomHours] = useState<number | null>(null);
   const [editTags, setEditTags] = useState<string[]>([]);
-  const [focusSummaries, setFocusSummaries] = useState<Record<number, TodoFocusSummary>>({});
-  const [detailFocusSummary, setDetailFocusSummary] = useState<TodoFocusSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -232,74 +226,9 @@ export function TodoPage() {
     [detailId, todos]
   );
 
-  const refreshFocusSummaries = async (todoIds: number[]) => {
-    if (todoIds.length === 0) return;
-    const summaries = await api.getTodoFocusSummaries(todoIds);
-    setFocusSummaries((current) => {
-      const next = { ...current };
-      for (const summary of summaries) {
-        next[summary.todo_id] = summary;
-      }
-      return next;
-    });
-  };
-
-  useEffect(() => {
-    if (filter !== "active") return;
-    void refreshFocusSummaries(visibleTodos.map((todo) => todo.id)).catch(console.error);
-  }, [filter, visibleTodos]);
-
-  useEffect(() => {
-    if (!detailTodo) {
-      setDetailFocusSummary(null);
-      return;
-    }
-    void api.getTodoFocusSummary(detailTodo.id)
-      .then(setDetailFocusSummary)
-      .catch(console.error);
-  }, [detailTodo?.id]);
-
-  useEffect(() => {
-    const unlisten = listen<{ type: string; phase?: string; skipped?: boolean }>("reminder", (event) => {
-      if (
-        event.payload.type !== "pomodoro_phase_end" ||
-        event.payload.phase !== "work" ||
-        event.payload.skipped
-      ) {
-        return;
-      }
-
-      const activeIds = todos.filter((todo) => !todo.completed).map((todo) => todo.id);
-      void refreshFocusSummaries(activeIds).catch(console.error);
-      if (detailId !== null) {
-        void api.getTodoFocusSummary(detailId).then(setDetailFocusSummary).catch(console.error);
-      }
-    });
-
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [detailId, todos]);
-
   const openDetail = (todoId: number) => {
     setDetailId(todoId);
     void ensureTodoDetails(todoId, setTodos);
-  };
-
-  const startFocusForTodo = async (todo: TodoItem) => {
-    try {
-      const current = await api.getPomodoroState();
-      if (current.status !== "idle") {
-        toast.error("已有进行中的番茄钟");
-        appNav?.openApp("pomodoro");
-        return;
-      }
-      await api.startPomodoro(todo.id);
-      appNav?.openApp("pomodoro");
-    } catch (error) {
-      console.error(error);
-      toast.error(error instanceof Error ? error.message : "无法开始专注");
-    }
   };
 
   const resetDraft = () => {
@@ -865,10 +794,6 @@ export function TodoPage() {
                       </div>
                     )}
 
-                    {detailFocusSummary && detailFocusSummary.sessions_all > 0 && (
-                      <TodoFocusStats summary={detailFocusSummary} />
-                    )}
-
                     <MarkdownPreview
                       value={detailTodo.content}
                       onImagePreview={(src, alt) => setPreviewImage({ src, alt })}
@@ -1126,11 +1051,6 @@ export function TodoPage() {
                                 备注 {todo.notes.length}
                               </span>
                             )}
-                            {focusSummaries[todo.id]?.sessions_today ? (
-                              <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-600 dark:text-emerald-300">
-                                今日专注 {focusSummaries[todo.id].sessions_today} 轮 · {formatDurationShort(focusSummaries[todo.id].total_seconds_today)}
-                              </span>
-                            ) : null}
                           </div>
                       </div>
 
@@ -1138,27 +1058,9 @@ export function TodoPage() {
                         className="flex items-center self-center gap-1"
                         onClick={(event) => event.stopPropagation()}
                       >
-                        {!todo.completed && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 shrink-0 p-0 text-muted-foreground opacity-100 hover:bg-emerald-500/10 hover:text-emerald-600 sm:opacity-0 sm:group-hover/todo:opacity-100 sm:group-focus-within/todo:opacity-100 dark:hover:text-emerald-300"
-                            aria-label="开始专注"
-                            title="开始专注"
-                            onClick={() => void startFocusForTodo(todo)}
-                          >
-                            <Timer className="h-4 w-4 shrink-0" />
-                          </Button>
-                        )}
                         <TodoRowActionMenu
                             open={actionMenuId === todo.id}
                             onOpenChange={(open) => setActionMenuId(open ? todo.id : null)}
-                            showStartFocus={!todo.completed}
-                            onStartFocus={() => {
-                              setActionMenuId(null);
-                              void startFocusForTodo(todo);
-                            }}
                             onAddNote={() => {
                               setActionMenuId(null);
                               setExpandedTodoIds((current) => new Set(current).add(todo.id));

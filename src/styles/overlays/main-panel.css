@@ -48,6 +48,12 @@ html.main-panel-window #root {
   padding: 5px 12px;
 }
 
+.main-panel-search button,
+.main-panel-search .main-panel-clipboard-chip {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 .main-panel-search-field {
   display: flex;
   min-width: 0;

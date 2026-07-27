@@ -3,9 +3,9 @@
   "manifestVersion": 1,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "engines": {
-    "tempo": ">=1.2.0",
+    "tempo": ">=1.1.2",
     "pluginApi": "^1.2.0"
   },
   "kind": "hybrid",
@@ -95,6 +95,23 @@
           "idempotentHint": false,
           "openWorldHint": false
         }
+      }
+    ],
+    "settings": [
+      {
+        "id": "loud",
+        "type": "switch",
+        "title": "大声打招呼",
+        "description": "通知文案使用大写",
+        "default": false
+      },
+      {
+        "id": "default-who",
+        "type": "input",
+        "title": "默认称呼",
+        "description": "未传入 who 时使用的名字",
+        "default": "world",
+        "placeholder": "world"
       }
     ]
   }

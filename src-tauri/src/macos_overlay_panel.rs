@@ -61,6 +61,8 @@ fn apply_base(panel: &dyn Panel, input: bool, config: &OverlayPanelConfig) {
     panel.set_transparent(config.transparent);
     panel.set_has_shadow(config.has_shadow);
     panel.set_opaque(!config.transparent);
+    // Required for WebView `startDragging` / background drag on NSPanel.
+    panel.set_movable_by_window_background(true);
 }
 
 fn input_panel_config(transparent: bool) -> OverlayPanelConfig {

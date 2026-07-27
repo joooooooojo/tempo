@@ -311,6 +311,8 @@ await ctx.host.storage.plugin.delete("preferences");
 
 未找到的 key 返回 `null`。超过配额时返回 `RESOURCE_EXHAUSTED`。
 
+宿主集中配置（`contributes.settings`）写入保留键 `__tempo/settings`。推荐用 SDK：`tempo.settings.getAll()` / `get(id)` / `subscribe(fn)`。裸 API 仍可用 `storage.plugin.get("__tempo/settings")`。用户在「插件配置」中修改后，宿主会向该插件打开的 UI 与运行中的 Runtime 推送 `settings.changed`。
+
 ## 9. Session API
 
 ### session.push

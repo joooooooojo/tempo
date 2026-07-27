@@ -81,6 +81,8 @@ pub struct PluginContributes {
     pub hooks: Vec<ContributedHook>,
     #[serde(default)]
     pub mcp_tools: Vec<ContributedMcpTool>,
+    #[serde(default)]
+    pub settings: Vec<ContributedSetting>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,7 +277,7 @@ pub struct ContributedMcpTool {
     pub annotations: Option<ContributedMcpToolAnnotations>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContributedMcpToolAnnotations {
     #[serde(default)]
@@ -286,6 +288,242 @@ pub struct ContributedMcpToolAnnotations {
     pub idempotent_hint: Option<bool>,
     #[serde(default)]
     pub open_world_hint: Option<bool>,
+}
+
+const MAX_SETTINGS_PER_PLUGIN: usize = 64;
+const MAX_SETTING_TITLE_CHARS: usize = 128;
+const MAX_SETTING_DESCRIPTION_CHARS: usize = 512;
+const MAX_SETTING_OPTIONS: usize = 64;
+
+/// Host-rendered control kinds for `contributes.settings` (v1).
+/// Inspired by VS Code configuration property schemas, but named for UI controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingFieldType {
+    Switch,
+    Select,
+    Multiselect,
+    Input,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingOption {
+    pub value: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributedSetting {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub setting_type: SettingFieldType,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default: Value,
+    /// Required for `select` / `multiselect`.
+    #[serde(default)]
+    pub options: Option<Vec<SettingOption>>,
+    /// Optional placeholder for `input`.
+    #[serde(default)]
+    pub placeholder: Option<String>,
+}
+
+impl ContributedSetting {
+    fn validate_options(&self) -> Result<&[SettingOption], String> {
+        let Some(options) = &self.options else {
+            return Err(format!(
+                "setting {} of type {:?} requires a non-empty options array",
+                self.id, self.setting_type
+            ));
+        };
+        if options.is_empty() {
+            return Err(format!(
+                "setting {} of type {:?} requires a non-empty options array",
+                self.id, self.setting_type
+            ));
+        }
+        if options.len() > MAX_SETTING_OPTIONS {
+            return Err(format!(
+                "setting {} may declare at most {MAX_SETTING_OPTIONS} options",
+                self.id
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for option in options {
+            if option.value.is_empty() {
+                return Err(format!(
+                    "setting {} option values must be non-empty strings",
+                    self.id
+                ));
+            }
+            if !seen.insert(option.value.as_str()) {
+                return Err(format!(
+                    "setting {} options contains duplicate value {}",
+                    self.id, option.value
+                ));
+            }
+            if let Some(label) = &option.label {
+                if label.trim().is_empty() {
+                    return Err(format!(
+                        "setting {} option labels must be non-empty when set",
+                        self.id
+                    ));
+                }
+            }
+        }
+        Ok(options)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !is_valid_local_id(&self.id) {
+            return Err(format!("invalid setting id: {}", self.id));
+        }
+        if self.title.trim().is_empty() {
+            return Err(format!("setting {} title is required", self.id));
+        }
+        if self.title.chars().count() > MAX_SETTING_TITLE_CHARS {
+            return Err(format!(
+                "setting {} title exceeds {MAX_SETTING_TITLE_CHARS} characters",
+                self.id
+            ));
+        }
+        if let Some(description) = &self.description {
+            if description.chars().count() > MAX_SETTING_DESCRIPTION_CHARS {
+                return Err(format!(
+                    "setting {} description exceeds {MAX_SETTING_DESCRIPTION_CHARS} characters",
+                    self.id
+                ));
+            }
+        }
+        match self.setting_type {
+            SettingFieldType::Switch => {
+                if !self.default.is_boolean() {
+                    return Err(format!("setting {} default must be a boolean", self.id));
+                }
+                if self.options.is_some() {
+                    return Err(format!(
+                        "setting {} of type switch must not declare options",
+                        self.id
+                    ));
+                }
+            }
+            SettingFieldType::Input => {
+                if !self.default.is_string() {
+                    return Err(format!("setting {} default must be a string", self.id));
+                }
+                if self.options.is_some() {
+                    return Err(format!(
+                        "setting {} of type input must not declare options",
+                        self.id
+                    ));
+                }
+            }
+            SettingFieldType::Select => {
+                let options = self.validate_options()?;
+                let Some(default) = self.default.as_str() else {
+                    return Err(format!(
+                        "setting {} default must be a string matching an option value",
+                        self.id
+                    ));
+                };
+                if !options.iter().any(|option| option.value == default) {
+                    return Err(format!(
+                        "setting {} default must be one of the option values",
+                        self.id
+                    ));
+                }
+            }
+            SettingFieldType::Multiselect => {
+                let options = self.validate_options()?;
+                let Some(defaults) = self.default.as_array() else {
+                    return Err(format!(
+                        "setting {} default must be an array of option values",
+                        self.id
+                    ));
+                };
+                let mut seen = std::collections::HashSet::new();
+                for item in defaults {
+                    let Some(raw) = item.as_str() else {
+                        return Err(format!(
+                            "setting {} default array items must be strings",
+                            self.id
+                        ));
+                    };
+                    if !options.iter().any(|option| option.value == raw) {
+                        return Err(format!(
+                            "setting {} default contains unknown option value {raw}",
+                            self.id
+                        ));
+                    }
+                    if !seen.insert(raw) {
+                        return Err(format!(
+                            "setting {} default must not contain duplicate values",
+                            self.id
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn coerce_value(&self, value: &Value) -> Result<Value, String> {
+        match self.setting_type {
+            SettingFieldType::Switch => {
+                if value.is_boolean() {
+                    Ok(value.clone())
+                } else {
+                    Err(format!("setting {} expects a boolean", self.id))
+                }
+            }
+            SettingFieldType::Input => {
+                if value.is_string() {
+                    Ok(value.clone())
+                } else {
+                    Err(format!("setting {} expects a string", self.id))
+                }
+            }
+            SettingFieldType::Select => {
+                let Some(raw) = value.as_str() else {
+                    return Err(format!("setting {} expects a string", self.id));
+                };
+                let allowed = self.options.as_ref().map(Vec::as_slice).unwrap_or(&[]);
+                if allowed.iter().any(|option| option.value == raw) {
+                    Ok(Value::String(raw.to_string()))
+                } else {
+                    Err(format!("setting {} value is not in options", self.id))
+                }
+            }
+            SettingFieldType::Multiselect => {
+                let Some(items) = value.as_array() else {
+                    return Err(format!("setting {} expects a string array", self.id));
+                };
+                let allowed = self.options.as_ref().map(Vec::as_slice).unwrap_or(&[]);
+                let mut out = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for item in items {
+                    let Some(raw) = item.as_str() else {
+                        return Err(format!(
+                            "setting {} array items must be strings",
+                            self.id
+                        ));
+                    };
+                    if !allowed.iter().any(|option| option.value == raw) {
+                        return Err(format!("setting {} value is not in options", self.id));
+                    }
+                    if seen.insert(raw.to_string()) {
+                        out.push(Value::String(raw.to_string()));
+                    }
+                }
+                Ok(Value::Array(out))
+            }
+        }
+    }
 }
 
 fn default_mcp_input_schema() -> Value {
@@ -476,6 +714,19 @@ impl PluginManifest {
             }
         }
 
+        if self.contributes.settings.len() > MAX_SETTINGS_PER_PLUGIN {
+            return Err(format!(
+                "plugins may declare at most {MAX_SETTINGS_PER_PLUGIN} settings"
+            ));
+        }
+        let mut setting_ids = std::collections::HashSet::new();
+        for setting in &self.contributes.settings {
+            if !setting_ids.insert(setting.id.as_str()) {
+                return Err(format!("duplicate setting id: {}", setting.id));
+            }
+            setting.validate()?;
+        }
+
         match &self.main {
             Some(main) => {
                 validate_relative_path(main, "main")?;
@@ -523,6 +774,16 @@ impl PluginManifest {
 
     pub fn has_ui(&self) -> bool {
         !self.contributes.apps.is_empty()
+    }
+
+    /// Behavior-derived kind for UI (`ui` / `hybrid` / `headless`).
+    /// Manifest `kind` is classification-only; display uses contributes + main.
+    pub fn resolved_kind(&self) -> &'static str {
+        match (self.has_ui(), self.requires_node_runtime()) {
+            (true, true) => "hybrid",
+            (true, false) => "ui",
+            (false, _) => "headless",
+        }
     }
 }
 
@@ -904,5 +1165,76 @@ mod tests {
         );
         assert!(PluginManifest::parse_str(&duplicate).is_err());
         assert!(PluginManifest::parse_str(&valid.replace(r#""main": "main.mjs","#, "")).is_err());
+    }
+
+    #[test]
+    fn validates_contributed_settings() {
+        let valid = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.settings",
+          "name": "Settings",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.2.0" },
+          "contributes": {
+            "apps": [{ "id": "main", "name": "Main", "entry": "index.html" }],
+            "settings": [
+              {
+                "id": "loud",
+                "type": "switch",
+                "title": "大声打招呼",
+                "default": false
+              },
+              {
+                "id": "theme",
+                "type": "select",
+                "title": "主题",
+                "default": "auto",
+                "options": [
+                  { "value": "auto", "label": "跟随系统" },
+                  { "value": "light", "label": "浅色" },
+                  { "value": "dark", "label": "深色" }
+                ]
+              },
+              {
+                "id": "langs",
+                "type": "multiselect",
+                "title": "语言",
+                "default": ["zh"],
+                "options": [
+                  { "value": "zh", "label": "中文" },
+                  { "value": "en", "label": "English" }
+                ]
+              },
+              {
+                "id": "name",
+                "type": "input",
+                "title": "默认称呼",
+                "default": "world",
+                "placeholder": "world"
+              }
+            ]
+          }
+        }"#;
+        let manifest = PluginManifest::parse_str(valid).unwrap();
+        assert_eq!(manifest.contributes.settings.len(), 4);
+        assert_eq!(
+            manifest.contributes.settings[0].setting_type,
+            SettingFieldType::Switch
+        );
+        assert_eq!(
+            manifest.contributes.settings[2].setting_type,
+            SettingFieldType::Multiselect
+        );
+
+        assert!(PluginManifest::parse_str(&valid.replace(
+            r#""default": "auto""#,
+            r#""default": "neon""#
+        ))
+        .is_err());
+        assert!(PluginManifest::parse_str(&valid.replace(
+            r#""type": "switch""#,
+            r#""type": "switch", "options": [{ "value": "x" }]"#
+        ))
+        .is_err());
     }
 }

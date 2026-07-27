@@ -8,7 +8,7 @@ alwaysApply: false
 
 Never remove `macos-private-api` from the `tauri` features in `src-tauri/Cargo.toml`.
 
-This project uses transparent overlay windows (quick todo, eye-care reminder) via `auxiliary_windows.rs`. The feature is required on macOS even though it is harmless on other platforms.
+This project uses transparent overlay windows (shelf picker) via `auxiliary_windows.rs`. The feature is required on macOS even though it is harmless on other platforms.
 
 ```toml
 # ✅ KEEP — required for macOS transparent overlays

@@ -1,6 +1,5 @@
 use crate::db::{
-    add_app_time, add_tempo_time, cleanup_old_data, get_daily_total, load_settings, today_str,
-    AppState,
+    add_app_time, add_tempo_time, cleanup_old_data, get_daily_total, today_str, AppState,
 };
 use crate::platform::{get_foreground_app, should_count_tempo_time, should_count_time};
 use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
@@ -22,26 +21,14 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
             tick_count += elapsed_seconds as u64;
 
             let now = Local::now();
-            let date = now.format("%Y-%m-%d").to_string();
-
-            {
-                let mut tracker = state.tracker.lock();
-                if tracker.last_date != date {
-                    tracker.continuous_seconds = 0;
-                    tracker.night_reminded_today = false;
-                    tracker.last_date = date.clone();
-                }
-            }
 
             if !should_count_time() {
-                state.tracker.lock().continuous_seconds = 0;
                 continue;
             }
 
             let foreground = get_foreground_app();
 
             if !should_count_tempo_time(&foreground) {
-                state.tracker.lock().continuous_seconds = 0;
                 continue;
             }
 
@@ -65,11 +52,6 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
                 }
             }
 
-            {
-                let mut tracker = state.tracker.lock();
-                tracker.continuous_seconds += elapsed_seconds;
-            }
-
             if tick_count % 5 == 0 {
                 update_tray_tooltip(&app, &state);
             }
@@ -79,12 +61,10 @@ pub fn start_tracker(app: AppHandle, state: AppState) {
                 cleanup_old_data(&conn);
             }
 
-            check_reminders(&app, &state);
             check_todo_due_reminders(&app, &state);
             if tick_count % 60 == 0 {
                 check_pending_recurrences(&app, &state);
             }
-            crate::pomodoro::tick_pomodoro(&app, &state, elapsed_seconds);
         }
     });
 }
@@ -135,46 +115,6 @@ pub(crate) fn emit_on_main(app: &AppHandle, event: &str, payload: serde_json::Va
         crate::logging::debug_if_err(app_handle.emit(&event, payload), "emit app event");
     }) {
         tracing::warn!(event = %event_for_log, error = %error, "failed to dispatch app event");
-    }
-}
-
-fn check_reminders(app: &AppHandle, state: &AppState) {
-    let settings = {
-        let conn = state.db.lock();
-        load_settings(&conn)
-    };
-
-    let continuous = state.tracker.lock().continuous_seconds;
-
-    if settings.eye_care_enabled {
-        let interval = (settings.eye_care_interval_minutes as i64) * 60;
-        if interval > 0 && continuous >= interval {
-            emit_on_main(app, "reminder", json!({ "type": "eye_care" }));
-            state.tracker.lock().continuous_seconds = 0;
-        }
-    }
-
-    if settings.night_reminder_enabled {
-        let now = Local::now().time();
-        let in_range = is_in_night_range(
-            &now.format("%H:%M").to_string(),
-            &settings.night_reminder_start,
-            &settings.night_reminder_end,
-        );
-
-        let should_notify = {
-            let mut tracker = state.tracker.lock();
-            if in_range && !tracker.night_reminded_today {
-                tracker.night_reminded_today = true;
-                true
-            } else {
-                false
-            }
-        };
-
-        if should_notify {
-            emit_on_main(app, "reminder", json!({ "type": "night" }));
-        }
     }
 }
 
@@ -316,10 +256,3 @@ fn check_todo_due_reminders(app: &AppHandle, state: &AppState) {
     }
 }
 
-pub(crate) fn is_in_night_range(now: &str, start: &str, end: &str) -> bool {
-    if start <= end {
-        now >= start && now <= end
-    } else {
-        now >= start || now <= end
-    }
-}

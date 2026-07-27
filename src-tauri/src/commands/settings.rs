@@ -1,7 +1,7 @@
 use crate::clipboard_db::purge_clipboard_history_by_retention;
 use crate::db::{
-    current_storage_dir, default_storage_dir, load_settings, save_storage_dir, today_str, AppState,
-    Settings,
+    current_storage_dir, default_storage_dir, load_settings, normalize_disabled_builtin_apps,
+    save_storage_dir, today_str, AppState, Settings,
 };
 use crate::db::{normalize_clipboard_history_retention, normalize_clipboard_paste_mode};
 use rusqlite::{params, Connection};
@@ -120,72 +120,6 @@ pub fn update_settings(
     if let Some(v) = settings.get("theme").and_then(|v| v.as_str()) {
         current.theme = v.into();
     }
-    if let Some(v) = settings.get("eye_care_enabled").and_then(|v| v.as_bool()) {
-        current.eye_care_enabled = v;
-    }
-    if let Some(v) = settings
-        .get("eye_care_interval_minutes")
-        .and_then(|v| v.as_u64())
-    {
-        current.eye_care_interval_minutes = v as u32;
-    }
-    if let Some(v) = settings
-        .get("night_reminder_enabled")
-        .and_then(|v| v.as_bool())
-    {
-        current.night_reminder_enabled = v;
-    }
-    if let Some(v) = settings
-        .get("night_reminder_start")
-        .and_then(|v| v.as_str())
-    {
-        current.night_reminder_start = v.into();
-    }
-    if let Some(v) = settings.get("night_reminder_end").and_then(|v| v.as_str()) {
-        current.night_reminder_end = v.into();
-    }
-    if let Some(v) = settings
-        .get("pomodoro_work_minutes")
-        .and_then(|v| v.as_u64())
-    {
-        current.pomodoro_work_minutes = v as u32;
-    }
-    if let Some(v) = settings
-        .get("pomodoro_short_break_minutes")
-        .and_then(|v| v.as_u64())
-    {
-        current.pomodoro_short_break_minutes = v as u32;
-    }
-    if let Some(v) = settings
-        .get("pomodoro_long_break_minutes")
-        .and_then(|v| v.as_u64())
-    {
-        current.pomodoro_long_break_minutes = v as u32;
-    }
-    if let Some(v) = settings
-        .get("pomodoro_sessions_per_cycle")
-        .and_then(|v| v.as_u64())
-    {
-        current.pomodoro_sessions_per_cycle = v as u32;
-    }
-    if let Some(v) = settings
-        .get("pomodoro_float_enabled")
-        .and_then(|v| v.as_bool())
-    {
-        current.pomodoro_float_enabled = v;
-        if !v {
-            crate::logging::debug_if_err(
-                crate::auxiliary_windows::hide_pomodoro_float_window(&app),
-                "hide pomodoro float after disabling setting",
-            );
-        }
-    }
-    if let Some(v) = settings
-        .get("pomodoro_float_auto_show")
-        .and_then(|v| v.as_bool())
-    {
-        current.pomodoro_float_auto_show = v;
-    }
     if let Some(v) = settings
         .get("clipboard_monitor_enabled")
         .and_then(|v| v.as_bool())
@@ -243,6 +177,18 @@ pub fn update_settings(
             current.mcp_token = token.into();
             mcp_changed = true;
         }
+    }
+    if let Some(value) = settings.get("disabled_builtin_apps") {
+        let ids = value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .ok_or_else(|| "disabled_builtin_apps must be an array of strings".to_string())?;
+        current.disabled_builtin_apps = normalize_disabled_builtin_apps(&ids);
     }
 
     if shortcuts_changed {

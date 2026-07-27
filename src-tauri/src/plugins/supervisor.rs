@@ -214,6 +214,25 @@ impl Supervisor {
         *process.state.lock() = RuntimeState::Stopped;
     }
 
+    /// Best-effort host → runtime push event (e.g. `settings.changed`).
+    pub fn emit_event(&self, plugin_id: &str, event: &str, payload: Value) -> bool {
+        let Some(process) = self.get(plugin_id) else {
+            return false;
+        };
+        if !process.is_usable() {
+            return false;
+        }
+        encode_and_send(
+            &process.write_tx,
+            &json!({
+                "type": "event",
+                "event": event,
+                "payload": payload,
+            }),
+        )
+        .is_ok()
+    }
+
     async fn spawn(&self, plugin_id: &str) -> Result<(), RpcError> {
         // Crash backoff bookkeeping is per-plugin and survives across `spawn` calls via the
         // process map entry that stays registered even after a crash (see `note_exit`).

@@ -156,7 +156,7 @@
         var view = new URLSearchParams(location.search).get("view");
         var root = document.documentElement;
 
-        if (view === "main-panel" || view === "pomodoro-float" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker" || view === "plugin-window") {
+        if (view === "main-panel" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker" || view === "plugin-window") {
           var isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || "");
           root.style.background = view === "plugin-window" ? "#f3f8f5" : view === "main-panel" && !isMac ? "#f7f9f8" : "transparent";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -167,16 +167,6 @@
             document.body.style.background = "transparent";
             document.body.classList.add("shelf-picker-window");
           }
-          document.addEventListener("DOMContentLoaded", function () {
-            var splash = document.getElementById("boot-splash");
-            if (splash) splash.remove();
-          });
-          return;
-        }
-
-        if (view === "eye-care") {
-          root.style.background = "#effbf4";
-          root.classList.remove("dark");
           document.addEventListener("DOMContentLoaded", function () {
             var splash = document.getElementById("boot-splash");
             if (splash) splash.remove();
