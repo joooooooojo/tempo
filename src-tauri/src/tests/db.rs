@@ -1,6 +1,6 @@
 use crate::db::{
     add_tempo_time, get_daily_total, init_db, load_settings, save_settings,
-    DEFAULT_CLIPBOARD_PICKER_SHORTCUT, DEFAULT_COMMAND_PALETTE_SHORTCUT,
+    DEFAULT_CLIPBOARD_PICKER_SHORTCUT, DEFAULT_MAIN_PANEL_SHORTCUT,
     DEFAULT_SNIPPET_PICKER_SHORTCUT, MAX_HOURLY_SECONDS,
 };
 use std::path::PathBuf;
@@ -27,10 +27,7 @@ fn init_db_creates_schema_and_is_idempotent() {
         let conn = init_db(&path).expect("init db");
         let settings = load_settings(&conn);
         assert_eq!(settings.clipboard_max_entries, 200);
-        assert_eq!(
-            settings.shortcut_command_palette,
-            DEFAULT_COMMAND_PALETTE_SHORTCUT
-        );
+        assert_eq!(settings.shortcut_main_panel, DEFAULT_MAIN_PANEL_SHORTCUT);
         assert_eq!(
             settings.shortcut_clipboard_picker,
             DEFAULT_CLIPBOARD_PICKER_SHORTCUT
@@ -63,9 +60,38 @@ fn shortcut_settings_preserve_empty_bindings() {
     {
         let conn = init_db(&path).expect("init db");
         let mut settings = load_settings(&conn);
-        settings.shortcut_command_palette.clear();
+        settings.shortcut_main_panel.clear();
         save_settings(&conn, &settings);
-        assert_eq!(load_settings(&conn).shortcut_command_palette, "");
+        assert_eq!(load_settings(&conn).shortcut_main_panel, "");
+    }
+
+    if let Some(parent) = path.parent() {
+        drop(std::fs::remove_dir_all(parent));
+    }
+}
+
+#[test]
+fn legacy_panel_shortcut_is_migrated() {
+    let path = temp_db_path("legacy-panel-shortcut");
+    {
+        let conn = init_db(&path).expect("init db");
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('shortcut_command_palette', 'Control+Alt+P')",
+            [],
+        )
+        .expect("insert legacy setting");
+    }
+    {
+        let conn = init_db(&path).expect("migrate db");
+        assert_eq!(load_settings(&conn).shortcut_main_panel, "Control+Alt+P");
+        let legacy_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'shortcut_command_palette'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query legacy setting");
+        assert_eq!(legacy_count, 0);
     }
 
     if let Some(parent) = path.parent() {

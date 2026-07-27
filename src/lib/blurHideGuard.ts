@@ -1,4 +1,4 @@
-/** Suppress command-palette / shelf auto-hide while a native dialog holds focus. */
+/** Suppress main-panel / shelf auto-hide while a native dialog holds focus. */
 
 let suppressDepth = 0;
 

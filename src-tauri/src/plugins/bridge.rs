@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::db::AppState;
 
 use super::host::PluginHost;
+use super::manifest::AppRect;
 use super::storage;
 
 /// RPC error codes (design §7). Kept as `&'static str` so callers can match without allocating.
@@ -33,7 +34,7 @@ pub mod codes {
 }
 
 /// Host Bridge API semver (design §7.2) — independent from the Tempo product version.
-pub const HOST_API_VERSION: &str = "1.0.0";
+pub const HOST_API_VERSION: &str = "1.2.0";
 
 /// Max single-message size (design §7): 1 MiB.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -58,14 +59,6 @@ impl RpcError {
             code: code.to_string(),
             message: message.into(),
             data: None,
-        }
-    }
-
-    pub fn with_data(code: &str, message: impl Into<String>, data: Value) -> Self {
-        Self {
-            code: code.to_string(),
-            message: message.into(),
-            data: Some(data),
         }
     }
 
@@ -176,7 +169,10 @@ pub async fn dispatch(
 
     if let Some(command_id) = method.strip_prefix("runtime.") {
         if command_id.is_empty() {
-            return Err(RpcError::new(codes::INVALID_REQUEST, "missing runtime command id"));
+            return Err(RpcError::new(
+                codes::INVALID_REQUEST,
+                "missing runtime command id",
+            ));
         }
         return host
             .supervisor
@@ -184,15 +180,25 @@ pub async fn dispatch(
             .await;
     }
 
-    let timeout = if matches!(method, "palette.setSize" | "palette.back" | "palette.hide") {
+    let timeout = if matches!(
+        method,
+        "mainPanel.setSize"
+            | "mainPanel.back"
+            | "mainPanel.hide"
+            | "window.setRect"
+            | "window.close"
+    ) {
         INTERACTIVE_TIMEOUT
     } else {
         DEFAULT_TIMEOUT
     };
 
-    tokio::time::timeout(timeout, dispatch_host_method(app, host, ctx, method, params))
-        .await
-        .unwrap_or_else(|_| Err(RpcError::new(codes::TIMEOUT, "host API call timed out")))
+    tokio::time::timeout(
+        timeout,
+        dispatch_host_method(app, host, ctx, method, params),
+    )
+    .await
+    .unwrap_or_else(|_| Err(RpcError::new(codes::TIMEOUT, "host API call timed out")))
 }
 
 async fn dispatch_host_method(
@@ -203,33 +209,48 @@ async fn dispatch_host_method(
     params: Value,
 ) -> Result<Value, RpcError> {
     match method {
-        "palette.hide" => {
-            crate::auxiliary_windows::hide_command_palette(app)
-                .map_err(|e| RpcError::internal("palette.hide", e))?;
+        "mainPanel.hide" => {
+            crate::auxiliary_windows::hide_main_panel(app)
+                .map_err(|e| RpcError::internal("mainPanel.hide", e))?;
             Ok(Value::Null)
         }
-        "palette.back" => {
+        "mainPanel.back" => {
             let Some(view_instance_id) = ctx.view_instance_id() else {
-                return Err(RpcError::new(codes::FORBIDDEN, "palette.back is UI-only"));
+                return Err(RpcError::new(codes::FORBIDDEN, "mainPanel.back is UI-only"));
             };
             app.emit(
-                "plugin-host:palette-back",
+                "plugin-host:main-panel-back",
                 json!({ "viewInstanceId": view_instance_id }),
             )
-            .map_err(|e| RpcError::internal("palette.back", e))?;
+            .map_err(|e| RpcError::internal("mainPanel.back", e))?;
             Ok(Value::Null)
         }
-        "palette.setSize" => {
+        "mainPanel.setSize" => {
             let Some(_view_instance_id) = ctx.view_instance_id() else {
-                return Err(RpcError::new(codes::FORBIDDEN, "palette.setSize is UI-only"));
+                return Err(RpcError::new(
+                    codes::FORBIDDEN,
+                    "mainPanel.setSize is UI-only",
+                ));
             };
             let height = params
                 .get("height")
                 .and_then(Value::as_f64)
                 .ok_or_else(|| RpcError::new(codes::INVALID_REQUEST, "height is required"))?;
-            // Palette chrome keeps a fixed search width; plugins may only change height.
-            crate::auxiliary_windows::set_command_palette_size(app.clone(), None, height)
-                .map_err(|e| RpcError::internal("palette.setSize", e))?;
+            // Main panel chrome keeps a fixed search width; plugins may only change height.
+            crate::auxiliary_windows::set_main_panel_size(app.clone(), None, height)
+                .map_err(|e| RpcError::internal("mainPanel.setSize", e))?;
+            Ok(Value::Null)
+        }
+        "window.setRect" => {
+            let label = standalone_window_label(host, ctx)?;
+            let rect = parse_window_rect(&params)?;
+            super::windows::set_plugin_window_rect(app, &label, &rect)
+                .map_err(|e| RpcError::internal("window.setRect", e))?;
+            Ok(Value::Null)
+        }
+        "window.close" => {
+            let label = standalone_window_label(host, ctx)?;
+            super::windows::close_plugin_window_later(app, &label);
             Ok(Value::Null)
         }
         "app.open" => {
@@ -239,7 +260,7 @@ async fn dispatch_host_method(
                 .ok_or_else(|| RpcError::new(codes::INVALID_REQUEST, "appId is required"))?;
             let open_params = params.get("params").cloned().unwrap_or(Value::Null);
             app.emit(
-                "command-palette:open-app",
+                "main-panel:open-app",
                 json!({ "appId": app_id, "params": open_params }),
             )
             .map_err(|e| RpcError::internal("app.open", e))?;
@@ -250,7 +271,10 @@ async fn dispatch_host_method(
                 .get("url")
                 .and_then(Value::as_str)
                 .ok_or_else(|| RpcError::new(codes::INVALID_REQUEST, "url is required"))?;
-            if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
+            if !(url.starts_with("https://")
+                || url.starts_with("http://")
+                || url.starts_with("mailto:"))
+            {
                 return Err(RpcError::new(
                     codes::FORBIDDEN,
                     "only http(s):// and mailto: URLs may be opened",
@@ -289,7 +313,12 @@ async fn dispatch_host_method(
         }
         "theme.onChange" => {
             let subscription_id = super::host::generate_id();
-            host.register_subscription(&subscription_id, &ctx.plugin_id, "theme", ctx.view_instance_id());
+            host.register_subscription(
+                &subscription_id,
+                &ctx.plugin_id,
+                "theme",
+                ctx.view_instance_id(),
+            );
             Ok(json!({ "subscriptionId": subscription_id }))
         }
         "session.push" => {
@@ -306,7 +335,9 @@ async fn dispatch_host_method(
             let subscription_id = params
                 .get("subscriptionId")
                 .and_then(Value::as_str)
-                .ok_or_else(|| RpcError::new(codes::INVALID_REQUEST, "subscriptionId is required"))?;
+                .ok_or_else(|| {
+                    RpcError::new(codes::INVALID_REQUEST, "subscriptionId is required")
+                })?;
             host.release_subscription(subscription_id, &ctx.plugin_id);
             Ok(Value::Null)
         }
@@ -314,7 +345,8 @@ async fn dispatch_host_method(
             let key = require_str(&params, "key")?;
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            let value = storage::get(&conn, &ctx.plugin_id, key).map_err(|e| RpcError::internal("storage.plugin.get", e))?;
+            let value = storage::get(&conn, &ctx.plugin_id, key)
+                .map_err(|e| RpcError::internal("storage.plugin.get", e))?;
             Ok(json!({ "value": value }))
         }
         "storage.plugin.set" => {
@@ -322,20 +354,23 @@ async fn dispatch_host_method(
             let value = params.get("value").cloned().unwrap_or(Value::Null);
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            storage::set(&conn, &ctx.plugin_id, key, &value).map_err(|e| RpcError::new(codes::RESOURCE_EXHAUSTED, e))?;
+            storage::set(&conn, &ctx.plugin_id, key, &value)
+                .map_err(|e| RpcError::new(codes::RESOURCE_EXHAUSTED, e))?;
             Ok(Value::Null)
         }
         "storage.plugin.delete" => {
             let key = require_str(&params, "key")?;
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            storage::delete(&conn, &ctx.plugin_id, key).map_err(|e| RpcError::internal("storage.plugin.delete", e))?;
+            storage::delete(&conn, &ctx.plugin_id, key)
+                .map_err(|e| RpcError::internal("storage.plugin.delete", e))?;
             Ok(Value::Null)
         }
         "storage.plugin.list" => {
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            let keys = storage::list(&conn, &ctx.plugin_id).map_err(|e| RpcError::internal("storage.plugin.list", e))?;
+            let keys = storage::list(&conn, &ctx.plugin_id)
+                .map_err(|e| RpcError::internal("storage.plugin.list", e))?;
             Ok(json!({ "keys": keys }))
         }
         _ => Err(RpcError::new(
@@ -343,6 +378,29 @@ async fn dispatch_host_method(
             format!("unknown host method: {method}"),
         )),
     }
+}
+
+fn standalone_window_label(host: &PluginHost, ctx: &ConnectionContext) -> Result<String, RpcError> {
+    let view_instance_id = ctx
+        .view_instance_id()
+        .ok_or_else(|| RpcError::new(codes::FORBIDDEN, "window APIs are UI-only"))?;
+    let view = host
+        .view(view_instance_id)
+        .ok_or_else(|| RpcError::new(codes::NOT_FOUND, "view instance not found"))?;
+    view.owner_window_label.ok_or_else(|| {
+        RpcError::new(
+            codes::FORBIDDEN,
+            "window APIs are only available in standalone plugin windows",
+        )
+    })
+}
+
+fn parse_window_rect(params: &Value) -> Result<AppRect, RpcError> {
+    let rect: AppRect = serde_json::from_value(params.clone())
+        .map_err(|_| RpcError::new(codes::INVALID_REQUEST, "invalid window rect"))?;
+    rect.validate()
+        .map_err(|message| RpcError::new(codes::INVALID_REQUEST, message))?;
+    Ok(rect)
 }
 
 fn require_str<'a>(params: &'a Value, field: &str) -> Result<&'a str, RpcError> {
@@ -362,7 +420,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn palette_methods_are_ui_only() {
+    fn main_panel_methods_are_ui_only() {
         let ctx = ConnectionContext::runtime("com.example.hello");
         // Cheapest way to exercise the UI-only guard without a running Tauri app: assert the
         // context correctly reports no view instance for a Runtime-sourced connection.
@@ -379,11 +437,23 @@ mod tests {
         assert_eq!(value["code"], "NOT_FOUND");
         assert_eq!(value["message"], "unknown host method: foo.bar");
         assert!(value.get("data").is_none());
+
+        let with_data = RpcError {
+            code: codes::COMMAND_FAILED.to_string(),
+            message: "handler rejected input".into(),
+            data: Some(json!({ "field": "query" })),
+        };
+        let value = serde_json::to_value(&with_data).unwrap();
+        assert_eq!(value["code"], "COMMAND_FAILED");
+        assert_eq!(value["data"]["field"], "query");
     }
 
     #[test]
     fn internal_errors_are_scrubbed() {
-        let error = RpcError::internal("storage.plugin.get", "sqlite: disk I/O error at /secret/path");
+        let error = RpcError::internal(
+            "storage.plugin.get",
+            "sqlite: disk I/O error at /secret/path",
+        );
         assert_eq!(error.code, codes::INTERNAL);
         assert!(!error.message.contains("secret"));
         assert!(!error.message.contains("sqlite"));
@@ -395,6 +465,22 @@ mod tests {
         let huge = Value::String("x".repeat(MAX_MESSAGE_BYTES + 1));
         assert!(payload_too_large(&huge));
         assert!(!payload_too_large(&json!({ "ok": true })));
+    }
+
+    #[test]
+    fn validates_standalone_window_rect_requests() {
+        let rect = parse_window_rect(&json!({
+            "width": "80%",
+            "height": 600,
+            "x": "center",
+            "y": "10%"
+        }))
+        .unwrap();
+        assert!(rect.width.is_some());
+        assert!(rect.x.is_some());
+
+        assert!(parse_window_rect(&json!({ "width": "120%" })).is_err());
+        assert!(parse_window_rect(&json!({ "height": 200 })).is_err());
     }
 }
 

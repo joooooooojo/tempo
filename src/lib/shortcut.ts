@@ -60,7 +60,7 @@ export function formatShortcutLabel(shortcut: string): string {
 }
 
 export const DEFAULT_SHORTCUTS = {
-  shortcut_command_palette: "Alt+Space",
+  shortcut_main_panel: "Alt+Space",
   shortcut_clipboard_picker: "Control+Shift+V",
   shortcut_snippet_picker: "Control+Shift+S",
 } as const;

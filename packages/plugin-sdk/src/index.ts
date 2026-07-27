@@ -57,6 +57,26 @@ export class PluginCommandError extends Error {
 // Commands (design §6.1, §6.3)
 // ---------------------------------------------------------------------------------------
 
+export type ActionInput =
+  | { kind: "none" }
+  | { kind: "text"; text: string }
+  | {
+      kind: "image";
+      entryId: number;
+      imageUrl: string;
+      /** Present only when the action targets a Runtime command. */
+      filePath?: string;
+      width?: number | null;
+      height?: number | null;
+    };
+
+/** Payload delivered to an action's target app or Runtime command. */
+export interface ActionInvocation {
+  actionId: string;
+  query: string;
+  input: ActionInput;
+}
+
 /**
  * A registered command handler. Receives the caller's `params` and an `AbortSignal` that
  * fires when the caller cancels or the default 30s command timeout elapses (design §6.3) —
@@ -71,8 +91,8 @@ export type CommandHandler<TParams = unknown, TResult = unknown> = (
 // Host Bridge API surface exposed to `main` as `ctx.host.*` (design §7.1)
 // ---------------------------------------------------------------------------------------
 
-export interface HostPaletteApi {
-  /** Hide the command palette window (e.g. after a background action finishes). */
+export interface HostMainPanelApi {
+  /** Hide the main panel window (e.g. after a background action finishes). */
   hide(): Promise<void>;
 }
 
@@ -109,7 +129,7 @@ export interface HostStorageApi {
 }
 
 export interface HostApi {
-  palette: HostPaletteApi;
+  mainPanel: HostMainPanelApi;
   app: HostAppApi;
   external: HostExternalApi;
   notify: HostNotifyApi;

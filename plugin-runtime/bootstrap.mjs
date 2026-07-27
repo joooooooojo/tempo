@@ -189,35 +189,37 @@ function handleHostFrame(message) {
 // -- ExtensionContext (design §6.3, §7) --------------------------------------------------
 
 function buildHostProxy() {
-  const namespaces = [
-    "palette",
-    "app",
-    "external",
-    "notify",
-    "theme",
-    "subscription",
-    "storage",
-  ];
-  const host = {};
-  for (const ns of namespaces) {
-    host[ns] = new Proxy(
-      {},
-      {
-        get(_target, methodName) {
-          if (typeof methodName !== "string") return undefined;
-          return (params) => callHost(`${ns}.${methodName}`, params ?? {});
+  return {
+    mainPanel: {
+      hide: () => callHost("mainPanel.hide", {}),
+    },
+    app: {
+      open: (appId, params) => callHost("app.open", { appId, params: params ?? null }),
+    },
+    external: {
+      open: (url) => callHost("external.open", { url }),
+    },
+    notify: {
+      show: (options) => callHost("notify.show", options ?? {}),
+    },
+    theme: {
+      get: () => callHost("theme.get", {}),
+    },
+    storage: {
+      plugin: {
+        get: async (key) => {
+          const result = await callHost("storage.plugin.get", { key });
+          return result?.value ?? null;
         },
-      }
-    );
-  }
-  // storage.plugin.get/set/delete/list
-  host.storage = { plugin: {
-    get: (key) => callHost("storage.plugin.get", { key }),
-    set: (key, value) => callHost("storage.plugin.set", { key, value }),
-    delete: (key) => callHost("storage.plugin.delete", { key }),
-    list: () => callHost("storage.plugin.list", {}),
-  } };
-  return host;
+        set: (key, value) => callHost("storage.plugin.set", { key, value }),
+        delete: (key) => callHost("storage.plugin.delete", { key }),
+        list: async () => {
+          const result = await callHost("storage.plugin.list", {});
+          return Array.isArray(result?.keys) ? result.keys : [];
+        },
+      },
+    },
+  };
 }
 
 function buildContext(descriptor) {

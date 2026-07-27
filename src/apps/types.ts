@@ -2,8 +2,17 @@ import type { ComponentType } from "react";
 import type { LucideIcon } from "lucide-react";
 
 export type AppSource = "builtin" | "plugin";
+export type AppWindowMode = "normal" | "standalone";
+export type AppRectValue = number | string;
 
-/** Icon for palette tiles. Plugin SVG/PNG must never be inlined into the host DOM. */
+export interface AppRect {
+  width?: AppRectValue;
+  height?: AppRectValue;
+  x?: AppRectValue;
+  y?: AppRectValue;
+}
+
+/** Icon for main panel tiles. Plugin SVG/PNG must never be inlined into the host DOM. */
 export type AppIconDescriptor =
   | { type: "lucide"; icon: LucideIcon }
   | { type: "file"; path: string; url?: string };
@@ -30,13 +39,8 @@ export interface TempoApp {
   icon: AppIconDescriptor;
   source: AppSource;
   pluginId?: string;
-  defaultSize?: { width?: number; height?: number };
-  /**
-   * When true, dismissing the palette by clicking outside (blur) keeps this app
-   * as the next open target. Esc / explicit back clears the session.
-   */
-  persistSession?: boolean;
-  sessionVersion?: number;
+  windowMode?: AppWindowMode;
+  rect?: AppRect;
   ui: TempoAppUi;
 }
 
@@ -57,15 +61,35 @@ export type BuiltinApp = TempoApp;
 /** @deprecated Prefer OpenAppOptions */
 export type OpenBuiltinAppOptions = OpenAppOptions;
 
+/** Input kinds an action can declare in `accepts`. */
+export type QuickActionAcceptKind = "text" | "image";
+
+/** Runtime main-panel input, including the empty state. */
+export type QuickActionInputKind = "none" | QuickActionAcceptKind;
+
+export type QuickActionInput =
+  | { kind: "none" }
+  | { kind: "text"; text: string }
+  | {
+      kind: "image";
+      entryId: number;
+      imageUrl: string;
+      width?: number | null;
+      height?: number | null;
+    };
+
 /** Runtime helpers passed into a quick action when the user runs it. */
 export interface QuickActionContext {
+  /** Search text kept for compatibility and action-title interpolation. */
   query: string;
+  /** The actual main panel input consumed by this action. */
+  input: QuickActionInput;
   openApp: (appId: string, options?: OpenAppOptions) => void;
   hideAndReset: () => Promise<void>;
 }
 
 /**
- * Palette quick action (快捷操作). Built-ins and plugins share this shape.
+ * Main panel quick action (快捷操作). Built-ins and plugins share this shape.
  * Register via `registerQuickAction` / the actions registry.
  */
 export interface QuickAction {
@@ -75,8 +99,8 @@ export interface QuickAction {
   icon: AppIconDescriptor;
   source: AppSource;
   pluginId?: string;
-  /** Default true: only shown / runnable when the search query is non-empty. */
-  requiresQuery?: boolean;
+  /** Input kinds for which this action is shown and can run. */
+  accepts: QuickActionAcceptKind[];
   /** Return an error message to block execution / mark the tile invalid. */
   validate?: (query: string) => string | null;
   title?: (query: string) => string;

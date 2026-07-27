@@ -3,7 +3,7 @@ import type {
   AppUsage,
   ClipboardEntry,
   ClipboardHistoryPage,
-  CommandPaletteClipboardSeed,
+  MainPanelClipboardSeed,
   DailyReport,
   HostsBackup,
   HostsProfile,
@@ -11,11 +11,15 @@ import type {
   InstalledPackage,
   InstalledPlugin,
   LauncherApp,
+  MainPanelSearchContribution,
+  MainPanelSearchMatch,
   LauncherUsageItem,
   PluginContributionBundle,
+  PluginAppRect,
   PluginMcpToolInfo,
   PluginRuntimeStatus,
   PluginUiPrepareResult,
+  PluginWindowContext,
   PortRecord,
   PomodoroState,
   Settings,
@@ -123,27 +127,30 @@ export const api = {
   getKnownApps: () => invoke<AppUsage[]>("get_known_apps"),
   getLauncherApps: () => invoke<LauncherApp[]>("get_launcher_apps"),
   refreshLauncherApps: () => invoke<LauncherApp[]>("refresh_launcher_apps"),
+  syncMainPanelSearchContributions: (contributions: MainPanelSearchContribution[]) =>
+    invoke<void>("sync_main_panel_search_contributions", { contributions }),
+  searchMainPanelApps: (query: string, limit?: number) =>
+    invoke<MainPanelSearchMatch[]>("search_main_panel_apps", { query, limit }),
   launchIndexedApp: (id: string) => invoke<void>("launch_indexed_app", { id }),
   setLauncherAppPinned: (id: string, pinned: boolean) =>
     invoke<void>("set_launcher_app_pinned", { id, pinned }),
   getLauncherUsage: () => invoke<LauncherUsageItem[]>("get_launcher_usage"),
   recordLauncherUsage: (id: string) => invoke<void>("record_launcher_usage", { id }),
-  setCommandPaletteHeight: (height: number) =>
-    invoke<void>("set_command_palette_height", { height }),
-  setCommandPaletteSize: (width: number | null, height: number) =>
-    invoke<void>("set_command_palette_size", { width, height }),
-  showCommandPalette: () => invoke<void>("show_command_palette_window"),
+  setMainPanelHeight: (height: number) =>
+    invoke<void>("set_main_panel_height", { height }),
+  setMainPanelSize: (width: number | null, height: number) =>
+    invoke<void>("set_main_panel_size", { width, height }),
+  setMainPanelRect: (rect: PluginAppRect) =>
+    invoke<void>("set_main_panel_rect", { rect }),
+  showMainPanel: () => invoke<void>("show_main_panel_window"),
   exportTodosBackup: (path: string) =>
     invoke<void>("export_todos_backup", { path }),
   importTodosBackup: (path: string) =>
     invoke<TodoItem[]>("import_todos_backup", { path }),
   saveMarkdownImage: (dataUrl: string, mimeType: string) =>
     invoke<string>("save_markdown_image", { dataUrl, mimeType }),
-  completeOnboarding: () => invoke<void>("complete_onboarding"),
   debugLog: (scope: string, message: string) =>
     invoke<void>("debug_log", { scope, message }),
-  hideToTray: () => invoke<void>("hide_to_tray_command"),
-  showWindow: () => invoke<void>("show_window"),
   getPomodoroState: () => invoke<PomodoroState>("get_pomodoro_state"),
   setPomodoroTodo: (todoId: number | null) =>
     invoke<PomodoroState>("set_pomodoro_todo", { todoId }),
@@ -174,8 +181,9 @@ export const api = {
     invoke<ClipboardEntry>("pin_clipboard_history_entry", { id, pinned }),
   copyTextToClipboard: (text: string) => invoke<void>("copy_text_to_clipboard", { text }),
   copyClipboardEntry: (id: number) => invoke<void>("copy_clipboard_entry", { id }),
-  getCommandPaletteClipboardSeed: () =>
-    invoke<CommandPaletteClipboardSeed | null>("get_command_palette_clipboard_seed"),
+  getMainPanelClipboardSeed: () =>
+    invoke<MainPanelClipboardSeed | null>("get_main_panel_clipboard_seed"),
+  clearMainPanelClipboardSeed: () => invoke<void>("clear_main_panel_clipboard_seed"),
   getSnippets: (query?: string, groupId?: number | null, sort?: string) =>
     invoke<Snippet[]>("get_snippets", { query, groupId, sort }),
   getSnippetGroups: () => invoke<SnippetGroup[]>("get_snippet_groups"),
@@ -275,6 +283,19 @@ export const api = {
     invoke<void>("plugin_ui_dispose", { viewInstanceId }),
   pluginUiSerializeSession: (viewInstanceId: string) =>
     invoke<void>("plugin_ui_serialize_session", { viewInstanceId }),
+  openPluginWindow: (args: {
+    pluginId: string;
+    appId: string;
+    params?: unknown;
+  }) =>
+    invoke<void>("open_plugin_window", {
+      args: {
+        pluginId: args.pluginId,
+        appId: args.appId,
+        params: args.params ?? null,
+      },
+    }),
+  pluginWindowContext: () => invoke<PluginWindowContext>("plugin_window_context"),
   pluginOpenDataDir: (pluginId: string) => invoke<void>("plugin_open_data_dir", { pluginId }),
   pluginUninstall: (pluginId: string, deleteData: boolean) =>
     invoke<void>("plugin_uninstall", {

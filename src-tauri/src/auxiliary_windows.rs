@@ -3,10 +3,11 @@ use tauri::window::Color;
 #[cfg(target_os = "macos")]
 use tauri::PhysicalPosition;
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
 };
 #[cfg(not(target_os = "macos"))]
-use tauri::{Monitor, PhysicalPosition, PhysicalSize};
+use tauri::{Monitor, PhysicalPosition};
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,12 +15,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const EYE_CARE_PRIMARY_LABEL: &str = "eye-care-reminder";
 pub const POMODORO_FLOAT_LABEL: &str = "pomodoro-float";
 
-pub const COMMAND_PALETTE_LABEL: &str = "command-palette";
-pub const COMMAND_PALETTE_WIDTH: f64 = 800.0;
-pub const COMMAND_PALETTE_APP_WIDTH: f64 = 920.0;
-pub const COMMAND_PALETTE_INITIAL_HEIGHT: f64 = 370.0;
-pub const COMMAND_PALETTE_MIN_HEIGHT: f64 = 58.0;
-pub const COMMAND_PALETTE_MAX_HEIGHT: f64 = 760.0;
+pub const MAIN_PANEL_LABEL: &str = "main-panel";
+pub const MAIN_PANEL_WIDTH: f64 = 800.0;
+pub const MAIN_PANEL_MAX_WIDTH: f64 = 920.0;
+pub const MAIN_PANEL_INITIAL_HEIGHT: f64 = 370.0;
+pub const MAIN_PANEL_MIN_HEIGHT: f64 = 58.0;
+pub const MAIN_PANEL_MAX_HEIGHT: f64 = 760.0;
 
 pub const POMODORO_FLOAT_PANEL_WIDTH: f64 = 300.0;
 pub const POMODORO_FLOAT_PANEL_HEIGHT: f64 = 56.0;
@@ -44,8 +45,8 @@ static SHELF_VISIBLE_TAB: AtomicU8 = AtomicU8::new(SHELF_TAB_NONE);
 #[cfg(target_os = "windows")]
 static SHELF_OUTSIDE_CLOSE_TOKEN: AtomicU64 = AtomicU64::new(0);
 
-pub fn command_palette_window_size() -> (f64, f64) {
-    (COMMAND_PALETTE_WIDTH, COMMAND_PALETTE_INITIAL_HEIGHT)
+pub fn main_panel_window_size() -> (f64, f64) {
+    (MAIN_PANEL_WIDTH, MAIN_PANEL_INITIAL_HEIGHT)
 }
 
 pub fn pomodoro_float_window_size() -> (f64, f64) {
@@ -70,11 +71,11 @@ where
 }
 
 pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
-    if app.get_webview_window(COMMAND_PALETTE_LABEL).is_none() {
-        let (width, height) = command_palette_window_size();
-        let window = build_command_palette_window(app, width, height)?;
-        polish_command_palette_window(&window);
-        crate::logging::debug_if_err(window.hide(), "precache hide command palette window");
+    if app.get_webview_window(MAIN_PANEL_LABEL).is_none() {
+        let (width, height) = main_panel_window_size();
+        let window = build_main_panel_window(app, width, height)?;
+        polish_main_panel_window(&window);
+        crate::logging::debug_if_err(window.hide(), "precache hide main panel window");
     }
 
     // Pre-create eye-care overlays during startup so the first reminder does not
@@ -141,11 +142,11 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn show_command_palette(app: &AppHandle) -> tauri::Result<()> {
-    let (default_width, default_height) = command_palette_window_size();
+pub fn show_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    let (default_width, default_height) = main_panel_window_size();
     let mut width = default_width;
     let mut height = default_height;
-    let window = if let Some(window) = app.get_webview_window(COMMAND_PALETTE_LABEL) {
+    let window = if let Some(window) = app.get_webview_window(MAIN_PANEL_LABEL) {
         // Keep the last size so restoring an app session (or search height)
         // does not flash through the default search dimensions.
         if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
@@ -154,28 +155,23 @@ pub fn show_command_palette(app: &AppHandle) -> tauri::Result<()> {
         }
         window
     } else {
-        let window = build_command_palette_window(app, default_width, default_height)?;
-        polish_command_palette_window(&window);
+        let window = build_main_panel_window(app, default_width, default_height)?;
+        polish_main_panel_window(&window);
         window
     };
 
-    place_command_palette_window(app, &window, width, height, true)?;
+    place_main_panel_window(app, &window, width, height, true)?;
     crate::logging::debug_if_err(
         window.set_always_on_top(true),
-        "set command palette always on top",
+        "set main panel always on top",
     );
-    polish_command_palette_window(&window);
+    polish_main_panel_window(&window);
 
     #[cfg(target_os = "macos")]
     {
-        let config = crate::macos_overlay_panel::shelf_picker_config();
-        crate::macos_overlay_panel::ensure_input_panel(
-            app,
-            &window,
-            COMMAND_PALETTE_LABEL,
-            &config,
-        )?;
-        crate::macos_overlay_panel::show_input_overlay(app, COMMAND_PALETTE_LABEL)?;
+        let config = crate::macos_overlay_panel::main_panel_config();
+        crate::macos_overlay_panel::ensure_input_panel(app, &window, MAIN_PANEL_LABEL, &config)?;
+        crate::macos_overlay_panel::show_input_overlay(app, MAIN_PANEL_LABEL)?;
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -184,25 +180,26 @@ pub fn show_command_palette(app: &AppHandle) -> tauri::Result<()> {
         window.set_focus()?;
     }
 
-    emit_to_debug(app, COMMAND_PALETTE_LABEL, "command-palette:open", ());
+    emit_to_debug(app, MAIN_PANEL_LABEL, "main-panel:open", ());
+    crate::commands::launcher::request_launcher_index_refresh(app);
     Ok(())
 }
 
-pub fn is_command_palette_visible(app: &AppHandle) -> bool {
-    app.get_webview_window(COMMAND_PALETTE_LABEL)
-        .map(|window| window_is_visible(&window, "check command palette visibility"))
+pub fn is_main_panel_visible(app: &AppHandle) -> bool {
+    app.get_webview_window(MAIN_PANEL_LABEL)
+        .map(|window| window_is_visible(&window, "check main panel visibility"))
         .unwrap_or(false)
 }
 
-pub fn hide_command_palette(app: &AppHandle) -> tauri::Result<()> {
-    let Some(window) = app.get_webview_window(COMMAND_PALETTE_LABEL) else {
+pub fn hide_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window(MAIN_PANEL_LABEL) else {
         return Ok(());
     };
 
     #[cfg(target_os = "macos")]
     {
         let _ = window;
-        crate::macos_overlay_panel::hide_overlay(app, COMMAND_PALETTE_LABEL);
+        crate::macos_overlay_panel::hide_overlay(app, MAIN_PANEL_LABEL);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -210,44 +207,59 @@ pub fn hide_command_palette(app: &AppHandle) -> tauri::Result<()> {
         window.hide()?;
     }
 
-    emit_to_debug(app, COMMAND_PALETTE_LABEL, "command-palette:shortcut-hide", ());
+    emit_to_debug(app, MAIN_PANEL_LABEL, "main-panel:shortcut-hide", ());
     Ok(())
 }
 
-pub fn toggle_command_palette(app: &AppHandle) -> tauri::Result<()> {
-    if is_command_palette_visible(app) {
-        hide_command_palette(app)
+pub fn toggle_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    if is_main_panel_visible(app) {
+        hide_main_panel(app)
     } else {
-        show_command_palette(app)
+        show_main_panel(app)
     }
 }
 
 #[tauri::command]
-pub fn set_command_palette_height(app: AppHandle, height: f64) -> Result<(), String> {
-    set_command_palette_size(app, None, height)
+pub fn set_main_panel_height(app: AppHandle, height: f64) -> Result<(), String> {
+    set_main_panel_size(app, None, height)
 }
 
 #[tauri::command]
-pub fn set_command_palette_size(
-    app: AppHandle,
-    width: Option<f64>,
-    height: f64,
-) -> Result<(), String> {
+pub fn set_main_panel_size(app: AppHandle, width: Option<f64>, height: f64) -> Result<(), String> {
     let window = app
-        .get_webview_window(COMMAND_PALETTE_LABEL)
-        .ok_or_else(|| "未找到快捷面板窗口".to_string())?;
+        .get_webview_window(MAIN_PANEL_LABEL)
+        .ok_or_else(|| "未找到主面板窗口".to_string())?;
     // Search mode passes width=None and only changes height while typing. Avoid
     // monitor/cursor/position work on every keystroke — that was a major input lag source.
     if width.is_none() {
-        return resize_command_palette_height_only(&app, &window, height)
+        return resize_main_panel_height_only(&app, &window, height)
             .map_err(|error| error.to_string());
     }
-    let requested_width = width.unwrap_or(COMMAND_PALETTE_WIDTH);
-    place_command_palette_window(&app, &window, requested_width, height, false)
+    let requested_width = width.unwrap_or(MAIN_PANEL_WIDTH);
+    place_main_panel_window(&app, &window, requested_width, height, false)
         .map_err(|error| error.to_string())
 }
 
-fn resize_command_palette_height_only(
+#[tauri::command]
+pub fn set_main_panel_rect(
+    app: AppHandle,
+    rect: crate::plugins::manifest::AppRect,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_PANEL_LABEL)
+        .ok_or_else(|| "未找到主面板窗口".to_string())?;
+    // App rects are applied immediately after a cursor-following open. The native window may
+    // still report its previous monitor during that transition, so resolve from the cursor.
+    let resolved = crate::plugins::windows::resolve_window_rect(&app, None, &rect)?;
+    window
+        .set_position(resolved.position)
+        .map_err(|error| error.to_string())?;
+    window
+        .set_size(resolved.physical_size)
+        .map_err(|error| error.to_string())
+}
+
+fn resize_main_panel_height_only(
     app: &AppHandle,
     window: &WebviewWindow,
     requested_height: f64,
@@ -261,10 +273,10 @@ fn resize_command_palette_height_only(
         let scale = monitor.scale_factor();
         let work_area = monitor.work_area();
         let available_height = work_area.size.height as f64 / scale;
-        let top_offset = ((available_height - COMMAND_PALETTE_MAX_HEIGHT) / 2.0).clamp(96.0, 320.0);
-        let max_height = COMMAND_PALETTE_MAX_HEIGHT
-            .min((available_height - top_offset - 24.0).max(COMMAND_PALETTE_MIN_HEIGHT));
-        let height = requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, max_height);
+        let top_offset = ((available_height - MAIN_PANEL_MAX_HEIGHT) / 2.0).clamp(96.0, 320.0);
+        let max_height = MAIN_PANEL_MAX_HEIGHT
+            .min((available_height - top_offset - 24.0).max(MAIN_PANEL_MIN_HEIGHT));
+        let height = requested_height.clamp(MAIN_PANEL_MIN_HEIGHT, max_height);
         // Preserve inner width. `set_size(LogicalSize)` sets the inner client area;
         // reading outer_size (shadow/DWM frame) and writing it back widens the window
         // once — visible as a width jitter when the panel opens or returns to search.
@@ -273,13 +285,13 @@ fn resize_command_palette_height_only(
             .inner_size()
             .ok()
             .map(|size| size.width as f64 / window_scale)
-            .unwrap_or(COMMAND_PALETTE_WIDTH)
-            .clamp(320.0, COMMAND_PALETTE_APP_WIDTH.max(COMMAND_PALETTE_WIDTH));
+            .unwrap_or(MAIN_PANEL_WIDTH)
+            .clamp(320.0, MAIN_PANEL_MAX_WIDTH.max(MAIN_PANEL_WIDTH));
         (width, height)
     } else {
         (
-            COMMAND_PALETTE_WIDTH,
-            requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, COMMAND_PALETTE_MAX_HEIGHT),
+            MAIN_PANEL_WIDTH,
+            requested_height.clamp(MAIN_PANEL_MIN_HEIGHT, MAIN_PANEL_MAX_HEIGHT),
         )
     };
     // Skip no-op resizes (e.g. ResizeObserver remount on every open) to avoid a flash.
@@ -295,8 +307,8 @@ fn resize_command_palette_height_only(
 }
 
 #[tauri::command]
-pub fn show_command_palette_window(app: AppHandle) -> Result<(), String> {
-    show_command_palette(&app).map_err(|error| error.to_string())
+pub fn show_main_panel_window(app: AppHandle) -> Result<(), String> {
+    show_main_panel(&app).map_err(|error| error.to_string())
 }
 
 /// Prepare overlay panels so macOS NSOpenPanel sheets are visible (ZTools uses modal-panel
@@ -317,17 +329,16 @@ pub fn restore_after_native_file_dialog(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Re-apply macOS vibrancy / native theme for the command palette after the frontend
-/// theme changes while the window is already open (ZTools-style light/dark frosted glass).
+/// Re-apply the native theme and solid background after the frontend theme changes.
 #[tauri::command]
-pub fn sync_command_palette_appearance(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(COMMAND_PALETTE_LABEL) {
-        polish_command_palette_window(&window);
+pub fn sync_main_panel_appearance(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(MAIN_PANEL_LABEL) {
+        polish_main_panel_window(&window);
     }
     Ok(())
 }
 
-fn place_command_palette_window(
+fn place_main_panel_window(
     app: &AppHandle,
     window: &WebviewWindow,
     requested_width: f64,
@@ -335,8 +346,8 @@ fn place_command_palette_window(
     follow_cursor: bool,
 ) -> tauri::Result<()> {
     let max_width = requested_width
-        .max(COMMAND_PALETTE_WIDTH)
-        .min(COMMAND_PALETTE_APP_WIDTH.max(COMMAND_PALETTE_WIDTH));
+        .max(MAIN_PANEL_WIDTH)
+        .min(MAIN_PANEL_MAX_WIDTH.max(MAIN_PANEL_WIDTH));
     let cursor_monitor = || {
         app.cursor_position().ok().and_then(|position| {
             app.monitor_from_point(position.x, position.y)
@@ -351,7 +362,7 @@ fn place_command_palette_window(
         .or_else(cursor_monitor)
         .or_else(|| app.primary_monitor().ok().flatten());
     let Some(monitor) = monitor else {
-        let height = requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, COMMAND_PALETTE_MAX_HEIGHT);
+        let height = requested_height.clamp(MAIN_PANEL_MIN_HEIGHT, MAIN_PANEL_MAX_HEIGHT);
         let width = requested_width.clamp(320.0, max_width);
         window.set_size(LogicalSize::new(width, height))?;
         return window.center();
@@ -362,16 +373,20 @@ fn place_command_palette_window(
     let available_width = work_area.size.width as f64 / scale;
     let available_height = work_area.size.height as f64 / scale;
     let width = (available_width - 32.0).clamp(320.0, max_width.min(requested_width.max(320.0)));
-    let top_offset = ((available_height - COMMAND_PALETTE_MAX_HEIGHT) / 2.0).clamp(96.0, 320.0);
-    let max_height = COMMAND_PALETTE_MAX_HEIGHT
-        .min((available_height - top_offset - 24.0).max(COMMAND_PALETTE_MIN_HEIGHT));
-    let height = requested_height.clamp(COMMAND_PALETTE_MIN_HEIGHT, max_height);
+    let top_offset = ((available_height - MAIN_PANEL_MAX_HEIGHT) / 2.0).clamp(96.0, 320.0);
+    let max_height = MAIN_PANEL_MAX_HEIGHT
+        .min((available_height - top_offset - 24.0).max(MAIN_PANEL_MIN_HEIGHT));
+    let height = requested_height.clamp(MAIN_PANEL_MIN_HEIGHT, max_height);
 
-    window.set_size(LogicalSize::new(width, height))?;
     let physical_width = (width * scale).round() as i32;
+    let physical_height = (height * scale).round() as u32;
     let x = work_area.position.x + (work_area.size.width as i32 - physical_width) / 2;
     let y = work_area.position.y + (top_offset * scale).round() as i32;
-    window.set_position(PhysicalPosition::new(x, y))
+    window.set_position(PhysicalPosition::new(x, y))?;
+    window.set_size(PhysicalSize::new(
+        physical_width.max(1) as u32,
+        physical_height.max(1),
+    ))
 }
 
 #[tauri::command]
@@ -1480,41 +1495,28 @@ fn close_extra_eye_care_windows(app: &AppHandle, active_count: usize) {
     }
 }
 
-pub fn polish_command_palette_window(window: &WebviewWindow) {
+pub fn polish_main_panel_window(window: &WebviewWindow) {
     sync_overlay_window_theme(window);
 
     #[cfg(target_os = "macos")]
-    {
-        crate::logging::debug_if_err(
-            window.set_background_color(Some(Color(0, 0, 0, 0))),
-            "set command palette transparent background",
-        );
-        crate::logging::debug_if_err(window.set_shadow(true), "set command palette shadow");
-        apply_macos_command_palette_vibrancy(window);
-    }
+    clear_macos_main_panel_vibrancy(window);
+
+    let background = match window.theme() {
+        Ok(tauri::Theme::Dark) => Color(18, 20, 24, 255),
+        _ => Color(247, 249, 248, 255),
+    };
+    crate::logging::debug_if_err(
+        window.set_background_color(Some(background)),
+        "set main panel opaque background",
+    );
+    crate::logging::debug_if_err(window.set_shadow(true), "set main panel shadow");
 
     #[cfg(target_os = "windows")]
-    {
-        let background = match window.theme() {
-            Ok(tauri::Theme::Dark) => Color(18, 20, 24, 255),
-            _ => Color(247, 249, 248, 255),
-        };
-        crate::logging::debug_if_err(
-            window.set_background_color(Some(background)),
-            "set command palette opaque background",
-        );
-        crate::logging::debug_if_err(window.set_shadow(true), "set command palette shadow");
-        apply_windows_shelf_appearance(window);
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        crate::logging::debug_if_err(window.set_shadow(true), "set command palette shadow");
-    }
+    apply_windows_shelf_appearance(window);
 }
 
-/// Keep native window appearance in sync with Tempo's theme setting so macOS vibrancy
-/// materials (Popover/Menu) and Windows solid fills match CSS light/dark tokens.
+/// Keep native window appearance in sync with Tempo's theme setting so the solid fill
+/// matches the CSS light/dark tokens.
 fn sync_overlay_window_theme(window: &WebviewWindow) {
     let theme = window
         .app_handle()
@@ -1533,26 +1535,22 @@ fn sync_overlay_window_theme(window: &WebviewWindow) {
     crate::logging::debug_if_err(window.set_theme(native), "sync overlay window theme");
 }
 
-pub fn build_command_palette_window(
+pub fn build_main_panel_window(
     app: &AppHandle,
     width: f64,
     height: f64,
 ) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(
         app,
-        COMMAND_PALETTE_LABEL,
-        WebviewUrl::App("/?view=command-palette".into()),
+        MAIN_PANEL_LABEL,
+        WebviewUrl::App("/?view=main-panel".into()),
     )
-    .title("快捷面板")
+    .title("主面板")
     .inner_size(width, height)
     .resizable(false)
     .decorations(false)
-    .transparent(cfg!(target_os = "macos"))
-    .background_color(if cfg!(target_os = "macos") {
-        Color(0, 0, 0, 0)
-    } else {
-        Color(247, 249, 248, 255)
-    })
+    .transparent(false)
+    .background_color(Color(247, 249, 248, 255))
     .shadow(cfg!(any(target_os = "macos", target_os = "windows")))
     .always_on_top(true)
     .skip_taskbar(true)
@@ -1650,22 +1648,8 @@ unsafe fn apply_macos_native_overlay_window(ns_window: *mut std::ffi::c_void) {
 }
 
 #[cfg(target_os = "macos")]
-fn apply_macos_command_palette_vibrancy(window: &WebviewWindow) {
-    use window_vibrancy::{
-        apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
-    };
+fn clear_macos_main_panel_vibrancy(window: &WebviewWindow) {
+    use window_vibrancy::clear_vibrancy;
 
-    crate::logging::debug_if_err(clear_vibrancy(window), "clear command palette vibrancy");
-    // Match ZTools / uTools style: Electron `vibrancy: 'fullscreen-ui'` + a light/dark CSS wash
-    // on top (see `styles/platform/macos/command-palette.css`). FullScreenUI follows the
-    // window appearance; HudWindow stays dark and washed out light-theme labels.
-    crate::logging::debug_if_err(
-        apply_vibrancy(
-            window,
-            NSVisualEffectMaterial::FullScreenUI,
-            Some(NSVisualEffectState::Active),
-            Some(16.0),
-        ),
-        "apply command palette vibrancy",
-    );
+    crate::logging::debug_if_err(clear_vibrancy(window), "clear main panel vibrancy");
 }

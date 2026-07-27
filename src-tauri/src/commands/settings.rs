@@ -14,13 +14,13 @@ use super::markdown::{
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShortcutSetting {
-    CommandPalette,
+    MainPanel,
     ClipboardPicker,
     SnippetPicker,
 }
 
 const SHORTCUT_SETTINGS: [(ShortcutSetting, &str); 3] = [
-    (ShortcutSetting::CommandPalette, "shortcut_command_palette"),
+    (ShortcutSetting::MainPanel, "shortcut_main_panel"),
     (
         ShortcutSetting::ClipboardPicker,
         "shortcut_clipboard_picker",
@@ -30,7 +30,7 @@ const SHORTCUT_SETTINGS: [(ShortcutSetting, &str); 3] = [
 
 fn shortcut_value(settings: &Settings, shortcut: ShortcutSetting) -> &str {
     match shortcut {
-        ShortcutSetting::CommandPalette => &settings.shortcut_command_palette,
+        ShortcutSetting::MainPanel => &settings.shortcut_main_panel,
         ShortcutSetting::ClipboardPicker => &settings.shortcut_clipboard_picker,
         ShortcutSetting::SnippetPicker => &settings.shortcut_snippet_picker,
     }
@@ -38,7 +38,7 @@ fn shortcut_value(settings: &Settings, shortcut: ShortcutSetting) -> &str {
 
 fn set_shortcut_value(settings: &mut Settings, shortcut: ShortcutSetting, value: String) {
     match shortcut {
-        ShortcutSetting::CommandPalette => settings.shortcut_command_palette = value,
+        ShortcutSetting::MainPanel => settings.shortcut_main_panel = value,
         ShortcutSetting::ClipboardPicker => settings.shortcut_clipboard_picker = value,
         ShortcutSetting::SnippetPicker => settings.shortcut_snippet_picker = value,
     }
@@ -246,17 +246,17 @@ pub fn update_settings(
     }
 
     if shortcuts_changed {
-        let (palette, clipboard, snippet) = crate::validate_shortcut_bindings(
-            &current.shortcut_command_palette,
+        let (main_panel, clipboard, snippet) = crate::validate_shortcut_bindings(
+            &current.shortcut_main_panel,
             &current.shortcut_clipboard_picker,
             &current.shortcut_snippet_picker,
         )?;
-        current.shortcut_command_palette = palette;
+        current.shortcut_main_panel = main_panel;
         current.shortcut_clipboard_picker = clipboard;
         current.shortcut_snippet_picker = snippet;
         crate::apply_global_shortcuts(
             &app,
-            &current.shortcut_command_palette,
+            &current.shortcut_main_panel,
             &current.shortcut_clipboard_picker,
             &current.shortcut_snippet_picker,
         )?;
@@ -277,7 +277,11 @@ pub fn update_settings(
 
     if current.theme != previous_theme {
         if let Some(host) = app.try_state::<std::sync::Arc<crate::plugins::host::PluginHost>>() {
-            crate::plugins::bridge::broadcast_theme_change(&app, host.inner().as_ref(), &current.theme);
+            crate::plugins::bridge::broadcast_theme_change(
+                &app,
+                host.inner().as_ref(),
+                &current.theme,
+            );
         }
     }
 
@@ -578,9 +582,4 @@ pub fn reset_all(state: tauri::State<AppState>) {
     if let Err(error) = conn.execute("DELETE FROM app_usage", []) {
         tracing::warn!(error = %error, "failed to reset all app usage");
     }
-}
-#[tauri::command]
-pub fn complete_onboarding(state: tauri::State<AppState>) {
-    let conn = state.db.lock();
-    crate::db::set_setting(&conn, "onboarding_completed", "true");
 }

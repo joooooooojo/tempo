@@ -4,7 +4,7 @@
 
 <img src="./public/favicon.png" alt="Tempo" width="120">
 
-**高性能、可扩展的桌面快捷面板与插件平台**
+**高性能、可扩展的桌面主面板与插件平台**
 
 _以 Rust + Tauri 为宿主，统一搜索启动本机应用、官方能力与第三方插件_
 
@@ -18,7 +18,7 @@ _以 Rust + Tauri 为宿主，统一搜索启动本机应用、官方能力与�
 ## ✨ 特性
 
 - 🧩 **插件平台** — UI 插件与无界面插件共用 `manifest.json` 与 Host Bridge；本地目录/压缩包导入、显式信任、可选独立 Node Runtime，进程隔离负责生命周期与稳定性
-- ⚡ **高性能宿主** — Tauri 2 + Rust 承担 IPC、剪贴板监听、前台应用统计与系统调用；主进程后台驻留，快捷面板与选择器按需弹出，内存与体积显著低于典型 Electron 启动器
+- ⚡ **高性能宿主** — Tauri 2 + Rust 承担 IPC、剪贴板监听、前台应用统计与系统调用；主进程后台驻留，主面板与选择器按需弹出，内存与体积显著低于典型 Electron 启动器
 - 🚀 **快速启动** — 全局快捷键唤起面板，拼音/关键词搜索内置应用、已启用插件、本机程序与快捷操作；支持固定、最近使用与会话恢复
 - 📋 **效率扩展** — 自带剪贴板历史、快捷短语、待办与番茄、屏幕时间等官方扩展，能力边界由插件生态扩展
 - 🤖 **MCP** — 本机 `127.0.0.1` HTTP 服务，Bearer 鉴权，供 Cursor 等客户端操作待办、短语、剪贴板、番茄钟与日报
@@ -54,7 +54,7 @@ npm run build
 
 ### 使用
 
-1. 启动后驻留系统托盘；默认 **Alt + Space**（macOS：**⌥ + Space**）打开快捷面板  
+1. 启动后显示主面板并驻留系统托盘；也可按默认 **Alt + Space**（macOS：**⌥ + Space**）再次打开
 2. 输入关键词搜索，方向键选择，**Enter** 打开，**Esc** 关闭（面板可见时）  
 3. 默认可配置的全局快捷键（设置 → 快捷键）：  
    - **Ctrl + Shift + V** — 剪贴板选择器  
@@ -68,7 +68,7 @@ npm run build
 
 ## 🧩 插件平台
 
-Tempo 的定位是**可扩展宿主**：内置应用与第三方插件在快捷面板中使用同一套「应用 / 快捷操作」模型（`builtin` 与 `plugin` 仅来源不同）。
+Tempo 的定位是**可扩展宿主**：内置应用与第三方插件在主面板中使用同一套「应用 / 快捷操作」模型（`builtin` 与 `plugin` 仅来源不同）。
 
 ### 架构要点
 
@@ -97,14 +97,16 @@ com.example.myplugin/
 - **纯 UI**：无 `main`，不需安装插件 Node 运行时  
 - **混合 / 无界面**：有 `main` 时须在设置 → 插件中安装 **插件 Node 运行时**  
 
-`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`contributes.apps` / `actions` / `commands` / `mcpTools`（可选）等。完整示例见仓库 `examples/plugins/com.example.hello/manifest.json`。
+`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`contributes.apps` / `actions` / `commands` / `mcpTools`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `examples/plugins/com.example.hello/manifest.json`。
+
+开发资料：[插件开发指南](./docs/plugin-development.md) · [Host API 参考](./docs/plugin-host-api.md) · [manifest.json JSON Schema](./docs/schemas/plugin-manifest.schema.json)
 
 ### 安装与试用（Hello 示例）
 
 1. 设置 → 插件 → 安装 **插件 Node 运行时**（仅含 `main` 的插件需要）  
 2. **导入目录** → 选择 `examples/plugins/com.example.hello`  
 3. 导入后为**未信任、已禁用**；点击 **信任** → 打开 **启用**  
-4. 面板搜索「Hello 示例」或快捷操作「Hello 一下」  
+4. 主面板搜索「Hello 示例」「Hello 独立窗口」或快捷操作「Hello 一下」
 
 面板内 UI 自动注入 `window.plugin`（无需单独 SDK 即可起步）：
 
@@ -114,7 +116,9 @@ await window.plugin.host("notify.show", { title: "Hi" });    // 调用宿主 API
 window.plugin.on("greeted", (payload) => console.log(payload));
 ```
 
-宿主侧常用 Bridge 方法（节选）：`palette.hide` / `palette.back` / `palette.setSize`、`app.open`、`external.open`（仅 http(s)/mailto）、`notify.show`、`theme.get` / `theme.onChange`、`storage.plugin.get|set|delete|list`、`session.push` 等。
+Action 可通过 `accepts: ["text" | "image"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一；两种目标都会收到结构化的 `{ actionId, query, input }`。
+
+宿主侧常用 Bridge 方法（节选）：`mainPanel.hide` / `mainPanel.back` / `mainPanel.setSize`、独立窗口专用的 `window.setRect` / `window.close`、`app.open`、`external.open`（仅 http(s)/mailto）、`notify.show`、`theme.get` / `theme.onChange`、`storage.plugin.get|set|delete|list`、`session.push` 等。
 
 卸载插件会停止 Runtime、移除面板贡献，安装包可移入回收目录（可选删除插件私有数据）。
 
@@ -183,7 +187,7 @@ pnpm run build        # 类型检查 + 发布构建
 
 ## ⚠️ 说明
 
-- 关闭主窗口默认最小化到托盘，托盘菜单可退出  
+- 关闭主面板后程序继续驻留托盘，托盘菜单可退出
 - 部分全屏或受保护窗口可能无法参与屏幕时间统计  
 - 待办列表与剪贴板等采用分页/按需加载，减轻面板唤起时的 IO  
 - 启用含 `main` 的插件前请完成信任确认；未签名包的 `publisher` 仅作展示，不能代替验签身份  

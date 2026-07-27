@@ -285,9 +285,15 @@ fn parse_system_hosts(content: &str) -> ParsedSystemHosts {
     }
 }
 
-fn compose_system_hosts(public: &str, active_id: Option<&str>, profile_content: Option<&str>) -> String {
+fn compose_system_hosts(
+    public: &str,
+    active_id: Option<&str>,
+    profile_content: Option<&str>,
+) -> String {
     let mut out = String::new();
-    out.push_str("# Managed by Tempo. Keep the marker lines so public/custom sections can be parsed.\n");
+    out.push_str(
+        "# Managed by Tempo. Keep the marker lines so public/custom sections can be parsed.\n",
+    );
     out.push_str(MARK_PUBLIC_BEGIN);
     out.push('\n');
     let public = normalize_section(public);
@@ -398,7 +404,10 @@ fn create_backup(app: &AppHandle, source: &str, content: &str) -> Result<String,
     let dir = tools_hosts_dir(app)?;
     let id = Local::now().format("%Y%m%d-%H%M%S-%3f").to_string();
     let path = dir.join("backups").join(format!("{id}.hosts"));
-    let header = format!("# tempo-backup source={source} at={}\n", Local::now().to_rfc3339());
+    let header = format!(
+        "# tempo-backup source={source} at={}\n",
+        Local::now().to_rfc3339()
+    );
     fs::write(&path, format!("{header}{content}")).map_err(|e| format!("写入备份失败: {e}"))?;
     prune_backups(&dir.join("backups"))?;
     Ok(id)
@@ -443,34 +452,67 @@ fn write_system_hosts_raw(path: &Path, content: &str) -> Result<(), String> {
 
 #[cfg(windows)]
 fn grant_write_permission(path: &Path) -> Result<(), String> {
-    let path_str = path.to_string_lossy().replace('\'', "''");
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
     let user = std::env::var("USERNAME").unwrap_or_else(|_| "%USERNAME%".into());
     let domain = std::env::var("USERDOMAIN").unwrap_or_default();
     let account = if domain.is_empty() {
         user
     } else {
         format!("{domain}\\{user}")
-    }
-    .replace('\'', "''");
+    };
 
-    let inner = format!(
-        "icacls '{path_str}' /grant '{account}:(M)'; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; attrib -R '{path_str}'"
-    );
-    let outer = format!(
-        "Start-Process -FilePath powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command','{}'",
-        inner.replace('\'', "''")
-    );
+    let path_str = path.to_string_lossy();
+    // cmd.exe + icacls/attrib are always present; elevate via ShellExecute "runas" (no PowerShell).
+    let parameters =
+        format!("/d /c icacls \"{path_str}\" /grant \"{account}:(M)\" && attrib -R \"{path_str}\"");
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &outer])
-        .output()
-        .map_err(|e| format!("启动提权失败: {e}"))?;
+    let mut file = to_wide("cmd.exe");
+    let mut verb = to_wide("runas");
+    let mut params = to_wide(&parameters);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("授权失败（可能取消了 UAC）。{}", stderr.trim()));
+    let mut exec_info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_mut_ptr()),
+        lpFile: PCWSTR(file.as_mut_ptr()),
+        lpParameters: PCWSTR(params.as_mut_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
+    };
+
+    unsafe {
+        ShellExecuteExW(&mut exec_info).map_err(|e| format!("启动提权失败: {e}"))?;
+        if exec_info.hProcess.is_invalid() {
+            return Err("启动提权失败：未获得进程句柄".into());
+        }
+        let wait = WaitForSingleObject(exec_info.hProcess, INFINITE);
+        if wait != WAIT_OBJECT_0 {
+            let _ = CloseHandle(exec_info.hProcess);
+            return Err("等待提权进程结束失败".into());
+        }
+        let mut exit_code = 1u32;
+        GetExitCodeProcess(exec_info.hProcess, &mut exit_code)
+            .map_err(|e| format!("读取提权结果失败: {e}"))?;
+        let _ = CloseHandle(exec_info.hProcess);
+        if exit_code != 0 {
+            return Err("授权失败（可能取消了 UAC）。".into());
+        }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn to_wide(value: &str) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    std::ffi::OsStr::new(value)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
@@ -528,7 +570,9 @@ fn flush_dns_cache() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let _ = Command::new("dscacheutil").args(["-flushcache"]).status();
-        let _ = Command::new("killall").args(["-HUP", "mDNSResponder"]).status();
+        let _ = Command::new("killall")
+            .args(["-HUP", "mDNSResponder"])
+            .status();
         return Ok(());
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -693,11 +737,7 @@ fn apply_composed(app: &AppHandle, source: &str) -> Result<HostsWorkspace, Strin
         None
     };
 
-    let composed = compose_system_hosts(
-        &public,
-        active_id.as_deref(),
-        profile_body.as_deref(),
-    );
+    let composed = compose_system_hosts(&public, active_id.as_deref(), profile_body.as_deref());
 
     let path = hosts_path();
     let previous = if path.exists() {
@@ -712,7 +752,10 @@ fn apply_composed(app: &AppHandle, source: &str) -> Result<HostsWorkspace, Strin
 }
 
 #[tauri::command]
-pub fn get_hosts_workspace(app: AppHandle, _state: tauri::State<AppState>) -> Result<HostsWorkspace, String> {
+pub fn get_hosts_workspace(
+    app: AppHandle,
+    _state: tauri::State<AppState>,
+) -> Result<HostsWorkspace, String> {
     build_workspace(&app)
 }
 

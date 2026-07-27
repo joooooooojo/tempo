@@ -28,7 +28,8 @@ const BRIDGE_SCRIPT_TAG: &str = r#"<script src="__tempo__/client.js"></script>"#
 
 /// Baseline CSP (design §5.2). Plugins cannot loosen `script-src`/`object-src`/`frame-src`/
 /// `base-uri`; we simply always serve this baseline since Phase 1 has no per-plugin override.
-pub const BASELINE_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+pub const BASELINE_CSP: &str =
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
 img-src 'self' data: blob: https:; media-src 'self' blob:; \
 connect-src https: http: ws: wss:; \
 object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'";
@@ -233,7 +234,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
 }
 
 /// Load `manifest.json` from an install directory (used by `plugin_ui_prepare` to resolve an
-/// app's `entry`/`defaultSize` before minting a view instance).
+/// app's `entry`/`rect` before minting a view instance).
 pub fn read_manifest(install_path: &Path) -> Result<PluginManifest, String> {
     let raw = std::fs::read_to_string(install_path.join("manifest.json"))
         .map_err(|e| format!("read manifest.json: {e}"))?;
@@ -301,7 +302,8 @@ pub fn save_session(
     session_version: u32,
     payload: &serde_json::Value,
 ) -> Result<(), String> {
-    let serialized = serde_json::to_string(payload).map_err(|e| format!("serialize session: {e}"))?;
+    let serialized =
+        serde_json::to_string(payload).map_err(|e| format!("serialize session: {e}"))?;
     if serialized.len() > MAX_SESSION_PAYLOAD_BYTES {
         return Err(format!(
             "session payload exceeds {MAX_SESSION_PAYLOAD_BYTES} bytes"

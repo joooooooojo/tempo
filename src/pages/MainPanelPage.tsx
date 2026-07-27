@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -21,7 +20,6 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { AppIcon } from "@/components/AppIcon";
-import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { ReminderDialog } from "@/components/ReminderDialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -36,13 +34,13 @@ import { PluginAppHost } from "@/apps/PluginAppHost";
 import { startPluginContributionSync } from "@/apps/plugins/syncContributions";
 import { getApp as getBuiltinApp, listApps as listBuiltinApps, subscribeApps } from "@/apps/registry";
 import {
-  canPersistAppSession,
-  clearPaletteSession,
-  resolveRestorablePaletteSession,
-  writePaletteSession,
-} from "@/apps/session";
+  clearMainPanelSession,
+  resolveRestorableMainPanelSession,
+  writeMainPanelSession,
+} from "@/apps/mainPanelSession";
 import {
   resolveOpenAppParams,
+  type AppRectValue,
   type BuiltinApp,
   type OpenBuiltinAppOptions,
   type QuickAction,
@@ -50,28 +48,43 @@ import {
 import { api } from "@/lib/api";
 import { notifyUser } from "@/lib/notifications";
 import { playNotificationSound } from "@/lib/sound";
-import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
+import {
+  applyTheme,
+  emitThemeChange,
+  subscribeThemeChanges,
+  syncEyeCareWindowBackground,
+  watchSystemTheme,
+} from "@/lib/theme";
 import { appToastOptions } from "@/lib/toastOptions";
 import {
+  resolveQuickActionInput,
   resolveQuickActionQuery,
-  seedToPaletteChip,
+  seedToMainPanelChip,
   shouldInlineClipboardText,
-  type PaletteClipboardChip,
-} from "@/lib/paletteClipboardSeed";
-import { isMacTarget, isWindowsTarget, cn } from "@/lib/utils";
-import type { CommandPaletteClipboardSeed, LauncherApp, LauncherUsageItem, ReminderEvent } from "@/types";
+  type MainPanelClipboardChip,
+} from "@/lib/mainPanelClipboardSeed";
+import { cn } from "@/lib/utils";
+import type {
+  MainPanelClipboardSeed,
+  LauncherApp,
+  LauncherUsageItem,
+  ReminderEvent,
+  Settings,
+} from "@/types";
 
 const GRID_COLUMNS = 9;
 const RECENT_COLLAPSED_COUNT = GRID_COLUMNS * 2;
 const PINNED_COLLAPSED_COUNT = GRID_COLUMNS;
 const SEARCH_COLLAPSED_COUNT = GRID_COLUMNS * 2;
 const MAX_SEARCH_RESULTS = GRID_COLUMNS * 4;
+const SEARCH_QUERY_DEBOUNCE_MS = 80;
 /** Typing changes result height often; native window resize each time feels like input lag. */
-const PALETTE_RESIZE_DEBOUNCE_MS = 100;
+const MAIN_PANEL_RESIZE_DEBOUNCE_MS = 100;
 const SEARCH_WIDTH = 800;
 /** Fallback only when content has not mounted yet; prefer measured scrollHeight. */
 const SEARCH_FALLBACK_HEIGHT = 370;
 const DEFAULT_APP_HEIGHT = 580;
+const APP_CHROME_HEIGHT = 58;
 const BUILTIN_USAGE_PREFIX = "builtin:";
 const PLUGIN_USAGE_PREFIX = "plugin:";
 /** Tool pages already have their own edge-to-edge chrome; skip host padding. */
@@ -85,9 +98,9 @@ const FILL_HEIGHT_APP_IDS = new Set([
   "pomodoro",
 ]);
 
-type PaletteMode = "search" | "app";
+type MainPanelMode = "search" | "app";
 
-type PaletteSelection =
+type MainPanelSelection =
   | { key: string; kind: "app"; app: LauncherApp }
   | { key: string; kind: "builtin"; app: BuiltinApp }
   | { key: string; kind: "action"; action: QuickAction };
@@ -108,23 +121,22 @@ type RecentEntry =
       use_count: number;
     };
 
+type SearchAppEntry =
+  | { key: string; kind: "builtin"; app: BuiltinApp }
+  | { key: string; kind: "app"; app: LauncherApp };
+
 type OpenAppPayload = {
   appId: string;
   createSnippet?: boolean;
+  params?: Record<string, unknown>;
 };
 
 function builtinUsageId(appId: string) {
   return `${BUILTIN_USAGE_PREFIX}${appId}`;
 }
 
-function usageTimeMs(value: string | null | undefined): number {
-  if (!value) return 0;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-export function CommandPalettePage() {
-  const [mode, setMode] = useState<PaletteMode>("search");
+export function MainPanelPage() {
+  const [mode, setMode] = useState<MainPanelMode>("search");
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
   const [activeAppParams, setActiveAppParams] = useState<Record<string, unknown>>({});
   const [openCreateSnippet, setOpenCreateSnippet] = useState(false);
@@ -132,33 +144,63 @@ export function CommandPalettePage() {
   const [apps, setApps] = useState<LauncherApp[]>([]);
   const [usageItems, setUsageItems] = useState<LauncherUsageItem[]>([]);
   const [query, setQuery] = useState("");
-  const [clipboardChip, setClipboardChip] = useState<PaletteClipboardChip | null>(null);
+  const [clipboardChip, setClipboardChip] = useState<MainPanelClipboardChip | null>(null);
   const [loading, setLoading] = useState(true);
   const [recentExpanded, setRecentExpanded] = useState(false);
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
   const [searchExpanded, setSearchExpanded] = useState(false);
+  const [matchedSearchApps, setMatchedSearchApps] = useState<SearchAppEntry[]>([]);
+  const [searchIndexRevision, setSearchIndexRevision] = useState(0);
+  const [launcherIndexRevision, setLauncherIndexRevision] = useState(0);
   const [openRevision, setOpenRevision] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const clipboardChipRef = useRef<PaletteClipboardChip | null>(null);
+  const queryRef = useRef(query);
+  const clipboardChipRef = useRef<MainPanelClipboardChip | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<string | null>(null);
-  const modeRef = useRef<PaletteMode>("search");
+  const modeRef = useRef<MainPanelMode>("search");
   const activeAppIdRef = useRef<string | null>(null);
   /** After leaving a plugin, size once to measured search content (skip placeholder 370). */
   const needsSearchSizeRef = useRef(false);
   const isTauri = isTauriRuntime();
   const [appsRevision, setAppsRevision] = useState(0);
   const builtinApps = useMemo(() => listBuiltinApps(), [appsRevision]);
+  const builtinAppsRef = useRef(builtinApps);
+  builtinAppsRef.current = builtinApps;
 
   useEffect(() => {
     const unsubscribe = subscribeApps(() => setAppsRevision((current) => current + 1));
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    let cancelled = false;
+    void api
+      .syncMainPanelSearchContributions(
+        builtinApps.map((app) => ({
+          id: app.id,
+          name: app.name,
+          keywords: app.keywords,
+          source: app.source,
+        }))
+      )
+      .then(() => {
+        if (!cancelled) setSearchIndexRevision((current) => current + 1);
+      })
+      .catch((syncError) => {
+        if (!cancelled) {
+          setError(errorMessage(syncError, "无法更新搜索索引"));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [builtinApps, isTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -175,12 +217,18 @@ export function CommandPalettePage() {
   }, [activeAppId]);
 
   useEffect(() => {
+    queryRef.current = query;
+  }, [query]);
+
+  useEffect(() => {
     clipboardChipRef.current = clipboardChip;
   }, [clipboardChip]);
 
   const resetSearchState = useCallback(() => {
     setQuery("");
+    queryRef.current = "";
     setClipboardChip(null);
+    clipboardChipRef.current = null;
     setRecentExpanded(false);
     setPinnedExpanded(false);
     setSearchExpanded(false);
@@ -190,7 +238,7 @@ export function CommandPalettePage() {
     setError(null);
   }, []);
 
-  const resetPaletteState = useCallback(() => {
+  const resetMainPanelState = useCallback(() => {
     resetSearchState();
     setMode("search");
     setActiveAppId(null);
@@ -199,34 +247,46 @@ export function CommandPalettePage() {
     setInitialTranslateText(undefined);
   }, [resetSearchState]);
 
+  const dismissClipboardSeed = useCallback(() => {
+    if (!isTauri) return;
+    void api.clearMainPanelClipboardSeed().catch(console.error);
+  }, [isTauri]);
+
   const applyClipboardSeedFromBackend = useCallback(async () => {
     if (!isTauri) return;
     try {
-      const seed = await api.getCommandPaletteClipboardSeed();
+      const seed = await api.getMainPanelClipboardSeed();
       if (!seed) {
-        setClipboardChip(null);
+        // Keep any blur-preserved chip; only skip injecting.
         return;
       }
       if (seed.kind === "text" && seed.fullText) {
         if (shouldInlineClipboardText(seed.fullText)) {
           setClipboardChip(null);
+          clipboardChipRef.current = null;
           setQuery(seed.fullText.trim());
         } else {
-          setClipboardChip(seedToPaletteChip(seed));
+          const chip = seedToMainPanelChip(seed);
+          setClipboardChip(chip);
+          clipboardChipRef.current = chip;
           setQuery("");
+          queryRef.current = "";
         }
         return;
       }
       if (seed.kind === "image") {
-        setClipboardChip(seedToPaletteChip(seed));
+        const chip = seedToMainPanelChip(seed);
+        setClipboardChip(chip);
+        clipboardChipRef.current = chip;
         setQuery("");
+        queryRef.current = "";
       }
     } catch (error) {
       console.error(error);
     }
   }, [isTauri]);
 
-  const clipboardSeedForActions = useMemo((): CommandPaletteClipboardSeed | null => {
+  const clipboardSeedForActions = useMemo((): MainPanelClipboardSeed | null => {
     if (!clipboardChip) return null;
     if (clipboardChip.kind === "text") {
       return { kind: "text", fullText: clipboardChip.fullText };
@@ -240,26 +300,27 @@ export function CommandPalettePage() {
     };
   }, [clipboardChip]);
 
-  const hideAndResetPalette = useCallback(async () => {
-    clearPaletteSession();
-    await hidePalette();
-    resetPaletteState();
+  const hideAndResetMainPanel = useCallback(async () => {
+    clearMainPanelSession();
+    dismissClipboardSeed();
+    await hideMainPanel();
+    resetMainPanelState();
     // Search layout ResizeObserver updates size while the window is still hidden.
-  }, [resetPaletteState]);
+  }, [dismissClipboardSeed, resetMainPanelState]);
 
-  /** Blur / outside click: keep opted-in app session for next open. */
+  /** Blur / outside click: keep search chip/query (and app session) for the next open. */
   const hidePreservingSession = useCallback(async () => {
     const appId = activeAppIdRef.current;
-    if (modeRef.current === "app" && canPersistAppSession(appId) && appId) {
-      writePaletteSession(appId);
-      await hidePalette();
+    if (modeRef.current === "app" && appId) {
+      writeMainPanelSession(appId);
+      await hideMainPanel();
       return;
     }
-    await hideAndResetPalette();
-  }, [hideAndResetPalette]);
+    await hideMainPanel();
+  }, []);
 
   const backToSearch = useCallback(() => {
-    clearPaletteSession();
+    clearMainPanelSession();
     setMode("search");
     setActiveAppId(null);
     setActiveAppParams({});
@@ -284,23 +345,7 @@ export function CommandPalettePage() {
       const app = getBuiltinApp(appId);
       if (!app) return;
       const params = resolveOpenAppParams(options);
-      setMode("app");
-      setActiveAppId(appId);
-      setActiveAppParams(params);
-      setOpenCreateSnippet(Boolean(params.createSnippet));
-      const translateText =
-        typeof params.initialTranslateText === "string"
-          ? params.initialTranslateText.trim()
-          : undefined;
-      setInitialTranslateText(translateText || undefined);
-      setQuery("");
-      setError(null);
-      if (app.persistSession) {
-        writePaletteSession(appId);
-      } else {
-        clearPaletteSession();
-      }
-      if (isTauri) needsSearchSizeRef.current = true;
+
       if (isTauri && !options?.restore) {
         // Always record via Rust (local RFC3339) then refresh ? JS toISOString() is UTC
         // and lexicographic string sort put builtins after local +08:00 OS app timestamps.
@@ -314,8 +359,47 @@ export function CommandPalettePage() {
             console.error(recordError);
           });
       }
+
+      if (
+        isTauri &&
+        app.source === "plugin" &&
+        app.pluginId &&
+        app.ui.type === "plugin-webview" &&
+        app.windowMode === "standalone"
+      ) {
+        clearMainPanelSession();
+        void api
+          .openPluginWindow({
+            pluginId: app.pluginId,
+            appId: app.ui.localAppId,
+            params,
+          })
+          .then(hideAndResetMainPanel)
+          .catch((openError) => setError(errorMessage(openError, "无法打开插件窗口")));
+        return;
+      }
+
+      if (isTauri) {
+        void api
+          .setMainPanelRect(app.rect ?? {})
+          .catch((rectError) => setError(errorMessage(rectError, "无法调整应用窗口")));
+      }
+
+      setMode("app");
+      setActiveAppId(appId);
+      setActiveAppParams(params);
+      setOpenCreateSnippet(Boolean(params.createSnippet));
+      const translateText =
+        typeof params.initialTranslateText === "string"
+          ? params.initialTranslateText.trim()
+          : undefined;
+      setInitialTranslateText(translateText || undefined);
+      setQuery("");
+      setError(null);
+      writeMainPanelSession(appId);
+      if (isTauri) needsSearchSizeRef.current = true;
     },
-    [isTauri]
+    [hideAndResetMainPanel, isTauri]
   );
 
   useEffect(() => {
@@ -338,6 +422,7 @@ export function CommandPalettePage() {
           api.getLauncherUsage(),
         ]);
         setApps(nextApps);
+        setLauncherIndexRevision((current) => current + 1);
         setUsageItems(nextUsage);
         setLoading(nextApps.length === 0);
         setError(null);
@@ -354,35 +439,43 @@ export function CommandPalettePage() {
   }, [pendingKey]);
 
   useEffect(() => {
+    let currentTheme: Settings["theme"] = "system";
     const root = document.documentElement;
-    const platformClass = isMacTarget
-      ? "command-palette-window--macos"
-      : isWindowsTarget
-        ? "command-palette-window--windows"
-        : "command-palette-window--other";
-    root.classList.add("command-palette-window", platformClass);
-    document.body.classList.add("command-palette-window", platformClass);
-    if (isTauri) void applyThemeFromSettings();
-    else applyTheme("system");
-    const unsubscribeTheme = isTauri ? subscribeThemeChanges(applyTheme) : () => {};
+    root.classList.add("main-panel-window");
+    document.body.classList.add("main-panel-window");
+    if (isTauri) {
+      void api
+        .getSettings()
+        .then((settings) => {
+          currentTheme = settings.theme;
+          applyTheme(currentTheme);
+          void syncEyeCareWindowBackground();
+        })
+        .catch(() => applyTheme("system"));
+    } else {
+      applyTheme("system");
+    }
+    const unsubscribeTheme = isTauri
+      ? subscribeThemeChanges((theme) => {
+          currentTheme = theme;
+          applyTheme(theme);
+        })
+      : () => {};
+    const unwatchSystemTheme = isTauri
+      ? watchSystemTheme(
+          () => currentTheme,
+          () => void emitThemeChange("system")
+        )
+      : () => {};
     void loadApps();
 
     return () => {
-      root.classList.remove("command-palette-window", platformClass);
-      document.body.classList.remove("command-palette-window", platformClass);
+      root.classList.remove("main-panel-window");
+      document.body.classList.remove("main-panel-window");
+      unwatchSystemTheme();
       unsubscribeTheme();
     };
   }, [isTauri, loadApps]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    api
-      .getSettings()
-      .then((settings) => {
-        if (!settings.onboarding_completed) setShowOnboarding(true);
-      })
-      .catch(console.error);
-  }, [isTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -425,8 +518,11 @@ export function CommandPalettePage() {
     const unlistenManage = listen("snippets:manage-request", () => {
       openBuiltinApp("snippets");
     });
-    const unlistenOpenApp = listen<OpenAppPayload>("command-palette:open-app", (e) => {
-      openBuiltinApp(e.payload.appId, { createSnippet: e.payload.createSnippet });
+    const unlistenOpenApp = listen<OpenAppPayload>("main-panel:open-app", (e) => {
+      openBuiltinApp(e.payload.appId, {
+        createSnippet: e.payload.createSnippet,
+        params: e.payload.params,
+      });
     });
 
     return () => {
@@ -444,16 +540,25 @@ export function CommandPalettePage() {
       return;
     }
 
+    let disposed = false;
     let armed = false;
     let armTimer = 0;
     let unlistenBlur: (() => void) | undefined;
+    const appWindow = getCurrentWindow();
+
+    const focusSearchInput = () => {
+      inputRef.current?.focus();
+      if (!clipboardChipRef.current) {
+        inputRef.current?.select();
+      }
+    };
 
     const restoreSessionIfNeeded = () => {
       if (modeRef.current === "app" && activeAppIdRef.current) {
         // Keep current size ? resizing here after show causes a visible flash.
         return true;
       }
-      const session = resolveRestorablePaletteSession();
+      const session = resolveRestorableMainPanelSession();
       if (!session) return false;
       openBuiltinApp(session.appId, { restore: true });
       return true;
@@ -466,34 +571,43 @@ export function CommandPalettePage() {
       const restored = restoreSessionIfNeeded();
       if (!restored && modeRef.current === "search") {
         setSelectedKey(null);
-        void applyClipboardSeedFromBackend();
-        const focusSearch = () => {
-          inputRef.current?.focus();
-          if (!clipboardChipRef.current) {
-            inputRef.current?.select();
-          }
-        };
-        window.requestAnimationFrame(focusSearch);
-        // Panel may become key a tick after the open event; retry so typing works immediately.
-        window.setTimeout(focusSearch, 50);
+        // Blur-preserved chip/query stays; only inject clipboard when search is empty.
+        if (!clipboardChipRef.current && !queryRef.current.trim()) {
+          void applyClipboardSeedFromBackend();
+        }
+        // The native window can lose focus while its startup page is still visible. DOM focus
+        // alone cannot recover from that state, so reactivate the window before focusing input.
+        void appWindow
+          .setFocus()
+          .catch(() => undefined)
+          .finally(() => {
+            window.requestAnimationFrame(focusSearchInput);
+            // WebView focus can settle one tick after the native window becomes active.
+            window.setTimeout(focusSearchInput, 50);
+          });
       }
       armTimer = window.setTimeout(() => {
         armed = true;
       }, 220);
     };
 
-    const unlistenOpen = listen("command-palette:open", prepareForOpen);
-    const unlistenShortcutHide = listen("command-palette:shortcut-hide", () => {
+    const unlistenOpen = listen("main-panel:open", prepareForOpen);
+    const unlistenShortcutHide = listen("main-panel:shortcut-hide", () => {
       const appId = activeAppIdRef.current;
-      if (modeRef.current === "app" && canPersistAppSession(appId) && appId) {
-        writePaletteSession(appId);
+      if (modeRef.current === "app" && appId) {
+        writeMainPanelSession(appId);
         return;
       }
-      clearPaletteSession();
-      resetPaletteState();
+      clearMainPanelSession();
+      // Keep search chip/query across shortcut hide, same as blur.
     });
     const unlistenIndex = listen("launcher:index-ready", () => void loadApps());
-    void getCurrentWindow()
+    // Close the startup race where the background index finishes after the first
+    // getLauncherApps call but before this event listener is registered.
+    void unlistenIndex.then(() => {
+      if (!disposed) void loadApps();
+    });
+    void appWindow
       .onFocusChanged(({ payload: focused }) => {
         // Native file sheets steal focus; suppress blur?hide while they are open (ZTools pattern).
         if (!focused && armed && !pendingRef.current && !isBlurHideSuppressed()) {
@@ -501,12 +615,7 @@ export function CommandPalettePage() {
           return;
         }
         if (focused && modeRef.current === "search") {
-          window.requestAnimationFrame(() => {
-            inputRef.current?.focus();
-            if (!clipboardChipRef.current) {
-              inputRef.current?.select();
-            }
-          });
+          window.requestAnimationFrame(focusSearchInput);
         }
       })
       .then((unlisten) => {
@@ -515,36 +624,64 @@ export function CommandPalettePage() {
 
     prepareForOpen();
     return () => {
+      disposed = true;
       window.clearTimeout(armTimer);
       void unlistenOpen.then((unlisten) => unlisten());
       void unlistenShortcutHide.then((unlisten) => unlisten());
       void unlistenIndex.then((unlisten) => unlisten());
       unlistenBlur?.();
     };
-  }, [applyClipboardSeedFromBackend, hidePreservingSession, isTauri, loadApps, openBuiltinApp, resetPaletteState]);
+  }, [applyClipboardSeedFromBackend, hidePreservingSession, isTauri, loadApps, openBuiltinApp]);
 
-  // Keep the controlled input snappy; defer the heavy search/list work.
-  const deferredQuery = useDeferredValue(query);
-  const liveNormalizedQuery = query.trim();
-  const normalizedQuery = deferredQuery.trim();
-  const matchedOsApps = useMemo(() => {
-    if (!normalizedQuery) return [];
-    return apps
-      .map((app) => ({ app, score: launcherSearchScore(app, normalizedQuery) }))
-      .filter((entry) => entry.score > 0)
-      .sort((left, right) => right.score - left.score || left.app.name.localeCompare(right.app.name))
-      .slice(0, MAX_SEARCH_RESULTS)
-      .map((entry) => entry.app);
-  }, [apps, normalizedQuery]);
+  // Rust owns matching and ranking. A short debounce avoids one IPC + SQLite lookup per
+  // keystroke, while cancellation prevents stale responses from replacing current results.
+  const normalizedQuery = query.trim();
+  const liveNormalizedQuery = normalizedQuery;
+  useEffect(() => {
+    if (!isTauri || !normalizedQuery) {
+      setMatchedSearchApps([]);
+      return;
+    }
 
-  const matchedBuiltinApps = useMemo(() => {
-    if (!normalizedQuery) return builtinApps;
-    return builtinApps
-      .map((app) => ({ app, score: builtinSearchScore(app, normalizedQuery) }))
-      .filter((entry) => entry.score > 0)
-      .sort((left, right) => right.score - left.score || left.app.name.localeCompare(right.app.name))
-      .map((entry) => entry.app);
-  }, [builtinApps, normalizedQuery]);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void api
+        .searchMainPanelApps(normalizedQuery, MAX_SEARCH_RESULTS)
+        .then((matches) => {
+          if (cancelled) return;
+          const contributionById = new Map(
+            builtinAppsRef.current.map((app) => [app.id, app])
+          );
+          const results: SearchAppEntry[] = [];
+
+          for (const match of matches) {
+            if (match.source === "launcher") {
+              if (match.app) {
+                results.push({ key: `search:${match.app.id}`, kind: "app", app: match.app });
+              }
+              continue;
+            }
+
+            const app = contributionById.get(match.id);
+            if (app) {
+              results.push({ key: `builtin:${app.id}`, kind: "builtin", app });
+            }
+          }
+
+          setMatchedSearchApps(results);
+        })
+        .catch((searchError) => {
+          if (!cancelled) {
+            setError(errorMessage(searchError, "搜索应用失败"));
+          }
+        });
+    }, SEARCH_QUERY_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isTauri, launcherIndexRevision, normalizedQuery, searchIndexRevision]);
 
   const recentSource = useMemo<RecentEntry[]>(() => {
     const appsById = new Map(apps.map((app) => [app.id, app]));
@@ -593,11 +730,6 @@ export function CommandPalettePage() {
     }
 
     if (entries.length > 0) {
-      entries.sort(
-        (left, right) =>
-          usageTimeMs(right.last_used_at) - usageTimeMs(left.last_used_at) ||
-          right.use_count - left.use_count
-      );
       return entries;
     }
 
@@ -610,15 +742,24 @@ export function CommandPalettePage() {
     }));
   }, [apps, usageItems]);
   const pinnedApps = useMemo(() => apps.filter((app) => app.pinned), [apps]);
+  // Pinned apps have their own row — keep them out of "最近使用".
+  const recentWithoutPinned = useMemo(
+    () =>
+      recentSource.filter(
+        (entry) => entry.kind === "builtin" || !entry.app.pinned
+      ),
+    [recentSource]
+  );
   const visibleRecentApps = recentExpanded
-    ? recentSource
-    : recentSource.slice(0, RECENT_COLLAPSED_COUNT);
+    ? recentWithoutPinned
+    : recentWithoutPinned.slice(0, RECENT_COLLAPSED_COUNT);
   const visiblePinnedApps = pinnedExpanded
     ? pinnedApps
     : pinnedApps.slice(0, PINNED_COLLAPSED_COUNT);
-  const visibleMatchedApps = searchExpanded
-    ? matchedOsApps
-    : matchedOsApps.slice(0, SEARCH_COLLAPSED_COUNT);
+
+  const visibleSearchApps = searchExpanded
+    ? matchedSearchApps
+    : matchedSearchApps.slice(0, SEARCH_COLLAPSED_COUNT);
 
   const quickActionUsageById = useMemo(() => {
     const map = new Map<
@@ -643,31 +784,37 @@ export function CommandPalettePage() {
     () => resolveQuickActionQuery(normalizedQuery, clipboardSeedForActions),
     [clipboardSeedForActions, normalizedQuery]
   );
-
-  const visibleQuickActions = useMemo(
-    () => listVisibleQuickActions(quickActionQuery, quickActionUsageById),
-    [quickActionQuery, quickActionUsageById]
+  const liveQuickActionInput = useMemo(
+    () => resolveQuickActionInput(liveNormalizedQuery, clipboardSeedForActions),
+    [clipboardSeedForActions, liveNormalizedQuery]
+  );
+  const quickActionInput = useMemo(
+    () => resolveQuickActionInput(normalizedQuery, clipboardSeedForActions),
+    [clipboardSeedForActions, normalizedQuery]
   );
 
-  const selectionRows = useMemo<PaletteSelection[][]>(() => {
-    if (normalizedQuery) {
-      const builtinSelections = matchedBuiltinApps.map((app) => ({
-        key: `builtin:${app.id}`,
-        kind: "builtin" as const,
-        app,
-      }));
-      const appSelections = visibleMatchedApps.map((app) => ({
-        key: `search:${app.id}`,
-        kind: "app" as const,
-        app,
-      }));
+  // Recommendations only when there is real input (text / image), never on the empty home.
+  const visibleQuickActions = useMemo(() => {
+    if (quickActionInput.kind === "none") return [];
+    return listVisibleQuickActions(quickActionInput, quickActionUsageById);
+  }, [quickActionInput, quickActionUsageById]);
+
+  const showSearchLayout =
+    Boolean(normalizedQuery) || quickActionInput.kind !== "none";
+
+  const selectionRows = useMemo<MainPanelSelection[][]>(() => {
+    if (showSearchLayout) {
+      const appSelections = visibleSearchApps.map((entry) =>
+        entry.kind === "builtin"
+          ? { key: entry.key, kind: "builtin" as const, app: entry.app }
+          : { key: entry.key, kind: "app" as const, app: entry.app }
+      );
       const actionSelections = visibleQuickActions.map((action) => ({
         key: `action:${action.id}`,
         kind: "action" as const,
         action,
       }));
       return [
-        ...chunkSelections(builtinSelections),
         ...chunkSelections(appSelections),
         ...chunkSelections(actionSelections),
       ];
@@ -678,65 +825,92 @@ export function CommandPalettePage() {
         ? { key: entry.key, kind: "builtin" as const, app: entry.app }
         : { key: entry.key, kind: "app" as const, app: entry.app }
     );
-    const builtinSelections = builtinApps.map((app) => ({
-      key: `builtin:${app.id}`,
-      kind: "builtin" as const,
-      app,
-    }));
     const pinnedSelections = visiblePinnedApps.map((app) => ({
       key: `pinned:${app.id}`,
       kind: "app" as const,
       app,
     }));
     return [
-      ...chunkSelections(recentSelections),
-      ...chunkSelections(builtinSelections),
       ...chunkSelections(pinnedSelections),
+      ...chunkSelections(recentSelections),
     ];
   }, [
-    builtinApps,
-    matchedBuiltinApps,
-    normalizedQuery,
-    visibleMatchedApps,
+    showSearchLayout,
     visiblePinnedApps,
     visibleQuickActions,
     visibleRecentApps,
+    visibleSearchApps,
   ]);
 
   const selections = useMemo(() => selectionRows.flat(), [selectionRows]);
+  const selectedKeyRef = useRef<string | null>(selectedKey);
+  selectedKeyRef.current = selectedKey;
+  const selectionRowsRef = useRef(selectionRows);
+  selectionRowsRef.current = selectionRows;
   const selectedSelection = selections.find((selection) => selection.key === selectedKey);
   const activeApp = activeAppId ? getBuiltinApp(activeAppId) : undefined;
+
+  // Include the first result because Rust matches arrive after synchronous quick actions.
+  // When an app/plugin becomes the leading result, selection must move to it automatically.
+  const firstSelectionKey = selections[0]?.key ?? "";
+  const searchContextKey = `${showSearchLayout ? 1 : 0}|${normalizedQuery}|${quickActionInput.kind}|${firstSelectionKey}`;
+  const prevSearchContextKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     setSearchExpanded(false);
   }, [normalizedQuery]);
 
+  // Typing / pasting new input should always land on the first result.
+  useLayoutEffect(() => {
+    if (mode !== "search") return;
+    if (selections.length === 0) {
+      selectedKeyRef.current = null;
+      setSelectedKey(null);
+      prevSearchContextKeyRef.current = searchContextKey;
+      return;
+    }
+    const contextChanged = prevSearchContextKeyRef.current !== searchContextKey;
+    prevSearchContextKeyRef.current = searchContextKey;
+    if (contextChanged) {
+      selectedKeyRef.current = selections[0].key;
+      setSelectedKey(selections[0].key);
+    }
+  }, [mode, searchContextKey, selections]);
+
+  // If the highlighted item disappears (collapse/filter) without a context change, recover.
+  // Depend only on `selections` so arrow-key updates do not re-enter this effect.
   useEffect(() => {
     if (mode !== "search") return;
     if (selections.length === 0) {
+      selectedKeyRef.current = null;
       setSelectedKey(null);
       return;
     }
-    if (!selections.some((selection) => selection.key === selectedKey)) {
-      setSelectedKey(selections[0].key);
-    }
-  }, [mode, selectedKey, selections]);
+    setSelectedKey((current) => {
+      if (current && selections.some((selection) => selection.key === current)) {
+        return current;
+      }
+      const next = selections[0].key;
+      selectedKeyRef.current = next;
+      return next;
+    });
+  }, [mode, selections]);
 
   // After plugin -> search: apply SEARCH_WIDTH + measured height in one shot before paint.
   useLayoutEffect(() => {
-    if (!needsSearchSizeRef.current || !isTauri) return;
+    if (mode !== "search" || !needsSearchSizeRef.current || !isTauri) return;
     needsSearchSizeRef.current = false;
     const height = contentRef.current
       ? Math.ceil(contentRef.current.scrollHeight)
       : SEARCH_FALLBACK_HEIGHT;
-    void api.setCommandPaletteSize(SEARCH_WIDTH, height);
+    void api.setMainPanelSize(SEARCH_WIDTH, height);
   }, [isTauri, mode, activeAppId]);
 
   // ResizeObserver alone tracks content height. Avoid depending on query/lists ?
   // re-subscribing + native set_size on every keystroke is the main input lag source.
   useEffect(() => {
     const content = contentRef.current;
-    if (!content || !isTauri) return;
+    if (!content || !isTauri || mode !== "search") return;
     let frame = 0;
     let debounceTimer = 0;
     let lastHeight = -1;
@@ -745,17 +919,19 @@ export function CommandPalettePage() {
       if (pendingHeight < 0) return;
       const nextHeight = pendingHeight;
       pendingHeight = -1;
-      void api.setCommandPaletteSize(null, nextHeight);
+      void api.setMainPanelSize(null, nextHeight);
     };
     const resize = () => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         const nextHeight = Math.ceil(content.scrollHeight);
+        // Ignore 1px flicker from selection/paint so arrow keys don't trigger native resize.
+        if (lastHeight >= 0 && Math.abs(nextHeight - lastHeight) <= 1) return;
         if (nextHeight === lastHeight) return;
         lastHeight = nextHeight;
         pendingHeight = nextHeight;
         window.clearTimeout(debounceTimer);
-        debounceTimer = window.setTimeout(flushResize, PALETTE_RESIZE_DEBOUNCE_MS);
+        debounceTimer = window.setTimeout(flushResize, MAIN_PANEL_RESIZE_DEBOUNCE_MS);
       });
     };
     const observer = new ResizeObserver(resize);
@@ -770,7 +946,7 @@ export function CommandPalettePage() {
   }, [isTauri, mode, openRevision]);
 
   const executeSelection = useCallback(
-    async (selection: PaletteSelection | undefined) => {
+    async (selection: MainPanelSelection | undefined) => {
       if (!selection || pendingRef.current) return;
       setError(null);
 
@@ -785,8 +961,6 @@ export function CommandPalettePage() {
           setError(validationError);
           return;
         }
-        if (selection.action.requiresQuery !== false && !liveQuickActionQuery) return;
-
         pendingRef.current = selection.key;
         setPendingKey(selection.key);
         try {
@@ -811,8 +985,9 @@ export function CommandPalettePage() {
           }
           await selection.action.run({
             query: liveQuickActionQuery,
+            input: liveQuickActionInput,
             openApp: openBuiltinApp,
-            hideAndReset: hideAndResetPalette,
+            hideAndReset: hideAndResetMainPanel,
           });
         } catch (executeError) {
           setError(errorMessage(executeError, "操作没有完成"));
@@ -828,7 +1003,7 @@ export function CommandPalettePage() {
       try {
         if (!isTauri) return;
         await api.launchIndexedApp(selection.app.id);
-        await hideAndResetPalette();
+        await hideAndResetMainPanel();
         void loadApps();
       } catch (executeError) {
         setError(errorMessage(executeError, "操作没有完成"));
@@ -837,24 +1012,62 @@ export function CommandPalettePage() {
         setPendingKey(null);
       }
     },
-    [hideAndResetPalette, isTauri, liveQuickActionQuery, loadApps, openBuiltinApp]
+    [
+      hideAndResetMainPanel,
+      isTauri,
+      liveQuickActionInput,
+      liveQuickActionQuery,
+      loadApps,
+      openBuiltinApp,
+    ]
   );
+
+  const clearClipboardChip = () => {
+    clipboardChipRef.current = null;
+    setClipboardChip(null);
+    setError(null);
+    dismissClipboardSeed();
+  };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      void hideAndResetPalette();
+      if (clipboardChipRef.current) {
+        clearClipboardChip();
+        return;
+      }
+      void hideAndResetMainPanel();
+      return;
+    }
+    if (event.key === "Backspace") {
+      // Empty query + embedded clipboard chip → clear the chip instead of doing nothing.
+      if (!event.currentTarget.value && clipboardChipRef.current) {
+        event.preventDefault();
+        clearClipboardChip();
+      }
       return;
     }
     if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
       event.preventDefault();
-      const next = moveGridSelection(selectionRows, selectedKey, event.key);
-      if (next) setSelectedKey(next.key);
+      // Read/write a ref so key-repeat can advance multiple steps before React re-renders.
+      const next = moveGridSelection(
+        selectionRowsRef.current,
+        selectedKeyRef.current,
+        event.key
+      );
+      if (next && next.key !== selectedKeyRef.current) {
+        selectedKeyRef.current = next.key;
+        setSelectedKey(next.key);
+      }
       return;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      void executeSelection(selectedSelection);
+      const key = selectedKeyRef.current;
+      const selection =
+        (key && selectionRowsRef.current.flat().find((item) => item.key === key)) ||
+        selectedSelection;
+      void executeSelection(selection);
     }
   };
 
@@ -899,7 +1112,12 @@ export function CommandPalettePage() {
     [backToSearch, openBuiltinApp]
   );
 
-  const appBodyHeight = activeApp?.defaultSize?.height ?? DEFAULT_APP_HEIGHT;
+  const appWindowHeight = resolveRectDimension(
+    activeApp?.rect?.height,
+    window.screen.availHeight,
+    DEFAULT_APP_HEIGHT
+  );
+  const appBodyHeight = Math.max(0, appWindowHeight - APP_CHROME_HEIGHT);
   const showApp = Boolean(mode === "app" && activeApp);
   const flushApp = Boolean(activeApp && FLUSH_APP_IDS.has(activeApp.id));
   const fillAppHeight = Boolean(
@@ -921,17 +1139,16 @@ export function CommandPalettePage() {
           pluginId={activeApp.pluginId}
           appId={activeApp.ui.localAppId}
           params={activeAppParams}
-          persistSession={activeApp.persistSession}
         />
       )
     ) : null;
 
   return (
     <BuiltinAppNavigationProvider value={navigationValue}>
-      <main className={cn("command-palette-page", showApp && "command-palette-page--app")}>
+      <main className={cn("main-panel-page", showApp && "main-panel-page--app")}>
         <div
           ref={contentRef}
-          className="command-palette-panel"
+          className="main-panel-surface"
           onMouseDownCapture={(event) => {
             if (!showApp) {
               if (event.target === inputRef.current) return;
@@ -940,32 +1157,32 @@ export function CommandPalettePage() {
             }
           }}
         >
-          <header className="command-palette-search">
+          <header className="main-panel-search">
             {showApp && activeApp ? (
               <>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-lg"
-                  className="command-palette-back-button"
+                  className="main-panel-back-button"
                   aria-label="返回搜索"
                   title="返回搜索 (Esc)"
                   onClick={backToSearch}
                 >
                   <ArrowLeft />
                 </Button>
-                <div className="command-palette-app-bar-title">{activeApp.name}</div>
-                <div className="command-palette-search-spacer" aria-hidden="true" />
-                <div className="command-palette-app-bar-icon" aria-hidden="true">
-                  <AppIconView icon={activeApp.icon} className="command-palette-app-bar-icon-glyph" />
+                <div className="main-panel-app-bar-title">{activeApp.name}</div>
+                <div className="main-panel-search-spacer" aria-hidden="true" />
+                <div className="main-panel-app-bar-icon" aria-hidden="true">
+                  <AppIconView icon={activeApp.icon} className="main-panel-app-bar-icon-glyph" />
                 </div>
               </>
             ) : (
               <>
-                <div className="command-palette-search-field">
+                <div className="main-panel-search-field">
                   {clipboardChip ? (
                     <div
-                      className="command-palette-clipboard-chip"
+                      className="main-panel-clipboard-chip"
                       title={
                         clipboardChip.kind === "text"
                           ? clipboardChip.fullText
@@ -974,17 +1191,20 @@ export function CommandPalettePage() {
                     >
                       {clipboardChip.kind === "text" ? (
                         <>
-                          <span className="command-palette-clipboard-chip-label">
+                          <span className="main-panel-clipboard-chip-label">
                             {clipboardChip.label}
                           </span>
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            className="command-palette-clipboard-chip-edit"
+                            className="main-panel-clipboard-chip-edit"
                             onClick={() => {
                               setQuery(clipboardChip.fullText);
+                              queryRef.current = clipboardChip.fullText;
                               setClipboardChip(null);
+                              clipboardChipRef.current = null;
+                              dismissClipboardSeed();
                               window.requestAnimationFrame(() => {
                                 inputRef.current?.focus();
                                 inputRef.current?.select();
@@ -998,7 +1218,7 @@ export function CommandPalettePage() {
                         <img
                           src={clipboardChip.imageUrl}
                           alt=""
-                          className="command-palette-clipboard-chip-image"
+                          className="main-panel-clipboard-chip-image"
                           width={clipboardChip.imageWidth ?? undefined}
                           height={clipboardChip.imageHeight ?? undefined}
                         />
@@ -1008,7 +1228,7 @@ export function CommandPalettePage() {
                   <input
                     ref={inputRef}
                     value={query}
-                    className="command-palette-input"
+                    className="main-panel-input"
                     placeholder={clipboardChip ? "搜索匹配" : "搜索应用或输入命令"}
                     autoComplete="off"
                     spellCheck={false}
@@ -1024,23 +1244,23 @@ export function CommandPalettePage() {
                   type="button"
                   variant="ghost"
                   size="icon-lg"
-                  className="command-palette-logo-button"
+                  className="main-panel-logo-button"
                   aria-label="打开设置"
                   title="打开设置"
                   onClick={() => openBuiltinApp("settings")}
                 >
-                  <img src="/favicon.png" alt="" className="command-palette-logo" />
+                  <img src="/favicon.png" alt="" className="main-panel-logo" />
                 </Button>
               </>
             )}
           </header>
 
-          <div className="command-palette-content">
+          <div className="main-panel-content">
             {showApp && activeAppNode ? (
               <div
                 className={cn(
-                  "command-palette-app-host",
-                  fillAppHeight && !flushApp && "command-palette-app-host--padded"
+                  "main-panel-app-host",
+                  fillAppHeight && !flushApp && "main-panel-app-host--padded"
                 )}
                 style={{ height: appBodyHeight }}
               >
@@ -1054,14 +1274,13 @@ export function CommandPalettePage() {
               </div>
             ) : loading ? (
               <LauncherLoading />
-            ) : normalizedQuery ? (
+            ) : showSearchLayout ? (
               <SearchResults
-                builtinApps={matchedBuiltinApps}
-                apps={visibleMatchedApps}
-                totalAppCount={matchedOsApps.length}
+                apps={visibleSearchApps}
+                totalAppCount={matchedSearchApps.length}
                 quickActions={visibleQuickActions}
                 expanded={searchExpanded}
-                query={normalizedQuery}
+                query={quickActionQuery}
                 selectedKey={selectedKey}
                 pendingKey={pendingKey}
                 onToggleExpanded={() => setSearchExpanded((current) => !current)}
@@ -1070,9 +1289,8 @@ export function CommandPalettePage() {
               />
             ) : (
               <DefaultApps
-                builtinApps={builtinApps}
                 recentApps={visibleRecentApps}
-                recentTotal={recentSource.length}
+                recentTotal={recentWithoutPinned.length}
                 pinnedApps={visiblePinnedApps}
                 pinnedTotal={pinnedApps.length}
                 recentExpanded={recentExpanded}
@@ -1086,20 +1304,13 @@ export function CommandPalettePage() {
               />
             )}
             {!showApp && error ? (
-              <p className="command-palette-error" role="alert">
+              <p className="main-panel-error" role="alert">
                 {error}
               </p>
             ) : null}
           </div>
         </div>
       </main>
-      <OnboardingDialog
-        open={showOnboarding}
-        onComplete={async () => {
-          await api.completeOnboarding();
-          setShowOnboarding(false);
-        }}
-      />
       <ReminderDialog event={reminder} onDismiss={() => setReminder(null)} />
       <Toaster position="top-center" richColors toastOptions={appToastOptions} />
     </BuiltinAppNavigationProvider>
@@ -1107,7 +1318,6 @@ export function CommandPalettePage() {
 }
 
 function DefaultApps({
-  builtinApps,
   recentApps,
   recentTotal,
   pinnedApps,
@@ -1121,7 +1331,6 @@ function DefaultApps({
   onExecute,
   onTogglePinned,
 }: {
-  builtinApps: BuiltinApp[];
   recentApps: RecentEntry[];
   recentTotal: number;
   pinnedApps: LauncherApp[];
@@ -1132,11 +1341,39 @@ function DefaultApps({
   pendingKey: string | null;
   onToggleRecent: () => void;
   onTogglePinnedSection: () => void;
-  onExecute: (selection: PaletteSelection) => void;
+  onExecute: (selection: MainPanelSelection) => void;
   onTogglePinned: (app: LauncherApp) => void;
 }) {
   return (
-    <div className="command-palette-sections">
+    <div className="main-panel-sections">
+      {pinnedTotal > 0 ? (
+        <LauncherSection
+          id="launcher-pinned-title"
+          title="已固定"
+          total={pinnedTotal}
+          collapsedCount={PINNED_COLLAPSED_COUNT}
+          expanded={pinnedExpanded}
+          onToggle={onTogglePinnedSection}
+        >
+          <div className="main-panel-app-grid">
+            {pinnedApps.map((app) => {
+              const key = `pinned:${app.id}`;
+              return (
+                <AppTile
+                  key={key}
+                  selectionKey={key}
+                  app={app}
+                  selected={selectedKey === key}
+                  pending={pendingKey === key}
+                  onExecute={() => onExecute({ key, kind: "app", app })}
+                  onTogglePinned={() => onTogglePinned(app)}
+                />
+              );
+            })}
+          </div>
+        </LauncherSection>
+      ) : null}
+
       {recentTotal > 0 ? (
         <LauncherSection
           id="launcher-recent-title"
@@ -1146,7 +1383,7 @@ function DefaultApps({
           expanded={recentExpanded}
           onToggle={onToggleRecent}
         >
-          <div className="command-palette-app-grid">
+          <div className="main-panel-app-grid">
             {recentApps.map((entry) => {
               if (entry.kind === "builtin") {
                 return (
@@ -1176,57 +1413,11 @@ function DefaultApps({
           </div>
         </LauncherSection>
       ) : null}
-
-      <LauncherSection id="launcher-builtin-title" title="应用">
-        <div className="command-palette-app-grid">
-          {builtinApps.map((app) => {
-            const key = `builtin:${app.id}`;
-            return (
-              <BuiltinTile
-                key={key}
-                selectionKey={key}
-                app={app}
-                selected={selectedKey === key}
-                onExecute={() => onExecute({ key, kind: "builtin", app })}
-              />
-            );
-          })}
-        </div>
-      </LauncherSection>
-
-      {pinnedTotal > 0 ? (
-        <LauncherSection
-          id="launcher-pinned-title"
-          title="已固定"
-          total={pinnedTotal}
-          collapsedCount={PINNED_COLLAPSED_COUNT}
-          expanded={pinnedExpanded}
-          onToggle={onTogglePinnedSection}
-        >
-          <div className="command-palette-app-grid">
-            {pinnedApps.map((app) => {
-              const key = `pinned:${app.id}`;
-              return (
-                <AppTile
-                  key={key}
-                  selectionKey={key}
-                  app={app}
-                  selected={selectedKey === key}
-                  pending={pendingKey === key}
-                  onExecute={() => onExecute({ key, kind: "app", app })}
-                  onTogglePinned={() => onTogglePinned(app)}
-                />
-              );
-            })}
-          </div>
-        </LauncherSection>
-      ) : null}
     </div>
   );
 }
 
 function SearchResults({
-  builtinApps,
   apps,
   totalAppCount,
   quickActions,
@@ -1238,8 +1429,7 @@ function SearchResults({
   onExecute,
   onTogglePinned,
 }: {
-  builtinApps: BuiltinApp[];
-  apps: LauncherApp[];
+  apps: SearchAppEntry[];
   totalAppCount: number;
   quickActions: QuickAction[];
   expanded: boolean;
@@ -1247,51 +1437,54 @@ function SearchResults({
   selectedKey: string | null;
   pendingKey: string | null;
   onToggleExpanded: () => void;
-  onExecute: (selection: PaletteSelection) => void;
+  onExecute: (selection: MainPanelSelection) => void;
   onTogglePinned: (app: LauncherApp) => void;
 }) {
+  const hasResults = totalAppCount > 0 || quickActions.length > 0;
+
   return (
-    <div className="command-palette-sections">
-      {builtinApps.length > 0 ? (
-        <LauncherSection id="launcher-builtin-results" title="应用">
-          <div className="command-palette-app-grid">
-            {builtinApps.map((app) => {
-              const key = `builtin:${app.id}`;
-              return (
-                <BuiltinTile
-                  key={key}
-                  selectionKey={key}
-                  app={app}
-                  selected={selectedKey === key}
-                  onExecute={() => onExecute({ key, kind: "builtin", app })}
-                />
-              );
-            })}
-          </div>
-        </LauncherSection>
+    <div className="main-panel-sections">
+      {!hasResults ? (
+        <p className="main-panel-empty" role="status">
+          暂无匹配内容
+        </p>
       ) : null}
 
       {totalAppCount > 0 ? (
         <LauncherSection
           id="launcher-app-results"
-          title="本机应用"
+          title="应用与插件"
           total={totalAppCount}
           collapsedCount={SEARCH_COLLAPSED_COUNT}
           expanded={expanded}
           onToggle={onToggleExpanded}
         >
-          <div className="command-palette-app-grid">
-            {apps.map((app) => {
-              const key = `search:${app.id}`;
+          <div className="main-panel-app-grid">
+            {apps.map((entry) => {
+              if (entry.kind === "builtin") {
+                return (
+                  <BuiltinTile
+                    key={entry.key}
+                    selectionKey={entry.key}
+                    app={entry.app}
+                    selected={selectedKey === entry.key}
+                    onExecute={() =>
+                      onExecute({ key: entry.key, kind: "builtin", app: entry.app })
+                    }
+                  />
+                );
+              }
               return (
                 <AppTile
-                  key={key}
-                  selectionKey={key}
-                  app={app}
-                  selected={selectedKey === key}
-                  pending={pendingKey === key}
-                  onExecute={() => onExecute({ key, kind: "app", app })}
-                  onTogglePinned={() => onTogglePinned(app)}
+                  key={entry.key}
+                  selectionKey={entry.key}
+                  app={entry.app}
+                  selected={selectedKey === entry.key}
+                  pending={pendingKey === entry.key}
+                  onExecute={() =>
+                    onExecute({ key: entry.key, kind: "app", app: entry.app })
+                  }
+                  onTogglePinned={() => onTogglePinned(entry.app)}
                 />
               );
             })}
@@ -1300,39 +1493,60 @@ function SearchResults({
       ) : null}
 
       {quickActions.length > 0 ? (
-        <LauncherSection id="launcher-action-results" title="快捷操作">
-          <div className="command-palette-app-grid">
-            {quickActions.map((action) => {
-              const key = `action:${action.id}`;
-              const validationError = action.validate?.(query) ?? null;
-              const pending = pendingKey === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  className="command-palette-action-tile"
-                  data-selected={selectedKey === key || undefined}
-                  disabled={Boolean(validationError) || pending}
-                  title={validationError ?? action.title?.(query) ?? action.name}
-                  onClick={() => onExecute({ key, kind: "action", action })}
-                >
-                  <span className="command-palette-action-icon">
-                    {pending ? (
-                      <LoaderCircle
-                        className="command-palette-inline-loader"
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <AppIconView icon={action.icon} />
-                    )}
-                  </span>
-                  <span>{validationError ? "内容过长" : action.name}</span>
-                </button>
-              );
-            })}
-          </div>
+        <LauncherSection id="launcher-action-results" title="推荐操作">
+          <QuickActionTiles
+            actions={quickActions}
+            query={query}
+            selectedKey={selectedKey}
+            pendingKey={pendingKey}
+            onExecute={onExecute}
+          />
         </LauncherSection>
       ) : null}
+    </div>
+  );
+}
+
+function QuickActionTiles({
+  actions,
+  query,
+  selectedKey,
+  pendingKey,
+  onExecute,
+}: {
+  actions: QuickAction[];
+  query: string;
+  selectedKey: string | null;
+  pendingKey: string | null;
+  onExecute: (selection: MainPanelSelection) => void;
+}) {
+  return (
+    <div className="main-panel-app-grid">
+      {actions.map((action) => {
+        const key = `action:${action.id}`;
+        const validationError = action.validate?.(query) ?? null;
+        const pending = pendingKey === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            className="main-panel-action-tile"
+            data-selected={selectedKey === key || undefined}
+            disabled={Boolean(validationError) || pending}
+            title={validationError ?? action.title?.(query) ?? action.name}
+            onClick={() => onExecute({ key, kind: "action", action })}
+          >
+            <span className="main-panel-action-icon">
+              {pending ? (
+                <LoaderCircle className="main-panel-inline-loader" aria-hidden="true" />
+              ) : (
+                <AppIconView icon={action.icon} />
+              )}
+            </span>
+            <span>{validationError ? "内容无效" : action.name}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1356,11 +1570,11 @@ function LauncherSection({
 }) {
   const expandable = Boolean(total && collapsedCount && total > collapsedCount && onToggle);
   return (
-    <section className="command-palette-section" aria-labelledby={id}>
-      <div className="command-palette-section-heading">
+    <section className="main-panel-section" aria-labelledby={id}>
+      <div className="main-panel-section-heading">
         <h2 id={id}>{title}</h2>
         {expandable ? (
-          <button type="button" className="command-palette-expand-button" onClick={onToggle}>
+          <button type="button" className="main-panel-expand-button" onClick={onToggle}>
             {expanded ? "收起" : `展开 (${total})`}
           </button>
         ) : null}
@@ -1383,22 +1597,22 @@ function BuiltinTile({
 }) {
   return (
     <div
-      className="command-palette-app-tile-wrap"
+      className="main-panel-app-tile-wrap"
       data-selected={selected || undefined}
       data-selection-key={selectionKey}
     >
       {app.source === "plugin" ? (
-        <span className="command-palette-plugin-badge" title="插件">
+        <span className="main-panel-plugin-badge" title="插件">
           插件
         </span>
       ) : null}
       <button
         type="button"
-        className="command-palette-app-tile"
+        className="main-panel-app-tile"
         title={app.name}
         onClick={onExecute}
       >
-        <span className="command-palette-builtin-icon">
+        <span className="main-panel-builtin-icon">
           <AppIconView icon={app.icon} />
         </span>
         <span>{app.name}</span>
@@ -1424,19 +1638,19 @@ function AppTile({
 }) {
   return (
     <div
-      className="command-palette-app-tile-wrap"
+      className="main-panel-app-tile-wrap"
       data-selected={selected || undefined}
       data-selection-key={selectionKey}
     >
       <button
         type="button"
-        className="command-palette-app-tile"
+        className="main-panel-app-tile"
         disabled={pending}
         title={app.name}
         onClick={onExecute}
       >
         {pending ? (
-          <LoaderCircle className="command-palette-app-loader" aria-hidden="true" />
+          <LoaderCircle className="main-panel-app-loader" aria-hidden="true" />
         ) : (
           <AppIcon
             name={app.name}
@@ -1452,7 +1666,7 @@ function AppTile({
         type="button"
         variant="ghost"
         size="icon-xs"
-        className="command-palette-pin-button"
+        className="main-panel-pin-button"
         aria-label={app.pinned ? `取消固定 ${app.name}` : `固定 ${app.name}`}
         title={app.pinned ? "取消固定" : "固定"}
         onClick={onTogglePinned}
@@ -1465,13 +1679,13 @@ function AppTile({
 
 function LauncherLoading() {
   return (
-    <div className="command-palette-loading" aria-label="正在读取本机应用">
-      <div className="command-palette-section-heading">
+    <div className="main-panel-loading" aria-label="正在读取本机应用">
+      <div className="main-panel-section-heading">
         <Skeleton className="h-4 w-16" />
       </div>
-      <div className="command-palette-app-grid">
+      <div className="main-panel-app-grid">
         {Array.from({ length: GRID_COLUMNS }, (_, index) => (
-          <div key={index} className="command-palette-loading-tile">
+          <div key={index} className="main-panel-loading-tile">
             <Skeleton className="size-8" />
             <Skeleton className="h-3 w-12" />
           </div>
@@ -1481,8 +1695,8 @@ function LauncherLoading() {
   );
 }
 
-function chunkSelections(selections: PaletteSelection[]): PaletteSelection[][] {
-  const rows: PaletteSelection[][] = [];
+function chunkSelections(selections: MainPanelSelection[]): MainPanelSelection[][] {
+  const rows: MainPanelSelection[][] = [];
   for (let index = 0; index < selections.length; index += GRID_COLUMNS) {
     rows.push(selections.slice(index, index + GRID_COLUMNS));
   }
@@ -1490,10 +1704,10 @@ function chunkSelections(selections: PaletteSelection[]): PaletteSelection[][] {
 }
 
 function moveGridSelection(
-  rows: PaletteSelection[][],
+  rows: MainPanelSelection[][],
   selectedKey: string | null,
   direction: string
-): PaletteSelection | undefined {
+): MainPanelSelection | undefined {
   if (rows.length === 0) return undefined;
 
   let rowIndex = 0;
@@ -1523,65 +1737,24 @@ function moveGridSelection(
   return rows[rowIndex][columnIndex];
 }
 
-function launcherSearchScore(app: LauncherApp, rawQuery: string): number {
-  const query = rawQuery.trim().toLowerCase();
-  if (!query) return 0;
-  const name = app.name.toLowerCase();
-  const haystacks = [name, ...app.keywords.map((keyword) => keyword.toLowerCase())];
-  let score = 0;
-
-  for (const value of haystacks) {
-    if (value === query) score = Math.max(score, 1000);
-    else if (value.startsWith(query)) score = Math.max(score, 820);
-    else if (value.split(/\s+/).some((part) => part.startsWith(query))) score = Math.max(score, 680);
-    else if (value.includes(query)) score = Math.max(score, 520);
-    else if (isSubsequence(query, value)) score = Math.max(score, 260);
+function resolveRectDimension(
+  value: AppRectValue | undefined,
+  available: number,
+  fallback: number
+): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().endsWith("%")) {
+    const percent = Number.parseFloat(value);
+    if (Number.isFinite(percent)) return (available * percent) / 100;
   }
-
-  if (score === 0) return 0;
-  return score + Math.min(app.use_count, 20) + (app.pinned ? 8 : 0);
-}
-
-function builtinSearchScore(app: BuiltinApp, rawQuery: string): number {
-  const query = rawQuery.trim().toLowerCase();
-  if (!query) return 0;
-  const name = app.name.toLowerCase();
-  const haystacks = [name, ...app.keywords.map((keyword) => keyword.toLowerCase())];
-  let score = 0;
-
-  for (const value of haystacks) {
-    if (value === query) score = Math.max(score, 1100);
-    else if (value.startsWith(query)) score = Math.max(score, 900);
-    else if (value.includes(query)) score = Math.max(score, 640);
-    else if (isSubsequence(query, value)) score = Math.max(score, 300);
-  }
-
-  return score;
-}
-
-function isSubsequence(query: string, value: string): boolean {
-  let queryIndex = 0;
-  for (const character of value) {
-    if (character === query[queryIndex]) queryIndex += 1;
-    if (queryIndex === query.length) return true;
-  }
-  return false;
+  return fallback;
 }
 
 function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-async function applyThemeFromSettings() {
-  try {
-    const settings = await api.getSettings();
-    applyTheme(settings.theme);
-  } catch {
-    applyTheme("system");
-  }
-}
-
-async function hidePalette() {
+async function hideMainPanel() {
   if (!isTauriRuntime()) return;
   await getCurrentWindow().hide();
 }

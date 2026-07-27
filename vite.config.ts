@@ -65,7 +65,19 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      // Ignore Rust build output and Cursor/agent workspace churn so New Agent
+      // (skills lock, .agents writes, IDE metadata) does not restart the app.
+      ignored: [
+        "**/src-tauri/**",
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/.git/**",
+        "**/.agents/**",
+        "**/.cursor/**",
+        "**/.idea/**",
+        "**/.vscode/**",
+        "**/skills-lock.json",
+      ],
     },
   },
 }));

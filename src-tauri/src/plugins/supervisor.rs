@@ -29,6 +29,7 @@ use crate::db::AppState;
 use super::bridge::{self, ConnectionContext, RpcError};
 use super::host::{generate_id, PluginHost};
 use super::package::verify_package_hash;
+#[cfg(unix)]
 use super::paths::plugin_ipc_dir;
 use super::runtime::resolved_node_path;
 use super::trust::{ensure_plugin_tables, get_installed_plugin, set_last_error, set_runtime_state};
@@ -310,8 +311,9 @@ impl Supervisor {
             .arg(&bootstrap_path)
             .current_dir(&install_path)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            // Discard plugin stdout/stderr — never forward third-party logs into the host console.
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .kill_on_drop(true);
         apply_minimal_plugin_runtime_env(&mut command);
         #[cfg(unix)]
@@ -341,8 +343,6 @@ impl Supervisor {
             }
             drop(stdin);
         }
-
-        pipe_child_logs(plugin_id.to_string(), child.stdout.take(), child.stderr.take());
 
         let mut stream = accept_ipc_connection(&endpoint_path, HANDSHAKE_TIMEOUT)
             .await
@@ -557,8 +557,11 @@ async fn handle_frame(
                 let error = value
                     .get("error")
                     .cloned()
-                    .unwrap_or_else(|| json!({"code": "COMMAND_FAILED", "message": "unknown error"}));
-                let code = error.get("code").and_then(Value::as_str).unwrap_or("COMMAND_FAILED");
+                    .unwrap_or_else(|| json!({"code": bridge::codes::COMMAND_FAILED, "message": "unknown error"}));
+                let code = error
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or(bridge::codes::COMMAND_FAILED);
                 let message = error
                     .get("message")
                     .and_then(Value::as_str)
@@ -608,13 +611,7 @@ async fn handle_frame(
             );
         }
         "log" => {
-            let level = value.get("level").and_then(Value::as_str).unwrap_or("info");
-            let message = value.get("message").and_then(Value::as_str).unwrap_or("");
-            match level {
-                "error" => tracing::error!(plugin_id = %process.plugin_id, "{message}"),
-                "warn" => tracing::warn!(plugin_id = %process.plugin_id, "{message}"),
-                _ => tracing::debug!(plugin_id = %process.plugin_id, "{message}"),
-            }
+            // Intentionally ignored: third-party plugin logs stay private to the plugin process.
         }
         _ => {}
     }
@@ -644,41 +641,6 @@ fn prune_crash_history(history: &mut VecDeque<Instant>) {
     let cutoff = Instant::now() - RESTART_WINDOW;
     while history.front().is_some_and(|t| *t < cutoff) {
         history.pop_front();
-    }
-}
-
-fn pipe_child_logs(
-    plugin_id: String,
-    stdout: Option<tokio::process::ChildStdout>,
-    stderr: Option<tokio::process::ChildStderr>,
-) {
-    use tokio::io::AsyncBufReadExt;
-    if let Some(stdout) = stdout {
-        let plugin_id = plugin_id.clone();
-        tokio::spawn(async move {
-            let mut reader = tokio::io::BufReader::new(stdout);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => tracing::debug!(plugin_id = %plugin_id, "stdout: {}", line.trim_end()),
-                }
-            }
-        });
-    }
-    if let Some(stderr) = stderr {
-        tokio::spawn(async move {
-            let mut reader = tokio::io::BufReader::new(stderr);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => tracing::debug!(plugin_id = %plugin_id, "stderr: {}", line.trim_end()),
-                }
-            }
-        });
     }
 }
 

@@ -3,7 +3,8 @@ use crate::clipboard_db::{
     list_clipboard_entries, set_clipboard_entry_pinned, ClipboardEntry,
 };
 use crate::clipboard_images::{
-    hydrate_clipboard_image_content, hydrate_clipboard_image_urls, maybe_delete_clipboard_image_file,
+    hydrate_clipboard_image_content, hydrate_clipboard_image_urls,
+    maybe_delete_clipboard_image_file,
 };
 use serde::Serialize;
 
@@ -15,7 +16,7 @@ pub struct ClipboardHistoryPage {
 }
 use crate::clipboard_watcher::prewarm_clipboard_image_cache;
 use crate::clipboard_watcher::{copy_clipboard_entry_by_id, write_clipboard_text};
-use crate::db::{AppState, PALETTE_CLIPBOARD_SEED_MAX_AGE_MS};
+use crate::db::{AppState, MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS};
 
 fn hydrate_clipboard_icons(entries: &mut [ClipboardEntry]) {
     for entry in entries.iter_mut() {
@@ -123,7 +124,7 @@ pub fn copy_clipboard_entry(
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CommandPaletteClipboardSeed {
+pub struct MainPanelClipboardSeed {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_text: Option<String>,
@@ -138,19 +139,19 @@ pub struct CommandPaletteClipboardSeed {
 }
 
 #[tauri::command]
-pub fn get_command_palette_clipboard_seed(
+pub fn get_main_panel_clipboard_seed(
     state: tauri::State<AppState>,
-) -> Result<Option<CommandPaletteClipboardSeed>, String> {
+) -> Result<Option<MainPanelClipboardSeed>, String> {
     let recent = {
         let runtime = state.clipboard.lock();
-        runtime.recent_for_palette.clone()
+        runtime.recent_for_main_panel.clone()
     };
     let Some(recent) = recent else {
         return Ok(None);
     };
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    if now_ms.saturating_sub(recent.captured_at_ms) > PALETTE_CLIPBOARD_SEED_MAX_AGE_MS {
+    if now_ms.saturating_sub(recent.captured_at_ms) > MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS {
         return Ok(None);
     }
 
@@ -158,7 +159,7 @@ pub fn get_command_palette_clipboard_seed(
         let Some(full_text) = recent.text.filter(|value| !value.trim().is_empty()) else {
             return Ok(None);
         };
-        return Ok(Some(CommandPaletteClipboardSeed {
+        return Ok(Some(MainPanelClipboardSeed {
             kind: "text".into(),
             full_text: Some(full_text),
             entry_id: recent.entry_id,
@@ -182,7 +183,7 @@ pub fn get_command_palette_clipboard_seed(
         } else {
             None
         };
-        return Ok(Some(CommandPaletteClipboardSeed {
+        return Ok(Some(MainPanelClipboardSeed {
             kind: "image".into(),
             full_text: None,
             entry_id: Some(entry_id),
@@ -193,4 +194,10 @@ pub fn get_command_palette_clipboard_seed(
     }
 
     Ok(None)
+}
+
+#[tauri::command]
+pub fn clear_main_panel_clipboard_seed(state: tauri::State<AppState>) {
+    let mut runtime = state.clipboard.lock();
+    runtime.recent_for_main_panel = None;
 }

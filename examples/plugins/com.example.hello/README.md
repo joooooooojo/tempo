@@ -1,7 +1,10 @@
 # Hello 示例插件（com.example.hello）
 
-Tempo 插件系统 Phase 1 的最小混合插件示例：一个面板应用（UI）+ 一个快捷操作，二者共用同一个
-`main` Runtime 命令 `hello`。用于验证插件导入、信任、启用、Runtime 激活和 Host Bridge 的完整链路。
+Tempo 插件系统 Phase 1 的最小混合插件示例：一个面板应用、一个独立窗口应用和一个快捷操作，
+三者共用同一个 `main` Runtime 命令 `hello`。用于验证插件导入、信任、启用、Runtime 激活和
+Host Bridge 的完整链路。
+
+完整参考：[插件开发指南](../../../docs/plugin-development.md) · [Host API](../../../docs/plugin-host-api.md) · [Manifest Schema](../../../docs/schemas/plugin-manifest.schema.json)
 
 ```text
 com.example.hello/
@@ -44,7 +47,7 @@ com.example.hello/
 
 ## 4. 启用插件
 
-打开插件条目上的启用开关。启用只注册声明式贡献（`main` 应用会出现在快捷面板「插件」角标下，
+打开插件条目上的启用开关。启用只注册声明式贡献（`main` 应用会出现在主面板「插件」角标下，
 「Hello 一下」会出现在快捷操作里）——此时 Runtime **尚未启动**，直到第一次调用才懒激活。
 
 ## 5. 使用
@@ -57,8 +60,22 @@ await window.plugin.host("notify.show", { title: "Hi" });   // Host only
 window.plugin.on("greeted", (p) => console.log(p));
 ```
 
-- **面板应用**：快捷面板搜索「Hello 示例」打开，点「打招呼（Runtime）」
+- **上下文操作**：复制文字或图片后打开主面板，选择「使用当前输入」；它通过 `app` 打开 UI，并在 `context.params.input` 中携带输入
+- **面板应用**：主面板搜索「Hello 示例」打开，点「打招呼（Runtime）」
+- **独立窗口**：主面板搜索「Hello 独立窗口」打开；它使用原生标题栏，并出现在任务栏或 Dock 中
 - **快捷操作**：搜索「Hello 一下」执行同一个 `hello` 命令
+
+应用用 `apps[].windowMode` 选择 `normal`（主面板）或 `standalone`（独立窗口），两种模式共用 `rect`。窗口内还可以调整自身矩形或主动关闭：
+
+```js
+await window.plugin.host("window.setRect", {
+  width: "80%",
+  height: 560,
+  x: "center",
+  y: "10%"
+});
+await window.plugin.host("window.close");
+```
 
 ## 6. 卸载 / 清理
 

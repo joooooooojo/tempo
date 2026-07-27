@@ -3,17 +3,6 @@
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageTrustRecord {
-    pub plugin_id: String,
-    pub version: String,
-    pub package_hash: Option<String>,
-    pub trusted: bool,
-    pub install_source: String,
-    pub signature_status: String,
-}
-
 pub fn ensure_plugin_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "

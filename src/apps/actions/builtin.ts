@@ -10,7 +10,7 @@ const createTodoAction: QuickAction = {
   keywords: ["todo", "待办", "任务"],
   icon: lucideIcon(CheckSquare2),
   source: "builtin",
-  requiresQuery: true,
+  accepts: ["text"],
   validate: (query) =>
     query.length > TODO_TITLE_LIMIT ? `待办标题不能超过 ${TODO_TITLE_LIMIT} 个字` : null,
   title: (query) => `创建待办：${query}`,
@@ -26,7 +26,7 @@ const translateAction: QuickAction = {
   keywords: ["translate", "翻译"],
   icon: lucideIcon(Languages),
   source: "builtin",
-  requiresQuery: true,
+  accepts: ["text"],
   title: (query) => `翻译：${query}`,
   run({ query, openApp }) {
     openApp("translate", { initialTranslateText: query });

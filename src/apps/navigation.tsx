@@ -34,7 +34,7 @@ export function useBuiltinAppNavigation() {
   return useAppNavigation();
 }
 
-/** Safe optional access when a page may also render outside the palette shell. */
+/** Safe optional access when a page may also render outside the main panel shell. */
 export function useOptionalAppNavigation() {
   return useContext(AppNavigationContext);
 }

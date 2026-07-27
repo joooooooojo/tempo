@@ -179,7 +179,8 @@ pub fn clipboard_image_protocol_response(
     )
 }
 
-fn read_clipboard_image_bytes(app: &AppHandle, storage_key: &str) -> Result<Vec<u8>, String> {
+pub fn clipboard_image_path(app: &AppHandle, content: &str) -> Result<std::path::PathBuf, String> {
+    let storage_key = normalize_clipboard_image_reference(content);
     let file_name = storage_key
         .strip_prefix(&format!("{CLIPBOARD_IMAGE_SUBDIR}/"))
         .ok_or_else(|| "图片路径无效".to_string())?;
@@ -193,7 +194,12 @@ fn read_clipboard_image_bytes(app: &AppHandle, storage_key: &str) -> Result<Vec<
     if !canonical_path.starts_with(&canonical_dir) {
         return Err("图片路径无效".into());
     }
-    std::fs::read(canonical_path).map_err(|_| "图片读取失败".to_string())
+    Ok(canonical_path)
+}
+
+fn read_clipboard_image_bytes(app: &AppHandle, storage_key: &str) -> Result<Vec<u8>, String> {
+    let path = clipboard_image_path(app, storage_key)?;
+    std::fs::read(path).map_err(|_| "图片读取失败".to_string())
 }
 
 fn decode_png_bytes(png_bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {

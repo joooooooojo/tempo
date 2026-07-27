@@ -5,7 +5,7 @@ use crate::db::{
 };
 use chrono::Local;
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 pub fn pomodoro_state_snapshot(state: &AppState) -> PomodoroState {
     let (status, phase, remaining_seconds, phase_total_seconds, cycle_count, active_todo_id) = {
@@ -274,26 +274,22 @@ fn notify_phase_end(app: &AppHandle, phase: PomodoroPhase, skipped: bool) {
     );
     emit_on_main(app, "toast", json!({ "message": message }));
 
-    focus_main_window(app);
+    focus_main_panel(app);
 }
 
-fn focus_main_window(app: &AppHandle) {
+fn focus_main_panel(app: &AppHandle) {
     if crate::auxiliary_windows::is_pomodoro_float_visible(app) {
         return;
     }
 
     let app_handle = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        if let Some(window) = app_handle.get_webview_window("main") {
-            crate::logging::debug_if_err(window.show(), "show main window for pomodoro");
-            crate::logging::debug_if_err(
-                window.unminimize(),
-                "unminimize main window for pomodoro",
-            );
-            crate::logging::debug_if_err(window.set_focus(), "focus main window for pomodoro");
-        }
+        crate::logging::debug_if_err(
+            crate::auxiliary_windows::show_main_panel(&app_handle),
+            "show main panel for pomodoro",
+        );
     }) {
-        tracing::warn!(error = %error, "failed to dispatch pomodoro main window focus");
+        tracing::warn!(error = %error, "failed to dispatch pomodoro main panel focus");
     }
 }
 

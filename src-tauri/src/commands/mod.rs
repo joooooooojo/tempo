@@ -19,7 +19,7 @@ pub use markdown::markdown_image_protocol_response;
 pub use settings::do_reset_today;
 pub use todos::check_pending_recurrences;
 pub use tracker::start_tracker;
-pub use window::{hide_to_tray, quit_app};
+pub use window::quit_app;
 
 pub const MARKDOWN_IMAGE_PROTOCOL: &str = "tempo-image";
 

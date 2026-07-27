@@ -16,6 +16,13 @@
   if (context.session && typeof context.session.who === "string") {
     whoInput.value = context.session.who;
   }
+  if (context.params?.input?.kind === "text") {
+    whoInput.value = context.params.input.text;
+    appendLog(`Action 注入文本：${context.params.input.text}`);
+  } else if (context.params?.input?.kind === "image") {
+    const { width, height } = context.params.input;
+    appendLog(`Action 注入图片：${width ?? "?"} x ${height ?? "?"}`);
+  }
 
   goButton.addEventListener("click", async () => {
     goButton.disabled = true;

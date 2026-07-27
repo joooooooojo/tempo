@@ -11,6 +11,7 @@ mod clipboard_db;
 mod clipboard_images;
 mod clipboard_watcher;
 mod logging;
+mod launcher_search;
 #[cfg(target_os = "macos")]
 mod macos_dock;
 #[cfg(target_os = "macos")]
@@ -28,17 +29,17 @@ extern crate objc;
 
 use db::{
     db_path, init_db, AppState, PomodoroRuntime, TrackerState, DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
-    DEFAULT_COMMAND_PALETTE_SHORTCUT, DEFAULT_SNIPPET_PICKER_SHORTCUT,
+    DEFAULT_MAIN_PANEL_SHORTCUT, DEFAULT_SNIPPET_PICKER_SHORTCUT,
 };
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-const ACTION_COMMAND_PALETTE: &str = "command_palette";
+const ACTION_MAIN_PANEL: &str = "main_panel";
 const ACTION_CLIPBOARD_PICKER: &str = "clipboard_picker";
 const ACTION_SNIPPET_PICKER: &str = "snippet_picker";
 const ACTION_SHELF_ESCAPE: &str = "shelf_escape";
@@ -64,7 +65,7 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             logging::warn_if_err(
-                auxiliary_windows::show_command_palette(app),
+                auxiliary_windows::show_main_panel(app),
                 "focus existing window on second launch",
             );
         }));
@@ -124,8 +125,8 @@ pub fn run() {
                                         .copied()
                                 });
                             let result = match action {
-                                Some(ACTION_COMMAND_PALETTE) => {
-                                    auxiliary_windows::toggle_command_palette(&app_for_main)
+                                Some(ACTION_MAIN_PANEL) => {
+                                    auxiliary_windows::toggle_main_panel(&app_for_main)
                                 }
                                 Some(ACTION_CLIPBOARD_PICKER) => {
                                     auxiliary_windows::show_clipboard_picker_window(&app_for_main)
@@ -200,11 +201,11 @@ pub fn run() {
                 pomodoro: Arc::new(Mutex::new(PomodoroRuntime::default())),
                 clipboard: Arc::new(Mutex::new(db::ClipboardRuntime::default())),
             };
+            commands::launcher::restore_launcher_index_snapshot(&state);
             commands::start_tracker(app.handle().clone(), state.clone());
             clipboard_watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
             app.manage(state.clone());
             app.manage(Mutex::new(ShortcutActionMap::default()));
-            commands::launcher::warm_launcher_index(app.handle().clone());
             let mcp_controller = mcp::McpController::new();
             app.manage(mcp_controller.clone());
             commands::check_pending_recurrences(app.handle(), &state);
@@ -265,7 +266,7 @@ pub fn run() {
                 };
                 if let Err(error) = apply_global_shortcuts(
                     app.handle(),
-                    &settings.shortcut_command_palette,
+                    &settings.shortcut_main_panel,
                     &settings.shortcut_clipboard_picker,
                     &settings.shortcut_snippet_picker,
                 ) {
@@ -275,7 +276,7 @@ pub fn run() {
                     );
                     if let Err(fallback_error) = apply_global_shortcuts(
                         app.handle(),
-                        DEFAULT_COMMAND_PALETTE_SHORTCUT,
+                        DEFAULT_MAIN_PANEL_SHORTCUT,
                         DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
                         DEFAULT_SNIPPET_PICKER_SHORTCUT,
                     ) {
@@ -316,42 +317,6 @@ pub fn run() {
                 crate::macos_dock::ensure_accessory_policy(app.handle());
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                logging::debug_if_err(window.set_maximizable(true), "set main window maximizable");
-                let app_handle = app.handle().clone();
-                window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        commands::hide_to_tray(&app_handle);
-                        return;
-                    }
-
-                    #[cfg(target_os = "macos")]
-                    {
-                        if crate::macos_dock::is_main_window_in_tray() {
-                            if let Some(main) = app_handle.get_webview_window("main") {
-                                let visible = match main.is_visible() {
-                                    Ok(visible) => visible,
-                                    Err(error) => {
-                                        tracing::debug!(
-                                            error = %error,
-                                            "failed to read main window visibility"
-                                        );
-                                        false
-                                    }
-                                };
-                                if visible {
-                                    logging::debug_if_err(
-                                        main.hide(),
-                                        "hide main window from dock state",
-                                    );
-                                }
-                            }
-                        }
-                    }
-                });
-            }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -366,16 +331,19 @@ pub fn run() {
             commands::reports::get_known_apps,
             commands::launcher::get_launcher_apps,
             commands::launcher::refresh_launcher_apps,
+            commands::launcher::sync_main_panel_search_contributions,
+            commands::launcher::search_main_panel_apps,
             commands::launcher::launch_indexed_app,
             commands::launcher::set_launcher_app_pinned,
             commands::launcher::record_launcher_usage,
             commands::launcher::get_launcher_usage,
-            auxiliary_windows::set_command_palette_height,
-            auxiliary_windows::set_command_palette_size,
-            auxiliary_windows::show_command_palette_window,
+            auxiliary_windows::set_main_panel_height,
+            auxiliary_windows::set_main_panel_size,
+            auxiliary_windows::set_main_panel_rect,
+            auxiliary_windows::show_main_panel_window,
             auxiliary_windows::prepare_native_file_dialog,
             auxiliary_windows::restore_after_native_file_dialog,
-            auxiliary_windows::sync_command_palette_appearance,
+            auxiliary_windows::sync_main_panel_appearance,
             commands::todos::get_todos,
             commands::todos::get_todo,
             commands::todos::add_todo,
@@ -395,11 +363,8 @@ pub fn run() {
             commands::todos::export_todos_backup,
             commands::todos::import_todos_backup,
             commands::markdown::save_markdown_image,
-            commands::settings::complete_onboarding,
             commands::window::quit_app,
             commands::window::debug_log,
-            commands::window::hide_to_tray_command,
-            commands::window::show_window,
             commands::pomodoro_cmds::get_pomodoro_state,
             commands::pomodoro_cmds::set_pomodoro_todo,
             commands::pomodoro_cmds::start_pomodoro,
@@ -426,7 +391,8 @@ pub fn run() {
             commands::clipboard::pin_clipboard_history_entry,
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::copy_clipboard_entry,
-            commands::clipboard::get_command_palette_clipboard_seed,
+            commands::clipboard::get_main_panel_clipboard_seed,
+            commands::clipboard::clear_main_panel_clipboard_seed,
             commands::snippets::get_snippets,
             commands::snippets::get_snippet_groups,
             commands::snippets::create_snippet_group,
@@ -451,6 +417,8 @@ pub fn run() {
             commands::plugins::plugin_ui_prepare,
             commands::plugins::plugin_ui_dispose,
             commands::plugins::plugin_ui_serialize_session,
+            plugins::windows::open_plugin_window,
+            plugins::windows::plugin_window_context,
             commands::plugins::plugin_open_data_dir,
             commands::plugins::plugin_uninstall,
             commands::plugins::set_plugin_mcp_exposed,
@@ -477,7 +445,7 @@ pub fn run() {
             auxiliary_windows::hide_shelf_picker,
         ])
         .build(tauri::generate_context!())
-        .map(|mut app| {
+        .map(|app| {
             // Set before run() so tao applies Accessory at applicationDidFinishLaunching —
             // setting it later in setup still briefly shows a Dock icon (Regular is the default).
             #[cfg(target_os = "macos")]
@@ -487,6 +455,13 @@ pub fn run() {
             }
 
             app.run(|app_handle, event| {
+                if let tauri::RunEvent::Ready = &event {
+                    logging::warn_if_err(
+                        auxiliary_windows::show_main_panel(app_handle),
+                        "show main panel on startup",
+                    );
+                }
+
                 #[cfg(target_os = "macos")]
                 if let tauri::RunEvent::Reopen {
                     has_visible_windows,
@@ -496,8 +471,8 @@ pub fn run() {
                     // App reopen (e.g. from Finder) with no visible windows: open quick panel.
                     if !*has_visible_windows {
                         logging::warn_if_err(
-                            auxiliary_windows::show_command_palette(app_handle),
-                            "show command palette on macos reopen",
+                            auxiliary_windows::show_main_panel(app_handle),
+                            "show main panel on macos reopen",
                         );
                     }
                 }
@@ -575,20 +550,20 @@ pub(crate) fn unregister_shelf_escape_shortcut(app: &tauri::AppHandle) -> Result
 /// Apply the configurable shortcuts, preserving Esc only while the shelf is visible.
 pub fn apply_global_shortcuts(
     app: &tauri::AppHandle,
-    command_palette: &str,
+    main_panel: &str,
     clipboard_picker: &str,
     snippet_picker: &str,
 ) -> Result<(), String> {
-    let palette_raw = command_palette.trim();
+    let main_panel_raw = main_panel.trim();
     let clipboard_raw = clipboard_picker.trim();
     let snippet_raw = snippet_picker.trim();
 
-    let palette_norm = validate_shortcut_binding(palette_raw)?;
+    let main_panel_norm = validate_shortcut_binding(main_panel_raw)?;
     let clipboard_norm = validate_shortcut_binding(clipboard_raw)?;
     let snippet_norm = validate_shortcut_binding(snippet_raw)?;
 
-    if shortcut_bindings_conflict(&palette_norm, &clipboard_norm)
-        || shortcut_bindings_conflict(&palette_norm, &snippet_norm)
+    if shortcut_bindings_conflict(&main_panel_norm, &clipboard_norm)
+        || shortcut_bindings_conflict(&main_panel_norm, &snippet_norm)
         || shortcut_bindings_conflict(&clipboard_norm, &snippet_norm)
     {
         return Err("快捷键不能重复".into());
@@ -614,8 +589,8 @@ pub fn apply_global_shortcuts(
     }
 
     let mut bindings: Vec<(&str, String, &'static str)> = Vec::new();
-    if let Some(normalized) = palette_norm {
-        bindings.push((palette_raw, normalized, ACTION_COMMAND_PALETTE));
+    if let Some(normalized) = main_panel_norm {
+        bindings.push((main_panel_raw, normalized, ACTION_MAIN_PANEL));
     }
     if let Some(normalized) = clipboard_norm {
         bindings.push((clipboard_raw, normalized, ACTION_CLIPBOARD_PICKER));
@@ -659,21 +634,21 @@ pub fn apply_global_shortcuts(
 
 /// Validate bindings before saving settings. Returns trimmed raw strings to persist.
 pub fn validate_shortcut_bindings(
-    command_palette: &str,
+    main_panel: &str,
     clipboard_picker: &str,
     snippet_picker: &str,
 ) -> Result<(String, String, String), String> {
-    let palette = validate_shortcut_binding(command_palette)?;
+    let main_panel_binding = validate_shortcut_binding(main_panel)?;
     let clipboard = validate_shortcut_binding(clipboard_picker)?;
     let snippet = validate_shortcut_binding(snippet_picker)?;
-    if shortcut_bindings_conflict(&palette, &clipboard)
-        || shortcut_bindings_conflict(&palette, &snippet)
+    if shortcut_bindings_conflict(&main_panel_binding, &clipboard)
+        || shortcut_bindings_conflict(&main_panel_binding, &snippet)
         || shortcut_bindings_conflict(&clipboard, &snippet)
     {
         return Err("快捷键不能重复".into());
     }
     Ok((
-        command_palette.trim().to_string(),
+        main_panel.trim().to_string(),
         clipboard_picker.trim().to_string(),
         snippet_picker.trim().to_string(),
     ))

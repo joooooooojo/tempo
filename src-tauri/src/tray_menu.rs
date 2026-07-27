@@ -9,6 +9,8 @@ use tauri::{
     App, AppHandle, Emitter, Manager, Wry,
 };
 
+pub const TRAY_ID: &str = "tempo-tray";
+
 pub struct TrayMenuState {
     pomodoro_float: CheckMenuItem<Wry>,
 }
@@ -29,7 +31,7 @@ pub fn sync_pomodoro_float_checked(app: &AppHandle, visible: bool) {
 }
 
 pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItem::with_id(app, "show", "打开快捷面板", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "打开主面板", true, None::<&str>)?;
     let pomodoro_float = CheckMenuItem::with_id(
         app,
         "pomodoro_float",
@@ -46,7 +48,7 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         pomodoro_float: pomodoro_float.clone(),
     });
 
-    let tray_builder = TrayIconBuilder::with_id("main")
+    let tray_builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(
             app.default_window_icon()
                 .ok_or("missing default window icon")?
@@ -58,8 +60,8 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 crate::logging::warn_if_err(
-                    auxiliary_windows::show_command_palette(app),
-                    "tray show command palette",
+                    auxiliary_windows::show_main_panel(app),
+                    "tray show main panel",
                 );
             }
             "pomodoro_float" => {
@@ -72,10 +74,7 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(state) = app.try_state::<AppState>() {
                     commands::do_reset_today(&state);
                     crate::logging::debug_if_err(
-                        app.emit(
-                            "toast",
-                            serde_json::json!({ "message": "今日数据已清空" }),
-                        ),
+                        app.emit("toast", serde_json::json!({ "message": "今日数据已清空" })),
                         "emit reset toast",
                     );
                 } else {
@@ -99,8 +98,8 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             {
                 let app = tray.app_handle();
                 crate::logging::warn_if_err(
-                    auxiliary_windows::show_command_palette(app),
-                    "tray click show command palette",
+                    auxiliary_windows::show_main_panel(app),
+                    "tray click show main panel",
                 );
             }
         })

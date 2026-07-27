@@ -1,11 +1,12 @@
 {
+  "$schema": "../../../docs/schemas/plugin-manifest.schema.json",
   "manifestVersion": 1,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "engines": {
     "tempo": ">=1.2.0",
-    "pluginApi": "^1.0.0"
+    "pluginApi": "^1.2.0"
   },
   "kind": "hybrid",
   "author": "Tempo",
@@ -24,18 +25,38 @@
         "keywords": ["hello", "示例", "demo"],
         "icon": "icons/app.svg",
         "entry": "index.html",
-        "defaultSize": { "width": 560, "height": 420 },
-        "persistSession": true,
+        "windowMode": "normal",
+        "sessionVersion": 1
+      },
+      {
+        "id": "window",
+        "name": "Hello 独立窗口",
+        "keywords": ["hello", "示例", "window", "窗口"],
+        "icon": "icons/app.svg",
+        "entry": "index.html",
+        "windowMode": "standalone",
+        "rect": {
+          "x": "center",
+          "y": "center"
+        },
         "sessionVersion": 1
       }
     ],
     "actions": [
       {
+        "id": "open-input",
+        "name": "使用当前输入",
+        "keywords": ["input", "输入", "图片"],
+        "icon": "icons/app.svg",
+        "accepts": ["text", "image"],
+        "app": "main"
+      },
+      {
         "id": "say-hello",
         "name": "Hello 一下",
         "keywords": ["hello", "示例"],
         "icon": "icons/app.svg",
-        "requiresQuery": false,
+        "accepts": ["text"],
         "command": "hello"
       }
     ],

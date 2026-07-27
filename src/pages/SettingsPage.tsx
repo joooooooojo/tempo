@@ -42,7 +42,7 @@ const THEME_OPTIONS: Array<{ value: Settings["theme"]; label: string }> = [
 ];
 
 const SHORTCUT_SETTING_KEYS = [
-  "shortcut_command_palette",
+  "shortcut_main_panel",
   "shortcut_clipboard_picker",
   "shortcut_snippet_picker",
 ] as const;
@@ -403,10 +403,10 @@ export function SettingsPage() {
       <Section title="快捷键">
         <Card>
           <ShortcutRow
-            label="快捷面板"
+            label="主面板"
             desc="全局搜索应用并执行快捷操作"
-            value={settings.shortcut_command_palette}
-            onChange={(value) => updateShortcut("shortcut_command_palette", value)}
+            value={settings.shortcut_main_panel}
+            onChange={(value) => updateShortcut("shortcut_main_panel", value)}
           />
           <ShortcutRow
             label="剪贴板货架"
@@ -426,7 +426,7 @@ export function SettingsPage() {
                 size="sm"
                 onClick={() =>
                     void update({
-                      shortcut_command_palette: DEFAULT_SHORTCUTS.shortcut_command_palette,
+                      shortcut_main_panel: DEFAULT_SHORTCUTS.shortcut_main_panel,
                       shortcut_clipboard_picker: DEFAULT_SHORTCUTS.shortcut_clipboard_picker,
                       shortcut_snippet_picker: DEFAULT_SHORTCUTS.shortcut_snippet_picker,
                     })

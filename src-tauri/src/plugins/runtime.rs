@@ -26,7 +26,7 @@ pub const MANIFEST_URL_OVERRIDE_ENV: &str = "TEMPO_PLUGIN_RUNTIME_MANIFEST_URL";
 
 pub const INSTALL_PROGRESS_EVENT: &str = "plugin-runtime-install-progress";
 
-/// Serializes install attempts so closing/reopening the palette cannot start a second download.
+/// Serializes install attempts so closing/reopening the main panel cannot start a second download.
 static INSTALL_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 /// Survives WebView remounts: settings can re-query and keep showing progress.
@@ -48,7 +48,7 @@ pub struct RuntimeInstallProgress {
 #[serde(rename_all = "camelCase")]
 pub struct PluginRuntimeStatus {
     pub installed: bool,
-    /// True while a download/extract is in flight (persists across palette remounts).
+    /// True while a download/extract is in flight (persists across main panel remounts).
     pub installing: bool,
     pub version: Option<String>,
     pub node_path: Option<String>,
@@ -273,8 +273,8 @@ pub fn get_plugin_runtime_status(app: &AppHandle) -> Result<PluginRuntimeStatus,
         return Ok(status_base(false, None, None, None, message));
     }
 
-    let raw = fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("read runtime manifest: {e}"))?;
+    let raw =
+        fs::read_to_string(&manifest_path).map_err(|e| format!("read runtime manifest: {e}"))?;
     let local: LocalRuntimeManifest =
         serde_json::from_str(&raw).map_err(|e| format!("parse runtime manifest: {e}"))?;
     let node_path = PathBuf::from(&local.node_path);
@@ -393,8 +393,7 @@ async fn download_with_progress(
         }
     }
 
-    file.flush()
-        .map_err(|e| format!("刷新下载文件失败: {e}"))?;
+    file.flush().map_err(|e| format!("刷新下载文件失败: {e}"))?;
     Ok(downloaded)
 }
 
@@ -491,10 +490,6 @@ pub fn start_plugin_runtime_install(app: AppHandle) -> Result<PluginRuntimeStatu
     get_plugin_runtime_status(&app)
 }
 
-pub async fn install_plugin_runtime(app: &AppHandle) -> Result<PluginRuntimeStatus, String> {
-    start_plugin_runtime_install(app.clone())
-}
-
 async fn install_plugin_runtime_inner(
     app: &AppHandle,
     target: &str,
@@ -535,8 +530,7 @@ async fn install_plugin_runtime_inner(
         },
     );
 
-    let file_bytes =
-        fs::read(&archive_path).map_err(|e| format!("读取下载文件失败: {e}"))?;
+    let file_bytes = fs::read(&archive_path).map_err(|e| format!("读取下载文件失败: {e}"))?;
     let mut hasher = Sha256::new();
     hasher.update(&file_bytes);
     let actual = hex::encode(hasher.finalize());
@@ -619,8 +613,7 @@ async fn install_plugin_runtime_inner(
 }
 
 pub fn uninstall_plugin_runtime(app: &AppHandle) -> Result<PluginRuntimeStatus, String> {
-    if INSTALL_LOCK.try_lock().is_err() || current_progress().is_some_and(|p| p.phase != "failed")
-    {
+    if INSTALL_LOCK.try_lock().is_err() || current_progress().is_some_and(|p| p.phase != "failed") {
         return Err("安装进行中，请稍后再卸载".into());
     }
     clear_progress();
@@ -638,42 +631,8 @@ fn extract_node_archive(archive: &std::path::Path, dest: &std::path::Path) -> Re
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    if name.ends_with(".zip") || cfg!(windows) {
-        #[cfg(windows)]
-        {
-            let status = std::process::Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    &format!(
-                        "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-                        archive.display(),
-                        dest.display()
-                    ),
-                ])
-                .status()
-                .map_err(|e| format!("Expand-Archive 启动失败: {e}"))?;
-            if !status.success() {
-                return Err("Expand-Archive 解压失败".into());
-            }
-            return Ok(());
-        }
-        #[cfg(not(windows))]
-        {
-            let status = std::process::Command::new("unzip")
-                .args([
-                    "-o",
-                    &archive.display().to_string(),
-                    "-d",
-                    &dest.display().to_string(),
-                ])
-                .status();
-            if let Ok(status) = status {
-                if status.success() {
-                    return Ok(());
-                }
-            }
-        }
+    if name.ends_with(".zip") {
+        return extract_zip_archive(archive, dest);
     }
 
     let status = std::process::Command::new("tar")
@@ -687,6 +646,31 @@ fn extract_node_archive(archive: &std::path::Path, dest: &std::path::Path) -> Re
         .map_err(|e| format!("tar 解压启动失败: {e}"))?;
     if !status.success() {
         return Err("tar 解压失败".into());
+    }
+    Ok(())
+}
+
+fn extract_zip_archive(archive: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    let file = fs::File::open(archive).map_err(|e| format!("打开压缩包失败: {e}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("读取压缩包失败: {e}"))?;
+
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|e| format!("读取压缩条目失败: {e}"))?;
+        let Some(enclosed) = entry.enclosed_name() else {
+            continue;
+        };
+        let outpath = dest.join(enclosed);
+        if entry.is_dir() {
+            fs::create_dir_all(&outpath).map_err(|e| format!("创建目录失败: {e}"))?;
+            continue;
+        }
+        if let Some(parent) = outpath.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+        let mut outfile = fs::File::create(&outpath).map_err(|e| format!("写入文件失败: {e}"))?;
+        std::io::copy(&mut entry, &mut outfile).map_err(|e| format!("解压文件失败: {e}"))?;
     }
     Ok(())
 }

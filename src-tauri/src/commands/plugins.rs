@@ -7,7 +7,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::AppState;
-use crate::plugins::bridge::{self, ConnectionContext, ConnectionSource, RpcError};
+use crate::plugins::bridge::{self, ConnectionContext, RpcError};
 use crate::plugins::host::PluginHost;
 use crate::plugins::ids::{is_valid_local_id, runtime_id};
 use crate::plugins::loader::{scan_enabled_contributions, PluginContributionBundle};
@@ -15,8 +15,7 @@ use crate::plugins::manifest::PluginManifest;
 use crate::plugins::package::{import_directory, import_zip, InstalledPackage};
 use crate::plugins::paths::{packages_dir, plugin_data_dir, trash_dir};
 use crate::plugins::runtime::{
-    get_plugin_runtime_status, start_plugin_runtime_install, uninstall_plugin_runtime,
-    PluginRuntimeStatus,
+    get_plugin_runtime_status, uninstall_plugin_runtime, PluginRuntimeStatus,
 };
 use crate::plugins::storage;
 use crate::plugins::trust::{
@@ -35,7 +34,7 @@ pub fn plugin_runtime_status(app: AppHandle) -> Result<PluginRuntimeStatus, Stri
 
 #[tauri::command]
 pub async fn plugin_runtime_install(app: AppHandle) -> Result<PluginRuntimeStatus, String> {
-    // Detach from the invoke future so closing the palette cannot cancel the download.
+    // Detach from the invoke future so closing the main panel cannot cancel the download.
     crate::plugins::runtime::start_plugin_runtime_install(app)
 }
 
@@ -133,6 +132,7 @@ pub async fn promote_plugin_pending_version(
     plugin_id: String,
 ) -> Result<String, String> {
     host.supervisor.stop(&plugin_id).await;
+    crate::plugins::windows::close_plugin_windows(&app, &host, &plugin_id);
     for view_instance_id in host.views_for_plugin(&plugin_id) {
         host.destroy_view(&view_instance_id);
     }
@@ -167,8 +167,11 @@ pub fn list_plugin_mcp_tools(
 ) -> Result<Vec<PluginMcpToolInfo>, String> {
     let conn = state.db.lock();
     ensure_plugin_tables(&conn)?;
-    let row = get_installed_plugin(&conn, &plugin_id)?.ok_or_else(|| "plugin not found".to_string())?;
-    let install_path = packages_dir(&app)?.join(&plugin_id).join(&row.current_version);
+    let row =
+        get_installed_plugin(&conn, &plugin_id)?.ok_or_else(|| "plugin not found".to_string())?;
+    let install_path = packages_dir(&app)?
+        .join(&plugin_id)
+        .join(&row.current_version);
     let manifest = ui::read_manifest(&install_path)?;
     Ok(manifest
         .contributes
@@ -236,6 +239,7 @@ pub async fn set_plugin_enabled_command(
 
     if !enabled {
         host.supervisor.stop(&plugin_id).await;
+        crate::plugins::windows::close_plugin_windows(&app, &host, &plugin_id);
         for view_instance_id in host.views_for_plugin(&plugin_id) {
             host.destroy_view(&view_instance_id);
         }
@@ -311,12 +315,58 @@ pub struct PluginCallCommandArgs {
 /// commands (design §6.2/§6.3). `command_id` is the manifest-local id, not the runtime id.
 #[tauri::command]
 pub async fn plugin_call_command(
+    app: AppHandle,
+    state: State<'_, AppState>,
     host: State<'_, Arc<PluginHost>>,
     args: PluginCallCommandArgs,
 ) -> Result<Value, RpcError> {
+    let params = enrich_action_command_input(&app, &state, args.params)?;
     host.supervisor
-        .call(&args.plugin_id, &args.command_id, args.params, bridge::DEFAULT_TIMEOUT)
+        .call(
+            &args.plugin_id,
+            &args.command_id,
+            params,
+            bridge::DEFAULT_TIMEOUT,
+        )
         .await
+}
+
+fn enrich_action_command_input(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    mut params: Value,
+) -> Result<Value, RpcError> {
+    if params.get("actionId").and_then(Value::as_str).is_none() {
+        return Ok(params);
+    }
+    let Some(input) = params.get_mut("input").and_then(Value::as_object_mut) else {
+        return Ok(params);
+    };
+    if input.get("kind").and_then(Value::as_str) != Some("image") {
+        return Ok(params);
+    }
+    let entry_id = input
+        .get("entryId")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| RpcError::new(bridge::codes::INVALID_REQUEST, "image entryId is required"))?;
+    let entry = {
+        let conn = state.db.lock();
+        crate::clipboard_db::get_clipboard_entry(&conn, entry_id)
+    }
+    .ok_or_else(|| RpcError::new(bridge::codes::NOT_FOUND, "clipboard image not found"))?;
+    if entry.kind != "image" {
+        return Err(RpcError::new(
+            bridge::codes::INVALID_REQUEST,
+            "clipboard entry is not an image",
+        ));
+    }
+    let path = crate::clipboard_images::clipboard_image_path(app, &entry.content)
+        .map_err(|message| RpcError::new(bridge::codes::NOT_FOUND, message))?;
+    input.insert(
+        "filePath".into(),
+        Value::String(path.to_string_lossy().into_owned()),
+    );
+    Ok(params)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -347,14 +397,12 @@ pub async fn plugin_bridge_invoke(
                 RpcError::new(bridge::codes::NOT_FOUND, "view instance not found")
             })?;
             if view.plugin_id != args.plugin_id {
-                return Err(RpcError::new(bridge::codes::FORBIDDEN, "view instance belongs to another plugin"));
+                return Err(RpcError::new(
+                    bridge::codes::FORBIDDEN,
+                    "view instance belongs to another plugin",
+                ));
             }
-            ConnectionContext {
-                plugin_id: args.plugin_id.clone(),
-                source: ConnectionSource::Ui {
-                    view_instance_id: view_instance_id.clone(),
-                },
-            }
+            ConnectionContext::ui(args.plugin_id.clone(), view_instance_id.clone())
         }
         None => ConnectionContext::runtime(args.plugin_id.clone()),
     };
@@ -390,6 +438,7 @@ pub struct PluginUiPrepareResult {
 #[tauri::command]
 pub fn plugin_ui_prepare(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     host: State<'_, Arc<PluginHost>>,
     args: PluginUiPrepareArgs,
@@ -427,7 +476,7 @@ pub fn plugin_ui_prepare(
 
     let session = if let Some(payload) = args.session_payload {
         Some(payload)
-    } else if app_contrib.persist_session {
+    } else {
         ui::load_session(
             &conn,
             &row.id,
@@ -436,11 +485,13 @@ pub fn plugin_ui_prepare(
             app_contrib.session_version.unwrap_or(1),
         )?
         .map(|envelope| envelope.payload)
-    } else {
-        None
     };
 
-    let view_instance_id = host.create_view(&row.id, &args.app_id);
+    let owner_window_label = host
+        .plugin_window(window.label())
+        .filter(|owner| owner.plugin_id == row.id && owner.app_local_id == args.app_id)
+        .map(|_| window.label());
+    let view_instance_id = host.create_view(&row.id, &args.app_id, owner_window_label);
 
     Ok(PluginUiPrepareResult {
         view_instance_id,
@@ -453,7 +504,10 @@ pub fn plugin_ui_prepare(
 }
 
 #[tauri::command]
-pub fn plugin_ui_dispose(host: State<'_, Arc<PluginHost>>, view_instance_id: String) -> Result<(), String> {
+pub fn plugin_ui_dispose(
+    host: State<'_, Arc<PluginHost>>,
+    view_instance_id: String,
+) -> Result<(), String> {
     host.destroy_view(&view_instance_id);
     Ok(())
 }
@@ -545,6 +599,7 @@ pub async fn plugin_uninstall(
     let plugin_id = args.plugin_id;
     let delete_data = args.delete_data;
     host.supervisor.stop(&plugin_id).await;
+    crate::plugins::windows::close_plugin_windows(&app, &host, &plugin_id);
     for view_instance_id in host.views_for_plugin(&plugin_id) {
         host.destroy_view(&view_instance_id);
     }
@@ -561,11 +616,17 @@ pub async fn plugin_uninstall(
     };
 
     if let Some(row) = row {
-        let install_path = packages_dir(&app)?.join(&plugin_id).join(&row.current_version);
+        let install_path = packages_dir(&app)?
+            .join(&plugin_id)
+            .join(&row.current_version);
         if install_path.exists() {
             let trash = trash_dir(&app)?;
             std::fs::create_dir_all(&trash).map_err(|e| format!("create trash dir: {e}"))?;
-            let dest = trash.join(format!("{plugin_id}-{}-{}", row.current_version, ui::plugin_hash_of(&plugin_id)));
+            let dest = trash.join(format!(
+                "{plugin_id}-{}-{}",
+                row.current_version,
+                ui::plugin_hash_of(&plugin_id)
+            ));
             if std::fs::rename(&install_path, &dest).is_err() {
                 // Cross-device or locked file fallback: best-effort recursive delete.
                 let _ = std::fs::remove_dir_all(&install_path);

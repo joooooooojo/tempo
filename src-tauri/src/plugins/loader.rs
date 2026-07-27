@@ -13,17 +13,10 @@ use tauri::AppHandle;
 
 use super::host::{PluginHost, PluginRegistryEntry};
 use super::ids::runtime_id;
-use super::manifest::PluginManifest;
+use super::manifest::{ActionInputKind, AppRect, PluginManifest, PluginWindowMode};
 use super::paths::packages_dir;
 use super::trust::list_installed_plugins;
 use super::ui::{plugin_entry_url, plugin_hash_of, plugin_icon_url};
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DefaultSizeDto {
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,9 +29,8 @@ pub struct PluginAppContribution {
     pub icon_url: Option<String>,
     /// Resolved `tempo-plugin://` URL for the app's UI entry document.
     pub entry_path: String,
-    pub default_size: Option<DefaultSizeDto>,
-    pub persist_session: bool,
-    pub session_version: Option<u32>,
+    pub window_mode: PluginWindowMode,
+    pub rect: AppRect,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,10 +41,12 @@ pub struct PluginActionContribution {
     pub name: String,
     pub keywords: Vec<String>,
     pub icon_url: Option<String>,
+    /// Runtime id of the app this action opens: `{pluginId}/{appLocalId}`.
+    pub app_id: Option<String>,
     /// Runtime id of the command this action invokes: `{pluginId}/{commandLocalId}`.
-    pub command_id: String,
+    pub command_id: Option<String>,
+    pub accepts: Vec<ActionInputKind>,
     pub title_template: Option<String>,
-    pub requires_query: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,12 +116,8 @@ pub fn scan_enabled_contributions(
                     .as_ref()
                     .map(|icon| plugin_icon_url(&plugin_hash, icon)),
                 entry_path: plugin_entry_url(&plugin_hash, &contrib.entry),
-                default_size: contrib.default_size.as_ref().map(|size| DefaultSizeDto {
-                    width: size.width,
-                    height: size.height,
-                }),
-                persist_session: contrib.persist_session,
-                session_version: contrib.session_version,
+                window_mode: contrib.window_mode.clone(),
+                rect: contrib.rect.clone(),
             })
             .collect();
 
@@ -144,9 +134,16 @@ pub fn scan_enabled_contributions(
                     .icon
                     .as_ref()
                     .map(|icon| plugin_icon_url(&plugin_hash, icon)),
-                command_id: runtime_id(&row.id, &contrib.command),
+                app_id: contrib
+                    .app
+                    .as_ref()
+                    .map(|app_id| runtime_id(&row.id, app_id)),
+                command_id: contrib
+                    .command
+                    .as_ref()
+                    .map(|command_id| runtime_id(&row.id, command_id)),
+                accepts: contrib.accepted_inputs(),
                 title_template: contrib.title_template.clone(),
-                requires_query: contrib.requires_query,
             })
             .collect();
 
@@ -185,21 +182,32 @@ pub fn scan_enabled_contributions(
 /// responsible for actually calling `supervisor.ensure_started` for each id — this function
 /// only reads `manifest.json` files and never touches the Supervisor or executes plugin code.
 /// Used both on boot (after [`scan_enabled_contributions`]) and right after a plugin is enabled.
-pub fn plugins_needing_startup(conn: &Connection, packages_root: &Path) -> Result<Vec<String>, String> {
+pub fn plugins_needing_startup(
+    conn: &Connection,
+    packages_root: &Path,
+) -> Result<Vec<String>, String> {
     let rows = list_installed_plugins(conn)?;
     let mut out = Vec::new();
     for row in rows {
         if !row.enabled || !row.trusted {
             continue;
         }
-        let manifest_path = packages_root.join(&row.id).join(&row.current_version).join("manifest.json");
+        let manifest_path = packages_root
+            .join(&row.id)
+            .join(&row.current_version)
+            .join("manifest.json");
         let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
             continue;
         };
         let Ok(manifest) = PluginManifest::parse_str(&raw) else {
             continue;
         };
-        if manifest.main.is_some() && manifest.activation_events.iter().any(|event| event == "onStartup") {
+        if manifest.main.is_some()
+            && manifest
+                .activation_events
+                .iter()
+                .any(|event| event == "onStartup")
+        {
             out.push(row.id);
         }
     }
@@ -212,7 +220,10 @@ mod tests {
 
     #[test]
     fn runtime_ids_are_namespaced_by_plugin() {
-        assert_eq!(runtime_id("com.example.hello", "main"), "com.example.hello/main");
+        assert_eq!(
+            runtime_id("com.example.hello", "main"),
+            "com.example.hello/main"
+        );
         assert_ne!(
             runtime_id("com.example.a", "main"),
             runtime_id("com.example.b", "main")

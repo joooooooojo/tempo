@@ -50,7 +50,7 @@ export function PluginSettingsSection() {
     });
   }, [refresh]);
 
-  // Keep showing live progress even after closing/reopening the palette mid-install.
+  // Keep showing live progress even after closing/reopening the main panel mid-install.
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;

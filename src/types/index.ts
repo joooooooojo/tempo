@@ -24,6 +24,20 @@ export interface LauncherUsageItem {
   use_count: number;
 }
 
+export interface MainPanelSearchContribution {
+  id: string;
+  name: string;
+  keywords: string[];
+  source: "builtin" | "plugin";
+}
+
+export interface MainPanelSearchMatch {
+  source: "launcher" | "contribution";
+  id: string;
+  score: number;
+  app: LauncherApp | null;
+}
+
 export interface HourlyData {
   hour: number;
   seconds: number;
@@ -119,7 +133,6 @@ export interface Settings {
   night_reminder_enabled: boolean;
   night_reminder_start: string;
   night_reminder_end: string;
-  onboarding_completed: boolean;
   pomodoro_work_minutes: number;
   pomodoro_short_break_minutes: number;
   pomodoro_long_break_minutes: number;
@@ -131,7 +144,7 @@ export interface Settings {
   clipboard_paste_mode: "clipboard" | "active_app";
   clipboard_plain_text_only: boolean;
   clipboard_history_retention: "days" | "weeks" | "months" | "years" | "permanent";
-  shortcut_command_palette: string;
+  shortcut_main_panel: string;
   shortcut_clipboard_picker: string;
   shortcut_snippet_picker: string;
   storage_dir: string;
@@ -159,7 +172,7 @@ export interface ClipboardHistoryPage {
   has_more: boolean;
 }
 
-export interface CommandPaletteClipboardSeed {
+export interface MainPanelClipboardSeed {
   kind: "text" | "image" | string;
   fullText?: string | null;
   entryId?: number | null;
@@ -343,9 +356,14 @@ export interface PluginMcpToolInfo {
   inputSchema: unknown;
 }
 
-export interface PluginDefaultSize {
-  width?: number | null;
-  height?: number | null;
+export type PluginWindowMode = "normal" | "standalone";
+export type PluginRectValue = number | string;
+
+export interface PluginAppRect {
+  width?: PluginRectValue | null;
+  height?: PluginRectValue | null;
+  x?: PluginRectValue | null;
+  y?: PluginRectValue | null;
 }
 
 export interface PluginAppContribution {
@@ -357,9 +375,8 @@ export interface PluginAppContribution {
   iconUrl?: string | null;
   /** Resolved `tempo-plugin://` URL for the app's UI entry document. */
   entryPath: string;
-  defaultSize?: PluginDefaultSize | null;
-  persistSession: boolean;
-  sessionVersion?: number | null;
+  windowMode: PluginWindowMode;
+  rect: PluginAppRect;
 }
 
 export interface PluginActionContribution {
@@ -368,10 +385,12 @@ export interface PluginActionContribution {
   name: string;
   keywords: string[];
   iconUrl?: string | null;
+  /** Runtime id of the app this action opens: `{pluginId}/{appLocalId}`. */
+  appId?: string | null;
   /** Runtime id of the command this action invokes: `{pluginId}/{commandLocalId}`. */
-  commandId: string;
+  commandId?: string | null;
+  accepts: Array<"text" | "image">;
   titleTemplate?: string | null;
-  requiresQuery: boolean;
 }
 
 export interface PluginContributionBundle {
@@ -392,6 +411,12 @@ export interface PluginUiPrepareResult {
   apiVersion: string;
   params: unknown;
   session?: unknown;
+}
+
+export interface PluginWindowContext {
+  pluginId: string;
+  appId: string;
+  params: unknown;
 }
 
 export interface PluginRpcError {

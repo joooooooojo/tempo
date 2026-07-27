@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tempo.local/schemas/plugin-manifest-v1.schema.json",
+  "title": "Tempo Plugin Manifest",
+  "description": "Structural schema for Tempo manifestVersion 1 plugin packages. Command references, duplicate ids and package file existence are additionally validated by Tempo during import.",
+  "type": "object",
+  "required": ["manifestVersion", "id", "name", "version", "engines"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "manifestVersion": {
+      "const": 1,
+      "description": "Tempo plugin manifest format version."
+    },
+    "id": {
+      "$ref": "#/$defs/pluginId"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plugin package version. Package contents are immutable for the same id/version."
+    },
+    "engines": {
+      "$ref": "#/$defs/engines"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["ui", "headless", "hybrid"],
+      "description": "Classification only; actual behavior is inferred from contributes and main."
+    },
+    "author": {
+      "type": "string"
+    },
+    "publisher": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "homepage": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "main": {
+      "type": "string",
+      "enum": ["main.mjs", "main.js"],
+      "description": "Optional package-root Node Runtime entry. Required when no apps are contributed."
+    },
+    "executables": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relativePath"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["filesystem", "network", "process", "clipboard", "system"]
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Disclosure metadata, not a Runtime sandbox boundary."
+    },
+    "activationEvents": {
+      "type": "array",
+      "items": {
+        "const": "onStartup"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "contributes": {
+      "$ref": "#/$defs/contributes"
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": ["main"],
+          "properties": {
+            "main": true
+          }
+        },
+        {
+          "type": "object",
+          "required": ["contributes"],
+          "properties": {
+            "contributes": {
+              "type": "object",
+              "required": ["apps"],
+              "properties": {
+                "apps": {
+                  "type": "array",
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": ["activationEvents"],
+        "properties": {
+          "activationEvents": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "required": ["main"],
+        "properties": {
+          "main": true
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "pluginId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^(?!(?:builtin|tempo)(?:\\.|$))[a-z0-9]+(?:\\.[a-z0-9-]+)+$",
+      "description": "Lowercase reverse-DNS id. The builtin and tempo namespaces are reserved."
+    },
+    "localId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*//)(?!.*:)(?!.*\\\\).+$",
+      "description": "Package-relative path using forward slashes."
+    },
+    "engines": {
+      "type": "object",
+      "required": ["tempo", "pluginApi"],
+      "properties": {
+        "tempo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pluginApi": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "contributes": {
+      "type": "object",
+      "properties": {
+        "apps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/app"
+          },
+          "default": []
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action"
+          },
+          "default": []
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command"
+          },
+          "default": []
+        },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook"
+          },
+          "default": []
+        },
+        "mcpTools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mcpTool"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "app": {
+      "type": "object",
+      "required": ["id", "name", "entry"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "icon": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "entry": {
+          "const": "index.html"
+        },
+        "windowMode": {
+          "type": "string",
+          "enum": ["normal", "standalone"],
+          "default": "normal"
+        },
+        "rect": {
+          "$ref": "#/$defs/rect"
+        },
+        "sessionVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "rect": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "$ref": "#/$defs/width"
+        },
+        "height": {
+          "$ref": "#/$defs/height"
+        },
+        "x": {
+          "$ref": "#/$defs/position"
+        },
+        "y": {
+          "$ref": "#/$defs/position"
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "percentageSize": {
+      "type": "string",
+      "pattern": "^(?:100(?:\\.0+)?|[1-9][0-9]?(?:\\.[0-9]+)?)%$"
+    },
+    "percentagePosition": {
+      "type": "string",
+      "pattern": "^(?:100(?:\\.0+)?|[0-9]|[1-9][0-9](?:\\.[0-9]+)?|[0-9](?:\\.[0-9]+)?)%$"
+    },
+    "width": {
+      "default": 800,
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 320,
+          "maximum": 4096
+        },
+        {
+          "$ref": "#/$defs/percentageSize"
+        }
+      ]
+    },
+    "height": {
+      "default": 580,
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 240,
+          "maximum": 2160
+        },
+        {
+          "$ref": "#/$defs/percentageSize"
+        }
+      ]
+    },
+    "position": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "#/$defs/percentagePosition"
+        },
+        {
+          "type": "string",
+          "pattern": "^[Cc][Ee][Nn][Tt][Ee][Rr]$"
+        }
+      ]
+    },
+    "action": {
+      "type": "object",
+      "required": ["id", "name"],
+      "oneOf": [
+        {
+          "required": ["app"],
+          "not": { "required": ["command"] }
+        },
+        {
+          "required": ["command"],
+          "not": { "required": ["app"] }
+        }
+      ],
+      "not": {
+        "required": ["accepts", "requiresQuery"]
+      },
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "icon": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "requiresQuery": {
+          "type": "boolean",
+          "description": "Deprecated compatibility field. Use accepts instead. Both true and false map to [text]."
+        },
+        "accepts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["text", "image"]
+          },
+          "default": ["text"],
+          "description": "Input kinds for which this action is recommended and can run."
+        },
+        "titleTemplate": {
+          "type": "string"
+        },
+        "app": {
+          "$ref": "#/$defs/localId",
+          "description": "Manifest-local app id to open with the action invocation in params."
+        },
+        "command": {
+          "$ref": "#/$defs/localId",
+          "description": "Manifest-local Runtime command id to invoke with the action invocation."
+        }
+      },
+      "additionalProperties": false
+    },
+    "command": {
+      "type": "object",
+      "required": ["id", "title"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["private", "public"],
+          "default": "private"
+        }
+      },
+      "additionalProperties": false
+    },
+    "hook": {
+      "type": "object",
+      "required": ["event", "command"],
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": ["clipboard.changed"]
+        },
+        "command": {
+          "$ref": "#/$defs/localId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpTool": {
+      "type": "object",
+      "required": ["name", "description", "command"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/localId"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "$ref": "#/$defs/localId"
+        },
+        "inputSchema": {
+          "type": "object",
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -44,15 +44,14 @@ export {
 export type { QuickActionUsageHint } from "@/apps/actions/registry";
 
 export {
-  canPersistAppSession,
-  clearPaletteSession,
-  getPaletteSessionStore,
-  readPaletteSession,
-  resolveRestorablePaletteSession,
-  setPaletteSessionStore,
-  writePaletteSession,
-} from "@/apps/session";
-export type { PaletteSession, PaletteSessionStore } from "@/apps/session";
+  clearMainPanelSession,
+  getMainPanelSessionStore,
+  readMainPanelSession,
+  resolveRestorableMainPanelSession,
+  setMainPanelSessionStore,
+  writeMainPanelSession,
+} from "@/apps/mainPanelSession";
+export type { MainPanelSession, MainPanelSessionStore } from "@/apps/mainPanelSession";
 
 export {
   AppNavigationProvider,

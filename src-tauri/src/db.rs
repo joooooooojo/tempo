@@ -138,7 +138,6 @@ pub struct Settings {
     pub night_reminder_enabled: bool,
     pub night_reminder_start: String,
     pub night_reminder_end: String,
-    pub onboarding_completed: bool,
     pub pomodoro_work_minutes: u32,
     pub pomodoro_short_break_minutes: u32,
     pub pomodoro_long_break_minutes: u32,
@@ -152,7 +151,7 @@ pub struct Settings {
     pub clipboard_paste_mode: String,
     pub clipboard_plain_text_only: bool,
     pub clipboard_history_retention: String,
-    pub shortcut_command_palette: String,
+    pub shortcut_main_panel: String,
     pub shortcut_clipboard_picker: String,
     pub shortcut_snippet_picker: String,
     pub storage_dir: String,
@@ -161,7 +160,7 @@ pub struct Settings {
     pub mcp_token: String,
 }
 
-pub const DEFAULT_COMMAND_PALETTE_SHORTCUT: &str = "Alt+Space";
+pub const DEFAULT_MAIN_PANEL_SHORTCUT: &str = "Alt+Space";
 pub const DEFAULT_CLIPBOARD_PICKER_SHORTCUT: &str = "Control+Shift+V";
 pub const DEFAULT_SNIPPET_PICKER_SHORTCUT: &str = "Control+Shift+S";
 
@@ -176,7 +175,6 @@ impl Default for Settings {
             night_reminder_enabled: true,
             night_reminder_start: "23:00".into(),
             night_reminder_end: "06:00".into(),
-            onboarding_completed: false,
             pomodoro_work_minutes: 25,
             pomodoro_short_break_minutes: 5,
             pomodoro_long_break_minutes: 15,
@@ -190,7 +188,7 @@ impl Default for Settings {
             clipboard_paste_mode: "clipboard".into(),
             clipboard_plain_text_only: true,
             clipboard_history_retention: "days".into(),
-            shortcut_command_palette: DEFAULT_COMMAND_PALETTE_SHORTCUT.into(),
+            shortcut_main_panel: DEFAULT_MAIN_PANEL_SHORTCUT.into(),
             shortcut_clipboard_picker: DEFAULT_CLIPBOARD_PICKER_SHORTCUT.into(),
             shortcut_snippet_picker: DEFAULT_SNIPPET_PICKER_SHORTCUT.into(),
             storage_dir: String::new(),
@@ -291,9 +289,9 @@ impl Default for TrackerState {
     }
 }
 
-/// Recent user copy kept for the command palette (see `PALETTE_CLIPBOARD_SEED_MAX_AGE_MS`).
+/// Recent user copy kept for the main panel (see `MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS`).
 #[derive(Debug, Clone)]
-pub struct RecentClipboardForPalette {
+pub struct RecentClipboardForMainPanel {
     pub captured_at_ms: i64,
     pub kind: String,
     pub text: Option<String>,
@@ -302,7 +300,7 @@ pub struct RecentClipboardForPalette {
     pub image_height: Option<u32>,
 }
 
-pub const PALETTE_CLIPBOARD_SEED_MAX_AGE_MS: i64 = 10_000;
+pub const MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS: i64 = 10_000;
 
 #[derive(Debug, Default)]
 pub struct ClipboardRuntime {
@@ -312,7 +310,7 @@ pub struct ClipboardRuntime {
     pub decoded_image_cache: HashMap<String, CachedClipboardImage>,
     pub decoded_image_cache_order: VecDeque<String>,
     pub decoded_image_cache_bytes: usize,
-    pub recent_for_palette: Option<RecentClipboardForPalette>,
+    pub recent_for_main_panel: Option<RecentClipboardForMainPanel>,
 }
 
 #[derive(Debug, Clone)]
@@ -557,6 +555,11 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             last_used_at TEXT,
             use_count INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS launcher_index_snapshots (
+            platform TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS plugins (
             id TEXT PRIMARY KEY,
             current_version TEXT NOT NULL,
@@ -619,6 +622,16 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
         ",
     )
     .map_err(|error| error.to_string())?;
+    conn.execute_batch(
+        "BEGIN;
+         INSERT OR IGNORE INTO settings (key, value)
+         SELECT 'shortcut_main_panel', value
+         FROM settings
+         WHERE key = 'shortcut_command_palette';
+         DELETE FROM settings WHERE key = 'shortcut_command_palette';
+         COMMIT;",
+    )
+    .map_err(|error| error.to_string())?;
     if let Err(error) = conn
         .execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;")
     {
@@ -645,10 +658,10 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) {
 }
 
 pub fn load_settings(conn: &Connection) -> Settings {
-    let shortcut_command_palette = normalize_shortcut_setting(&get_setting(
+    let shortcut_main_panel = normalize_shortcut_setting(&get_setting(
         conn,
-        "shortcut_command_palette",
-        DEFAULT_COMMAND_PALETTE_SHORTCUT,
+        "shortcut_main_panel",
+        DEFAULT_MAIN_PANEL_SHORTCUT,
     ));
     let shortcut_clipboard_picker = normalize_shortcut_setting(&get_setting(
         conn,
@@ -672,7 +685,6 @@ pub fn load_settings(conn: &Connection) -> Settings {
         night_reminder_enabled: get_setting(conn, "night_reminder_enabled", "true") == "true",
         night_reminder_start: get_setting(conn, "night_reminder_start", "23:00"),
         night_reminder_end: get_setting(conn, "night_reminder_end", "06:00"),
-        onboarding_completed: get_setting(conn, "onboarding_completed", "false") == "true",
         pomodoro_work_minutes: get_setting(conn, "pomodoro_work_minutes", "25")
             .parse()
             .unwrap_or(25),
@@ -688,7 +700,6 @@ pub fn load_settings(conn: &Connection) -> Settings {
         pomodoro_float_enabled: get_setting(conn, "pomodoro_float_enabled", "false") == "true",
         pomodoro_float_auto_show: get_setting(conn, "pomodoro_float_auto_show", "true") == "true",
         pomodoro_float_x: {
-
             let raw = get_setting(conn, "pomodoro_float_x", "");
             if raw.is_empty() {
                 None
@@ -740,7 +751,7 @@ pub fn load_settings(conn: &Connection) -> Settings {
             "clipboard_history_retention",
             "days",
         )),
-        shortcut_command_palette,
+        shortcut_main_panel,
         shortcut_clipboard_picker,
         shortcut_snippet_picker,
         storage_dir: String::new(),
@@ -784,11 +795,6 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
     );
     set_setting(conn, "night_reminder_start", &settings.night_reminder_start);
     set_setting(conn, "night_reminder_end", &settings.night_reminder_end);
-    set_setting(
-        conn,
-        "onboarding_completed",
-        &settings.onboarding_completed.to_string(),
-    );
     set_setting(
         conn,
         "pomodoro_work_minutes",
@@ -846,11 +852,7 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
         "clipboard_history_retention",
         &settings.clipboard_history_retention,
     );
-    set_setting(
-        conn,
-        "shortcut_command_palette",
-        &settings.shortcut_command_palette,
-    );
+    set_setting(conn, "shortcut_main_panel", &settings.shortcut_main_panel);
     set_setting(
         conn,
         "shortcut_clipboard_picker",

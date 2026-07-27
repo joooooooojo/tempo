@@ -336,8 +336,8 @@ export function ShelfPickerPage() {
 
   const openSnippetsPage = useCallback(async (create = false) => {
     await api.hideShelfPicker();
-    await api.showCommandPalette();
-    await emit("command-palette:open-app", {
+    await api.showMainPanel();
+    await emit("main-panel:open-app", {
       appId: "snippets",
       createSnippet: create,
     });

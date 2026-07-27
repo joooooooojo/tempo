@@ -1,5 +1,5 @@
-//! Non-activating NSPanel overlays: show/focus overlays without activating Tempo
-//! or touching the main window.
+//! Non-activating NSPanel overlays: show and focus transient Tempo panels without
+//! promoting the app to a regular Dock application.
 
 use block::ConcreteBlock;
 use objc::runtime::{Class, Object};
@@ -23,6 +23,7 @@ tauri_panel! {
 pub struct OverlayPanelConfig {
     pub level: PanelLevel,
     pub collection_behavior: CollectionBehavior,
+    pub transparent: bool,
     pub has_shadow: bool,
     pub becomes_key_only_if_needed: bool,
 }
@@ -48,12 +49,12 @@ fn apply_base(panel: &dyn Panel, input: bool, config: &OverlayPanelConfig) {
     panel.set_hides_on_deactivate(false);
     panel.set_level(config.level.value());
     panel.set_collection_behavior(config.collection_behavior.into());
-    panel.set_transparent(true);
+    panel.set_transparent(config.transparent);
     panel.set_has_shadow(config.has_shadow);
-    panel.set_opaque(false);
+    panel.set_opaque(!config.transparent);
 }
 
-pub fn shelf_picker_config() -> OverlayPanelConfig {
+fn input_panel_config(transparent: bool) -> OverlayPanelConfig {
     // Match ZTools: Electron `setAlwaysOnTop(true, 'modal-panel')` → NSModalPanelWindowLevel (8).
     // Status (25) sits above system file sheets and makes Import Directory / zip look like a no-op.
     OverlayPanelConfig {
@@ -63,11 +64,20 @@ pub fn shelf_picker_config() -> OverlayPanelConfig {
             .stationary()
             .full_screen_auxiliary()
             .full_screen_none(),
+        transparent,
         has_shadow: true,
-        // false: command palette must become key on show so the search input can autofocus.
+        // false: main panel must become key on show so the search input can autofocus.
         // With true, AppKit ignores makeKeyWindow unless an NSTextField asks — WKWebView does not.
         becomes_key_only_if_needed: false,
     }
+}
+
+pub fn main_panel_config() -> OverlayPanelConfig {
+    input_panel_config(false)
+}
+
+pub fn shelf_picker_config() -> OverlayPanelConfig {
+    input_panel_config(true)
 }
 
 pub fn ensure_input_panel(
@@ -106,10 +116,10 @@ pub fn hide_overlay(app: &AppHandle, label: &str) {
     }
 }
 
-/// Temporarily make overlay panels safe hosts for NSOpenPanel sheets (ZTools parents dialogs
-/// to the palette). Nonactivating + high levels can swallow or hide the picker.
+/// Temporarily make overlay panels safe hosts for NSOpenPanel sheets. Nonactivating + high
+/// levels can swallow or hide the picker.
 pub fn prepare_for_native_dialog(app: &AppHandle) {
-    for label in ["command-palette", "shelf-picker"] {
+    for label in ["main-panel", "shelf-picker"] {
         if let Ok(panel) = app.get_webview_panel(label) {
             // Keep borderless, but drop NonactivatingPanel so the sheet can key/focus.
             panel.set_style_mask(StyleMask::empty().borderless().into());
@@ -122,8 +132,10 @@ pub fn prepare_for_native_dialog(app: &AppHandle) {
 
 /// Restore overlay panels to the ZTools-aligned ModalPanel + nonactivating style.
 pub fn restore_after_native_dialog(app: &AppHandle) {
-    let config = shelf_picker_config();
-    for label in ["command-palette", "shelf-picker"] {
+    for (label, config) in [
+        ("main-panel", main_panel_config()),
+        ("shelf-picker", shelf_picker_config()),
+    ] {
         if let Ok(panel) = app.get_webview_panel(label) {
             config.apply_input(panel.as_ref());
         }

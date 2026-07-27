@@ -44,7 +44,6 @@ export function ClipboardPage() {
   const [previewEntry, setPreviewEntry] = useState<ClipboardEntry | null>(null);
   const queryRef = useRef(query);
   const pageRef = useRef(page);
-  const clipboardUpdateTimerRef = useRef<number | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const rangeStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -109,19 +108,9 @@ export function ClipboardPage() {
 
   useEffect(() => {
     const unlisten = listen("clipboard-update", () => {
-      if (clipboardUpdateTimerRef.current) {
-        window.clearTimeout(clipboardUpdateTimerRef.current);
-      }
-      clipboardUpdateTimerRef.current = window.setTimeout(() => {
-        clipboardUpdateTimerRef.current = null;
-        void reload(false);
-      }, 160);
+      void reload(false);
     });
     return () => {
-      if (clipboardUpdateTimerRef.current) {
-        window.clearTimeout(clipboardUpdateTimerRef.current);
-        clipboardUpdateTimerRef.current = null;
-      }
       void unlisten.then((fn) => fn());
     };
   }, [reload]);

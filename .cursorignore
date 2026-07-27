@@ -1,0 +1,11 @@
+﻿# Heavy / generated trees — keep Cursor indexing & file watchers light
+# while `tauri dev` is running (avoids rebuild + memory spikes that can kill Cursor).
+node_modules/
+dist/
+dist-ssr/
+src-tauri/target/
+src-tauri/gen/
+.playwright-cli/
+output/
+*.log
+pnpm-lock.yaml

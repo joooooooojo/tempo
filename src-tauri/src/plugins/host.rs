@@ -14,11 +14,17 @@ use super::supervisor::Supervisor;
 #[derive(Debug, Clone)]
 pub struct PluginRegistryEntry {
     pub plugin_id: String,
+    /// Cached for upcoming host queries / settings surfaces.
+    #[allow(dead_code)]
     pub version: String,
+    #[allow(dead_code)]
     pub package_hash: String,
     pub install_path: PathBuf,
+    #[allow(dead_code)]
     pub name: String,
+    #[allow(dead_code)]
     pub requires_node_runtime: bool,
+    #[allow(dead_code)]
     pub main: Option<String>,
 }
 
@@ -26,7 +32,15 @@ pub struct PluginRegistryEntry {
 pub struct ViewInstance {
     pub plugin_id: String,
     pub app_local_id: String,
+    pub owner_window_label: Option<String>,
     pub last_session_payload: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginWindowInstance {
+    pub plugin_id: String,
+    pub app_local_id: String,
+    pub params: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +57,7 @@ pub struct PluginHost {
     hash_index: Mutex<HashMap<String, String>>,
     subscriptions: Mutex<HashMap<String, SubscriptionEntry>>,
     inflight: Mutex<HashMap<String, usize>>,
+    plugin_windows: Mutex<HashMap<String, PluginWindowInstance>>,
 }
 
 impl PluginHost {
@@ -54,6 +69,7 @@ impl PluginHost {
             hash_index: Mutex::new(HashMap::new()),
             subscriptions: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
+            plugin_windows: Mutex::new(HashMap::new()),
         }
     }
 
@@ -92,13 +108,19 @@ impl PluginHost {
 
     // -- UI view instance registry -------------------------------------------------------
 
-    pub fn create_view(&self, plugin_id: &str, app_local_id: &str) -> String {
+    pub fn create_view(
+        &self,
+        plugin_id: &str,
+        app_local_id: &str,
+        owner_window_label: Option<&str>,
+    ) -> String {
         let id = format!("view-{}", generate_id());
         self.views.lock().insert(
             id.clone(),
             ViewInstance {
                 plugin_id: plugin_id.to_string(),
                 app_local_id: app_local_id.to_string(),
+                owner_window_label: owner_window_label.map(str::to_string),
                 last_session_payload: None,
             },
         );
@@ -127,6 +149,42 @@ impl PluginHost {
             .filter(|(_, v)| v.plugin_id == plugin_id)
             .map(|(id, _)| id.clone())
             .collect()
+    }
+
+    pub fn views_for_window(&self, window_label: &str) -> Vec<String> {
+        self.views
+            .lock()
+            .iter()
+            .filter(|(_, view)| view.owner_window_label.as_deref() == Some(window_label))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    // -- Standalone plugin windows ------------------------------------------------------
+
+    pub fn register_plugin_window(&self, label: String, window: PluginWindowInstance) {
+        self.plugin_windows.lock().insert(label, window);
+    }
+
+    pub fn plugin_window(&self, label: &str) -> Option<PluginWindowInstance> {
+        self.plugin_windows.lock().get(label).cloned()
+    }
+
+    pub fn remove_plugin_window(&self, label: &str) -> Option<PluginWindowInstance> {
+        self.plugin_windows.lock().remove(label)
+    }
+
+    pub fn plugin_window_labels_for_plugin(&self, plugin_id: &str) -> Vec<String> {
+        self.plugin_windows
+            .lock()
+            .iter()
+            .filter(|(_, window)| window.plugin_id == plugin_id)
+            .map(|(label, _)| label.clone())
+            .collect()
+    }
+
+    pub fn has_plugin_windows(&self) -> bool {
+        !self.plugin_windows.lock().is_empty()
     }
 
     pub fn cache_session_payload(&self, view_instance_id: &str, payload: Value) -> bool {
@@ -189,7 +247,13 @@ impl PluginHost {
             .lock()
             .iter()
             .filter(|(_, sub)| sub.kind == kind)
-            .map(|(id, sub)| (id.clone(), sub.plugin_id.clone(), sub.view_instance_id.clone()))
+            .map(|(id, sub)| {
+                (
+                    id.clone(),
+                    sub.plugin_id.clone(),
+                    sub.view_instance_id.clone(),
+                )
+            })
             .collect()
     }
 

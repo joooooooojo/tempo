@@ -1,7 +1,8 @@
-import type { CommandPaletteClipboardSeed } from "@/types";
+import type { MainPanelClipboardSeed } from "@/types";
+import type { QuickActionInput } from "@/apps/types";
 
 /** Short text goes straight into the search input; longer text uses a leading chip. */
-export const PALETTE_CLIPBOARD_INLINE_MAX_LEN = 48;
+export const MAIN_PANEL_CLIPBOARD_INLINE_MAX_LEN = 48;
 
 const CHIP_HEAD = 14;
 const CHIP_TAIL = 14;
@@ -17,12 +18,12 @@ export function shouldInlineClipboardText(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   if (trimmed.includes("\n")) return false;
-  return trimmed.length <= PALETTE_CLIPBOARD_INLINE_MAX_LEN;
+  return trimmed.length <= MAIN_PANEL_CLIPBOARD_INLINE_MAX_LEN;
 }
 
 export function resolveQuickActionQuery(
   inputQuery: string,
-  seed: CommandPaletteClipboardSeed | null
+  seed: MainPanelClipboardSeed | null
 ): string {
   const trimmed = inputQuery.trim();
   if (seed?.kind === "text" && seed.fullText) {
@@ -31,7 +32,27 @@ export function resolveQuickActionQuery(
   return trimmed;
 }
 
-export type PaletteClipboardChip =
+export function resolveQuickActionInput(
+  inputQuery: string,
+  seed: MainPanelClipboardSeed | null
+): QuickActionInput {
+  if (seed?.kind === "image" && seed.entryId != null && seed.imageUrl) {
+    return {
+      kind: "image",
+      entryId: seed.entryId,
+      imageUrl: seed.imageUrl,
+      width: seed.imageWidth,
+      height: seed.imageHeight,
+    };
+  }
+  if (seed?.kind === "text" && seed.fullText?.trim()) {
+    return { kind: "text", text: seed.fullText.trim() };
+  }
+  const text = inputQuery.trim();
+  return text ? { kind: "text", text } : { kind: "none" };
+}
+
+export type MainPanelClipboardChip =
   | { kind: "text"; fullText: string; label: string }
   | {
       kind: "image";
@@ -41,9 +62,9 @@ export type PaletteClipboardChip =
       imageHeight?: number | null;
     };
 
-export function seedToPaletteChip(
-  seed: CommandPaletteClipboardSeed
-): PaletteClipboardChip | null {
+export function seedToMainPanelChip(
+  seed: MainPanelClipboardSeed
+): MainPanelClipboardChip | null {
   if (seed.kind === "text" && seed.fullText) {
     return {
       kind: "text",

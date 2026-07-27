@@ -21,12 +21,16 @@
   let context = null;
 
   const HOST_METHODS = new Set([
-    "palette.hide",
-    "palette.back",
-    "palette.setSize",
+    "mainPanel.hide",
+    "mainPanel.back",
+    "mainPanel.setSize",
+    "window.setRect",
+    "window.close",
     "theme.get",
+    "theme.onChange",
     "notify.show",
     "session.push",
+    "subscription.release",
     "storage.plugin.get",
     "storage.plugin.set",
     "storage.plugin.delete",
@@ -133,7 +137,7 @@
     (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        void host("palette.back");
+        void host("mainPanel.back");
       }
     },
     true

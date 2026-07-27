@@ -4,7 +4,10 @@
   "version": "1.1.2",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "node ./scripts/guard-rust-target.mjs && tauri dev",
+    "rust:cache": "node ./scripts/guard-rust-target.mjs --report",
+    "clean:rust": "cargo clean --manifest-path ./src-tauri/Cargo.toml --profile dev",
+    "clean:rust:all": "cargo clean --manifest-path ./src-tauri/Cargo.toml",
     "icons": "node ./scripts/generate-icons.mjs",
     "sync:version": "node ./scripts/sync-version.mjs",
     "version": "node ./scripts/sync-version.mjs",

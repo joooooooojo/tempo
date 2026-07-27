@@ -1,6 +1,6 @@
-html.command-palette-window,
-html.command-palette-window body,
-html.command-palette-window #root {
+html.main-panel-window,
+html.main-panel-window body,
+html.main-panel-window #root {
   width: 100%;
   height: 100%;
   min-height: 0 !important;
@@ -8,34 +8,37 @@ html.command-palette-window #root {
   overflow: hidden;
 }
 
-html.command-palette-window--windows,
-html.command-palette-window--windows body,
-html.command-palette-window--windows #root {
+html.main-panel-window,
+html.main-panel-window body,
+html.main-panel-window #root {
   background: hsl(var(--background)) !important;
 }
 
-html.command-palette-window--macos,
-html.command-palette-window--macos body,
-html.command-palette-window--macos #root {
-  background: transparent !important;
-}
-
-.command-palette-page {
+.main-panel-page {
   width: 100%;
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
   color: hsl(var(--foreground));
+  /* Hide scrollbar so it never steals layout width (avoids grid jitter on resize). */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
-.command-palette-panel {
+.main-panel-page::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.main-panel-surface {
   width: 100%;
   min-width: 0;
   background: transparent;
   padding-bottom: 12px;
 }
 
-.command-palette-search {
+.main-panel-search {
   display: flex;
   width: 100%;
   min-width: 0;
@@ -45,7 +48,7 @@ html.command-palette-window--macos #root {
   padding: 5px 12px;
 }
 
-.command-palette-search-field {
+.main-panel-search-field {
   display: flex;
   min-width: 0;
   flex: 1;
@@ -53,7 +56,7 @@ html.command-palette-window--macos #root {
   gap: 8px;
 }
 
-.command-palette-clipboard-chip {
+.main-panel-clipboard-chip {
   display: inline-flex;
   max-width: min(52%, 360px);
   flex: none;
@@ -67,25 +70,25 @@ html.command-palette-window--macos #root {
   line-height: 1.25;
 }
 
-.command-palette-clipboard-chip-label {
+.main-panel-clipboard-chip-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.command-palette-clipboard-chip-edit {
+.main-panel-clipboard-chip-edit {
   width: 26px;
   height: 26px;
   flex: none;
   opacity: 0.72;
 }
 
-.command-palette-clipboard-chip-edit:hover {
+.main-panel-clipboard-chip-edit:hover {
   opacity: 1;
 }
 
-.command-palette-clipboard-chip-image {
+.main-panel-clipboard-chip-image {
   display: block;
   max-width: 120px;
   max-height: 36px;
@@ -95,7 +98,7 @@ html.command-palette-window--macos #root {
   border-radius: 6px;
 }
 
-.command-palette-input {
+.main-panel-input {
   min-width: 0;
   height: 48px;
   flex: 1;
@@ -112,30 +115,30 @@ html.command-palette-window--macos #root {
   -webkit-user-select: text;
 }
 
-.command-palette-input::placeholder {
+.main-panel-input::placeholder {
   color: hsl(var(--muted-foreground));
   opacity: 0.72;
 }
 
-.command-palette-logo-button {
+.main-panel-logo-button {
   width: 38px;
   height: 38px;
   flex: none;
   padding: 2px;
 }
 
-.command-palette-back-button {
+.main-panel-back-button {
   width: 38px;
   height: 38px;
   flex: none;
 }
 
-.command-palette-search-spacer {
+.main-panel-search-spacer {
   flex: 1;
   min-width: 8px;
 }
 
-.command-palette-app-bar-title {
+.main-panel-app-bar-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -146,7 +149,7 @@ html.command-palette-window--macos #root {
   line-height: 1.3;
 }
 
-.command-palette-app-bar-icon {
+.main-panel-app-bar-icon {
   display: inline-flex;
   width: 38px;
   height: 38px;
@@ -158,7 +161,7 @@ html.command-palette-window--macos #root {
   color: hsl(var(--primary));
 }
 
-.command-palette-app-bar-icon-glyph {
+.main-panel-app-bar-icon-glyph {
   width: 20px !important;
   height: 20px !important;
   max-width: 22px;
@@ -166,39 +169,39 @@ html.command-palette-window--macos #root {
   object-fit: contain;
 }
 
-.command-palette-logo {
+.main-panel-logo {
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 
-.command-palette-content {
+.main-panel-content {
   display: flex;
   min-width: 0;
   flex-direction: column;
   padding: 0 12px 2px;
 }
 
-.command-palette-page--app .command-palette-content {
+.main-panel-page--app .main-panel-content {
   padding: 0;
 }
 
-.command-palette-sections,
-.command-palette-loading {
+.main-panel-sections,
+.main-panel-loading {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 4px;
 }
 
-.command-palette-section {
+.main-panel-section {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 2px;
 }
 
-.command-palette-section-heading {
+.main-panel-section-heading {
   display: flex;
   min-height: 28px;
   align-items: center;
@@ -207,7 +210,7 @@ html.command-palette-window--macos #root {
   padding: 2px 0;
 }
 
-.command-palette-section-heading h2 {
+.main-panel-section-heading h2 {
   margin: 0;
   color: hsl(var(--foreground));
   font-size: 14.5px;
@@ -216,7 +219,7 @@ html.command-palette-window--macos #root {
   letter-spacing: 0;
 }
 
-.command-palette-expand-button {
+.main-panel-expand-button {
   min-height: 24px;
   border: 0;
   background: transparent;
@@ -229,19 +232,19 @@ html.command-palette-window--macos #root {
   cursor: pointer;
 }
 
-.command-palette-expand-button:hover,
-.command-palette-expand-button:focus-visible {
+.main-panel-expand-button:hover,
+.main-panel-expand-button:focus-visible {
   color: hsl(var(--foreground));
 }
 
-.command-palette-app-grid {
+.main-panel-app-grid {
   display: grid;
   min-width: 0;
   grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 0;
 }
 
-.command-palette-app-tile-wrap {
+.main-panel-app-tile-wrap {
   position: relative;
   min-width: 0;
   height: 84px;
@@ -250,18 +253,18 @@ html.command-palette-window--macos #root {
   transition: background-color 120ms ease;
 }
 
-.command-palette-app-tile-wrap:hover,
-.command-palette-action-tile:hover {
+.main-panel-app-tile-wrap:hover,
+.main-panel-action-tile:hover {
   background: hsl(var(--accent) / 0.52);
 }
 
-.command-palette-app-tile-wrap[data-selected],
-.command-palette-action-tile[data-selected] {
+.main-panel-app-tile-wrap[data-selected],
+.main-panel-action-tile[data-selected] {
   background: hsl(var(--accent));
 }
 
-.command-palette-app-tile,
-.command-palette-action-tile {
+.main-panel-app-tile,
+.main-panel-action-tile {
   display: flex;
   width: 100%;
   height: 84px;
@@ -284,8 +287,8 @@ html.command-palette-window--macos #root {
   transition: background-color 120ms ease;
 }
 
-.command-palette-app-tile > span:last-child,
-.command-palette-action-tile > span:last-child {
+.main-panel-app-tile > span:last-child,
+.main-panel-action-tile > span:last-child {
   display: block;
   width: 100%;
   height: 32px;
@@ -297,13 +300,13 @@ html.command-palette-window--macos #root {
   text-align: center;
 }
 
-.command-palette-app-tile:disabled,
-.command-palette-action-tile:disabled {
+.main-panel-app-tile:disabled,
+.main-panel-action-tile:disabled {
   cursor: default;
   opacity: 0.65;
 }
 
-.command-palette-pin-button {
+.main-panel-pin-button {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -313,13 +316,13 @@ html.command-palette-window--macos #root {
   transition: opacity 120ms ease;
 }
 
-.command-palette-app-tile-wrap:hover .command-palette-pin-button,
-.command-palette-app-tile-wrap[data-selected] .command-palette-pin-button,
-.command-palette-pin-button:focus-visible {
+.main-panel-app-tile-wrap:hover .main-panel-pin-button,
+.main-panel-app-tile-wrap[data-selected] .main-panel-pin-button,
+.main-panel-pin-button:focus-visible {
   opacity: 1;
 }
 
-.command-palette-action-icon {
+.main-panel-action-icon {
   display: flex;
   width: 32px;
   height: 32px;
@@ -331,24 +334,24 @@ html.command-palette-window--macos #root {
   color: hsl(var(--primary-foreground));
 }
 
-.command-palette-action-icon svg {
+.main-panel-action-icon svg {
   width: 17px;
   height: 17px;
 }
 
-.command-palette-app-loader,
-.command-palette-inline-loader {
-  animation: command-palette-spin 700ms linear infinite;
+.main-panel-app-loader,
+.main-panel-inline-loader {
+  animation: main-panel-spin 700ms linear infinite;
 }
 
-.command-palette-app-loader {
+.main-panel-app-loader {
   width: 32px;
   height: 32px;
   flex: none;
   color: hsl(var(--muted-foreground));
 }
 
-.command-palette-error {
+.main-panel-error {
   margin: 4px 0 0;
   padding: 4px 0 6px;
   color: hsl(var(--destructive));
@@ -357,7 +360,7 @@ html.command-palette-window--macos #root {
   line-height: 1.4;
 }
 
-.command-palette-empty {
+.main-panel-empty {
   display: flex;
   min-height: 84px;
   align-items: center;
@@ -367,12 +370,12 @@ html.command-palette-window--macos #root {
   font-size: 13px;
 }
 
-.command-palette-empty svg {
+.main-panel-empty svg {
   width: 17px;
   height: 17px;
 }
 
-.command-palette-loading-tile {
+.main-panel-loading-tile {
   display: flex;
   height: 84px;
   align-items: center;
@@ -382,49 +385,38 @@ html.command-palette-window--macos #root {
   padding: 8px 4px;
 }
 
-.command-palette-page::-webkit-scrollbar {
-  width: 8px;
-}
-
-.command-palette-page::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 8px;
-  background: hsl(var(--muted-foreground) / 0.35);
-  background-clip: padding-box;
-}
-
 @media (max-width: 680px) {
-  .command-palette-app-grid {
+  .main-panel-app-grid {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 480px) {
-  .command-palette-app-grid {
+  .main-panel-app-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .command-palette-input {
+  .main-panel-input {
     font-size: 21px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .command-palette-app-tile-wrap,
-  .command-palette-app-tile,
-  .command-palette-action-tile,
-  .command-palette-pin-button {
+  .main-panel-app-tile-wrap,
+  .main-panel-app-tile,
+  .main-panel-action-tile,
+  .main-panel-pin-button {
     transition: none;
   }
 }
 
-@keyframes command-palette-spin {
+@keyframes main-panel-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.command-palette-page--app {
+.main-panel-page--app {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -432,7 +424,7 @@ html.command-palette-window--macos #root {
   background: hsl(var(--background));
 }
 
-.command-palette-app-header {
+.main-panel-app-header {
   display: flex;
   flex: none;
   align-items: center;
@@ -442,7 +434,7 @@ html.command-palette-window--macos #root {
   border-bottom: 1px solid hsl(var(--border) / 0.7);
 }
 
-.command-palette-app-title {
+.main-panel-app-title {
   display: inline-flex;
   min-width: 0;
   align-items: center;
@@ -452,7 +444,7 @@ html.command-palette-window--macos #root {
   font-weight: 600;
 }
 
-.command-palette-app-host {
+.main-panel-app-host {
   width: 100%;
   min-width: 0;
   min-height: 240px;
@@ -461,12 +453,12 @@ html.command-palette-window--macos #root {
   background: hsl(var(--background));
 }
 
-.command-palette-app-host--padded {
+.main-panel-app-host--padded {
   padding: 16px 20px 20px;
   box-sizing: border-box;
 }
 
-.command-palette-builtin-icon {
+.main-panel-builtin-icon {
   display: inline-flex;
   width: 32px;
   height: 32px;
@@ -477,12 +469,12 @@ html.command-palette-window--macos #root {
   color: hsl(var(--primary));
 }
 
-.command-palette-builtin-icon svg {
+.main-panel-builtin-icon svg {
   width: 18px;
   height: 18px;
 }
 
-.command-palette-plugin-badge {
+.main-panel-plugin-badge {
   position: absolute;
   top: 2px;
   left: 2px;

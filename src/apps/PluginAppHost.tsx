@@ -70,10 +70,8 @@ export interface PluginAppHostProps {
   localAppId?: string;
   appId?: string;
   params?: Record<string, unknown>;
-  /** Defaults to true: ask the UI to serialize its session before disposing the view. */
-  persistSession?: boolean;
   /**
-   * Called when the plugin asks the host to go back (Esc / `host.palette.back`). Falls back
+   * Called when the plugin asks the host to go back (Esc / `host.mainPanel.back`). Falls back
    * to the ambient `AppNavigationProvider` context when omitted.
    */
   onBack?: () => void;
@@ -89,7 +87,6 @@ export function PluginAppHost({
   localAppId,
   appId,
   params,
-  persistSession = true,
   onBack,
 }: PluginAppHostProps) {
   const navigation = useOptionalAppNavigation();
@@ -143,15 +140,10 @@ export function PluginAppHost({
       originRef.current = null;
       if (!viewInstanceId) return;
       const dispose = () => void api.pluginUiDispose(viewInstanceId).catch(() => undefined);
-      if (persistSession) {
-        // Ask the UI for a last session snapshot before tearing the view down — dispose runs
-        // after serialize resolves, since the host clears the view's session cache on dispose
-        // (design §5.5). This is fire-and-forget from the caller's perspective: the component
-        // is already gone from the tree by the time this settles.
-        void api.pluginUiSerializeSession(viewInstanceId).catch(() => undefined).finally(dispose);
-      } else {
-        dispose();
-      }
+      // Session snapshots are a host default. Dispose after serialization because disposal
+      // clears the view's cached payload. The component is already gone, so this remains
+      // fire-and-forget from the caller's perspective.
+      void api.pluginUiSerializeSession(viewInstanceId).catch(() => undefined).finally(dispose);
     };
     // `params` is intentionally captured only at open time (matches builtin app semantics).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -190,7 +182,7 @@ export function PluginAppHost({
     if (!prepared || !pluginId) return;
     const viewInstanceId = prepared.viewInstanceId;
 
-    const unlistenBack = listen<{ viewInstanceId: string }>("plugin-host:palette-back", (e) => {
+    const unlistenBack = listen<{ viewInstanceId: string }>("plugin-host:main-panel-back", (e) => {
       if (e.payload.viewInstanceId === viewInstanceId) goBack();
     });
     const unlistenEvent = listen<{

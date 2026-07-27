@@ -29,14 +29,13 @@ function toTempoApp(pluginId: string, contribution: PluginAppContribution): Temp
     icon: iconFor(contribution.iconUrl),
     source: "plugin",
     pluginId,
-    defaultSize: contribution.defaultSize
-      ? {
-          width: contribution.defaultSize.width ?? undefined,
-          height: contribution.defaultSize.height ?? undefined,
-        }
-      : undefined,
-    persistSession: contribution.persistSession,
-    sessionVersion: contribution.sessionVersion ?? undefined,
+    windowMode: contribution.windowMode,
+    rect: {
+      width: contribution.rect.width ?? undefined,
+      height: contribution.rect.height ?? undefined,
+      x: contribution.rect.x ?? undefined,
+      y: contribution.rect.y ?? undefined,
+    },
     ui: {
       type: "plugin-webview",
       entryPath: contribution.entryPath,
@@ -46,7 +45,9 @@ function toTempoApp(pluginId: string, contribution: PluginAppContribution): Temp
 }
 
 function toQuickAction(pluginId: string, contribution: PluginActionContribution): QuickAction {
-  const localCommandId = localIdFromRuntimeId(contribution.commandId, pluginId);
+  const localCommandId = contribution.commandId
+    ? localIdFromRuntimeId(contribution.commandId, pluginId)
+    : null;
   const titleTemplate = contribution.titleTemplate ?? undefined;
   return {
     id: contribution.id,
@@ -55,11 +56,23 @@ function toQuickAction(pluginId: string, contribution: PluginActionContribution)
     icon: iconFor(contribution.iconUrl),
     source: "plugin",
     pluginId,
-    requiresQuery: contribution.requiresQuery,
+    accepts: contribution.accepts,
     titleTemplate,
     title: titleTemplate ? (query) => titleTemplate.replace("{query}", query) : undefined,
     run: async (ctx) => {
-      await api.pluginCallCommand(pluginId, localCommandId, { query: ctx.query });
+      const invocation = {
+        actionId: contribution.localId,
+        query: ctx.query,
+        input: ctx.input,
+      };
+      if (contribution.appId) {
+        ctx.openApp(contribution.appId, { params: invocation });
+        return;
+      }
+      if (!localCommandId) {
+        throw new Error(`Action ${contribution.id} has no target`);
+      }
+      await api.pluginCallCommand(pluginId, localCommandId, invocation);
       await ctx.hideAndReset();
     },
   };
@@ -93,7 +106,7 @@ function applyBundles(bundles: PluginContributionBundle[], previousPluginIds: Se
 /**
  * Loads declarative plugin contributes into the app/action registries and keeps them in sync
  * with `plugin-contributions-changed` (emitted after enable/disable/import/uninstall).
- * Call once from the command palette root; safe to call multiple times (idempotent per plugin).
+ * Call once from the main panel root; safe to call multiple times (idempotent per plugin).
  */
 export function startPluginContributionSync(): Registration {
   let knownPluginIds = new Set<string>();

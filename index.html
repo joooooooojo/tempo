@@ -156,9 +156,9 @@
         var view = new URLSearchParams(location.search).get("view");
         var root = document.documentElement;
 
-        if (view === "command-palette" || view === "pomodoro-float" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
+        if (view === "main-panel" || view === "pomodoro-float" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker" || view === "plugin-window") {
           var isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || "");
-          root.style.background = view === "command-palette" && !isMac ? "#f7f9f8" : "transparent";
+          root.style.background = view === "plugin-window" ? "#f3f8f5" : view === "main-panel" && !isMac ? "#f7f9f8" : "transparent";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           root.classList.toggle("dark", prefersDark);
           if (view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
@@ -213,7 +213,7 @@
     </div>
     <div id="root"></div>
     <script>
-      // Main window stays hidden; entry is the command palette (tray / shortcut).
+      // Browser fallback: render the main panel at the root URL.
       (function () {
         var view = new URLSearchParams(location.search).get("view");
         if (view) return;

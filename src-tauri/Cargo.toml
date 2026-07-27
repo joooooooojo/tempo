@@ -12,6 +12,25 @@ unexpected_cfgs = "allow"
 name = "tempo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Full MSVC debug symbols make this Tauri dependency graph several GiB per
+# build mode. Keep line information for Tempo itself and omit symbols from
+# dependencies; release builds are unaffected.
+[profile.dev]
+debug = "line-tables-only"
+incremental = true
+
+[profile.dev.package."*"]
+debug = 0
+
+# Test binaries do not benefit enough from a second multi-GiB incremental
+# cache to justify keeping it between runs.
+[profile.test]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test.package."*"]
+debug = 0
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -30,6 +49,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 active-win-pos-rs = "0.8"
 parking_lot = "0.12"
+pinyin = { version = "0.11", default-features = false, features = ["plain"] }
 arboard = "3"
 base64 = "0.22"
 png = "0.17"
@@ -52,6 +72,7 @@ md-5 = "0.10"
 hmac = "0.12"
 hex = "0.4"
 urlencoding = "2"
+unicode-normalization = "0.1"
 netstat2 = "0.11.2"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 
@@ -77,11 +98,15 @@ windows = { version = "0.58", features = [
     "Win32_System_DataExchange",
     "Win32_System_Environment",
     "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
     "Win32_System_StationsAndDesktops",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

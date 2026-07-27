@@ -6,12 +6,13 @@ use crate::clipboard_images::save_clipboard_image_png;
 use crate::clipboard_images::{
     load_clipboard_image_rgba_timed, normalize_clipboard_image_reference,
 };
-use crate::db::{load_settings, AppState, CachedClipboardImage, RecentClipboardForPalette};
+use crate::db::{load_settings, AppState, CachedClipboardImage, RecentClipboardForMainPanel};
 use crate::platform::{get_foreground_app, ForegroundApp};
 use arboard::ImageData;
 use arboard::{Clipboard, Error as ClipboardError};
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "windows")]
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, MutexGuard, OnceLock};
@@ -19,13 +20,18 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(not(target_os = "windows"))]
-const CLIPBOARD_POLL_MS: u64 = 500;
+const CLIPBOARD_POLL_MS: u64 = 200;
 const DECODED_IMAGE_CACHE_MAX_ENTRIES: usize = 16;
 const DECODED_IMAGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(target_os = "windows")]
-const WINDOWS_CLIPBOARD_SETTLE_MS: u64 = 650;
+const WINDOWS_CLIPBOARD_SETTLE_MS: u64 = 40;
 #[cfg(target_os = "windows")]
-const WINDOWS_CLIPBOARD_BUSY_BACKOFF_MS: u64 = 400;
+const WINDOWS_CLIPBOARD_BUSY_BACKOFF_MS: u64 = 50;
+const AUTO_PASTE_DELAY_MS: u64 = 50;
+#[cfg(target_os = "windows")]
+const CLIPBOARD_SELF_WRITE_SUPPRESSION_MS: u64 = 150;
+#[cfg(not(target_os = "windows"))]
+const CLIPBOARD_SELF_WRITE_SUPPRESSION_MS: u64 = CLIPBOARD_POLL_MS + 50;
 
 enum ClipboardCaptureResult {
     Captured { changed: bool },
@@ -39,6 +45,7 @@ enum ClipboardSnapshot {
 }
 
 static CLIPBOARD_ACCESS: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+static CLIPBOARD_WRITE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn clipboard_access_guard() -> MutexGuard<'static, ()> {
     CLIPBOARD_ACCESS
@@ -55,11 +62,18 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
 
         #[cfg(target_os = "windows")]
         let clipboard_update_rx = start_windows_clipboard_listener();
+        // Existing system clipboard at startup is not a fresh user copy — baseline only.
         #[cfg(target_os = "windows")]
-        let mut last_windows_clipboard_sequence = 0;
+        let mut last_windows_clipboard_sequence = {
+            let _ = clipboard_update_rx.recv_timeout(Duration::from_secs(2));
+            while clipboard_update_rx.try_recv().is_ok() {}
+            windows_clipboard_sequence()
+        };
 
         #[cfg(target_os = "macos")]
-        let mut last_pasteboard_change_count = None;
+        let mut last_pasteboard_change_count = macos_pasteboard_change_count();
+
+        baseline_clipboard_hashes(&mut last_text_hash, &mut last_image_hash);
 
         loop {
             let should_capture = wait_for_clipboard_change(
@@ -133,7 +147,7 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
             ) {
                 ClipboardCaptureResult::Captured { changed } => changed,
                 ClipboardCaptureResult::Busy => {
-                    // Yield to Windows Clipboard History (Win+V), then retry once.
+                    // Briefly yield to Windows Clipboard History (Win+V), then retry once.
                     #[cfg(target_os = "windows")]
                     {
                         std::thread::sleep(Duration::from_millis(
@@ -196,6 +210,41 @@ fn wait_for_clipboard_change(
     {
         std::thread::sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
         true
+    }
+}
+
+/// Read current clipboard hashes without inserting history or seeding the main panel.
+/// Prevents startup (or a spurious first poll) from treating pre-existing content as a fresh copy.
+fn baseline_clipboard_hashes(last_text_hash: &mut String, last_image_hash: &mut String) {
+    match read_clipboard_snapshot() {
+        Ok(ClipboardSnapshot::Image(image)) => {
+            let width = image.width as u32;
+            let height = image.height as u32;
+            let pixel_count = width as u64 * height as u64;
+            if pixel_count == 0 || pixel_count > crate::clipboard_db::MAX_CLIPBOARD_IMAGE_PIXELS {
+                return;
+            }
+            let Some(png_bytes) = encode_rgba_png(width, height, image.bytes.as_ref()) else {
+                return;
+            };
+            if png_bytes.len() > crate::clipboard_db::MAX_CLIPBOARD_IMAGE_BYTES {
+                return;
+            }
+            let content_hash = hash_bytes(&png_bytes);
+            last_image_hash.clear();
+            last_image_hash.push_str(&content_hash);
+            last_text_hash.clear();
+        }
+        Ok(ClipboardSnapshot::Text(text)) => {
+            if text.is_empty() {
+                return;
+            }
+            let hash = crate::clipboard_db::hash_content(&text);
+            last_text_hash.clear();
+            last_text_hash.push_str(&hash);
+            last_image_hash.clear();
+        }
+        Ok(ClipboardSnapshot::Empty) | Err(_) => {}
     }
 }
 
@@ -265,7 +314,7 @@ fn capture_clipboard_snapshot(
 
             let changed = inserted.is_some();
             if let Some(entry) = &inserted {
-                record_recent_clipboard_for_palette(state, entry);
+                record_recent_clipboard_for_main_panel(state, entry);
             }
 
             return ClipboardCaptureResult::Captured { changed };
@@ -290,7 +339,7 @@ fn capture_clipboard_snapshot(
             };
             let changed = inserted.is_some();
             if let Some(entry) = &inserted {
-                record_recent_clipboard_for_palette(state, entry);
+                record_recent_clipboard_for_main_panel(state, entry);
             }
             ClipboardCaptureResult::Captured { changed }
         }
@@ -499,21 +548,20 @@ fn sync_windows_clipboard_sequence(last_sequence: &mut u32) {
 
 #[cfg(target_os = "windows")]
 fn wait_for_windows_clipboard_change(rx: &Receiver<()>, last_sequence: u32) -> bool {
-    let got_signal = match rx.recv_timeout(Duration::from_secs(1)) {
-        Ok(_) => {
-            while rx.try_recv().is_ok() {}
-            true
-        }
-        Err(RecvTimeoutError::Timeout) => false,
+    match rx.recv_timeout(Duration::from_secs(1)) {
+        Ok(_) => while rx.try_recv().is_ok() {},
+        Err(RecvTimeoutError::Timeout) => {}
         Err(RecvTimeoutError::Disconnected) => {
             std::thread::sleep(Duration::from_secs(1));
-            false
+            return false;
         }
     };
 
+    // Require a real sequence change. Listener "ready" / spurious signals must not
+    // capture pre-existing clipboard content (which would seed the main panel).
     let sequence = windows_clipboard_sequence();
     let sequence_changed = sequence != 0 && sequence != last_sequence;
-    if !got_signal && !sequence_changed {
+    if !sequence_changed {
         return false;
     }
 
@@ -524,17 +572,16 @@ fn wait_for_windows_clipboard_change(rx: &Receiver<()>, last_sequence: u32) -> b
 #[cfg(target_os = "macos")]
 fn macos_pasteboard_changed(last_change_count: &mut Option<isize>) -> bool {
     let Some(change_count) = macos_pasteboard_change_count() else {
-        return true;
+        return false;
     };
 
-    let changed = last_change_count
-        .map(|last| last != change_count)
-        .unwrap_or(true);
+    let changed = match *last_change_count {
+        Some(last) => last != change_count,
+        // First observation (if baseline was skipped) is not a fresh copy.
+        None => false,
+    };
     *last_change_count = Some(change_count);
 
-    if changed {
-        std::thread::sleep(Duration::from_millis(160));
-    }
     changed
 }
 
@@ -560,11 +607,6 @@ pub fn emit_clipboard_update(app: &AppHandle) {
         app.emit_to("shelf-picker", "clipboard-update", ()),
         "emit shelf picker clipboard update",
     );
-    crate::logging::debug_if_err(
-        app.emit_to("main", "clipboard-update", ()),
-        "emit main clipboard update",
-    );
-
     // Phase 2 hook (design §6.1): notify subscribed plugins that the clipboard changed. The
     // payload deliberately omits clipboard contents by default — plugins that need the actual
     // content should read it themselves via their own Runtime (which has full system access).
@@ -774,14 +816,7 @@ fn maybe_simulate_paste(app: &AppHandle, settings: &crate::db::Settings) {
         if let Some(window) = app.get_webview_window("shelf-picker") {
             crate::logging::debug_if_err(window.hide(), "hide shelf picker before paste");
         }
-        #[cfg(target_os = "macos")]
-        {
-            if crate::macos_dock::is_main_window_in_tray() {
-                crate::macos_dock::ensure_main_window_hidden(&app);
-            }
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(120));
+        std::thread::sleep(std::time::Duration::from_millis(AUTO_PASTE_DELAY_MS));
         if let Err(error) = crate::platform::simulate_paste() {
             tracing::warn!(error = %error, "simulate paste failed");
         }
@@ -907,7 +942,7 @@ fn cache_decoded_clipboard_image(
     image
 }
 
-pub(crate) fn record_recent_clipboard_for_palette(state: &AppState, entry: &ClipboardEntry) {
+pub(crate) fn record_recent_clipboard_for_main_panel(state: &AppState, entry: &ClipboardEntry) {
     let captured_at_ms = chrono::Utc::now().timestamp_millis();
     let text = if entry.kind == "text" {
         Some(entry.content.clone())
@@ -915,7 +950,7 @@ pub(crate) fn record_recent_clipboard_for_palette(state: &AppState, entry: &Clip
         None
     };
     let mut runtime = state.clipboard.lock();
-    runtime.recent_for_palette = Some(RecentClipboardForPalette {
+    runtime.recent_for_main_panel = Some(RecentClipboardForMainPanel {
         captured_at_ms,
         kind: entry.kind.clone(),
         text,
@@ -929,6 +964,7 @@ fn with_skip_capture<T>(
     state: &AppState,
     write: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
+    let generation = CLIPBOARD_WRITE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     {
         let mut runtime = state.clipboard.lock();
         runtime.skip_next_capture = true;
@@ -939,7 +975,12 @@ fn with_skip_capture<T>(
     crate::logging::spawn_named("tempo-clipboard-skip-reset", {
         let state = state.clone();
         move || {
-            std::thread::sleep(std::time::Duration::from_millis(900));
+            std::thread::sleep(std::time::Duration::from_millis(
+                CLIPBOARD_SELF_WRITE_SUPPRESSION_MS,
+            ));
+            if CLIPBOARD_WRITE_GENERATION.load(Ordering::Acquire) != generation {
+                return;
+            }
             let mut runtime = state.clipboard.lock();
             runtime.skip_next_capture = false;
         }

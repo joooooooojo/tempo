@@ -1,6 +1,6 @@
 import { BUILTIN_QUICK_ACTIONS } from "@/apps/actions/builtin";
 import { BUILTIN_OWNER } from "@/apps/constants";
-import type { QuickAction, Registration } from "@/apps/types";
+import type { QuickAction, QuickActionInput, Registration } from "@/apps/types";
 
 export const ACTION_USAGE_PREFIX = "action:";
 
@@ -39,18 +39,15 @@ function usageTimeMs(value: string | null | undefined): number {
 }
 
 /**
- * Actions visible for the current search query, sorted by last use (then use count).
+ * Actions compatible with the current input, sorted by last use (then use count).
  * Unused actions keep registration order after used ones.
  */
 export function listVisibleQuickActions(
-  query: string,
+  input: QuickActionInput,
   usageById?: Map<string, QuickActionUsageHint>
 ): QuickAction[] {
-  const normalized = query.trim();
-  const visible = listQuickActions().filter((action) => {
-    if (action.requiresQuery !== false && !normalized) return false;
-    return true;
-  });
+  if (input.kind === "none") return [];
+  const visible = listQuickActions().filter((action) => action.accepts.includes(input.kind));
 
   if (!usageById || usageById.size === 0) return visible;
 

@@ -49,8 +49,9 @@ pub fn ensure_dir(path: &Path) -> Result<(), String> {
     std::fs::create_dir_all(path).map_err(|e| format!("create {}: {e}", path.display()))
 }
 
-/// Directory holding short-lived Unix domain socket / Windows named pipe endpoints used for the
-/// per-plugin Runtime IPC handshake. Kept out of app_data to avoid long paths on some platforms.
+/// Directory holding short-lived Unix domain socket endpoints used for the per-plugin
+/// Runtime IPC handshake. Kept out of app_data to avoid long paths on some platforms.
+#[cfg(unix)]
 pub fn plugin_ipc_dir() -> PathBuf {
     std::env::temp_dir().join("tempo-plugin-ipc")
 }

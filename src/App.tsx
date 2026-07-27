@@ -1,18 +1,8 @@
-import { useEffect } from "react";
-import {
-  applyTheme,
-  emitThemeChange,
-  subscribeThemeChanges,
-  syncEyeCareWindowBackground,
-  watchSystemTheme,
-} from "@/lib/theme";
-import { dismissBootSplash } from "@/lib/boot";
-import { api } from "@/lib/api";
 import { EyeCareReminderPage } from "@/pages/EyeCareReminderPage";
 import { ShelfPickerPage } from "@/pages/ShelfPickerPage";
 import { PomodoroFloatPage } from "@/pages/PomodoroFloatPage";
-import { CommandPalettePage } from "@/pages/CommandPalettePage";
-import type { Settings } from "@/types";
+import { MainPanelPage } from "@/pages/MainPanelPage";
+import { PluginWindowPage } from "@/pages/PluginWindowPage";
 
 function App() {
   const view = new URLSearchParams(window.location.search).get("view");
@@ -20,8 +10,8 @@ function App() {
     return <EyeCareReminderPage />;
   }
 
-  if (view === "command-palette") {
-    return <CommandPalettePage />;
+  if (view === "main-panel" || !view) {
+    return <MainPanelPage />;
   }
 
   if (view === "pomodoro-float") {
@@ -32,43 +22,9 @@ function App() {
     return <ShelfPickerPage />;
   }
 
-  return <HiddenMainHost />;
-}
-
-/** Main window stays hidden; hosts theme sync and dismisses the boot splash only. */
-function HiddenMainHost() {
-  useEffect(() => {
-    let cancelled = false;
-    let currentTheme: Settings["theme"] = "system";
-
-    api
-      .getSettings()
-      .then((s) => {
-        if (cancelled) return;
-        currentTheme = s.theme;
-        applyTheme(currentTheme);
-        void syncEyeCareWindowBackground();
-      })
-      .catch(console.error)
-      .finally(() => {
-        if (!cancelled) dismissBootSplash();
-      });
-
-    const unwatchSystem = watchSystemTheme(
-      () => currentTheme,
-      () => void emitThemeChange("system")
-    );
-    const unsubscribeTheme = subscribeThemeChanges((theme) => {
-      currentTheme = theme;
-      applyTheme(theme);
-    });
-
-    return () => {
-      cancelled = true;
-      unwatchSystem();
-      unsubscribeTheme();
-    };
-  }, []);
+  if (view === "plugin-window") {
+    return <PluginWindowPage />;
+  }
 
   return null;
 }
