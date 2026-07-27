@@ -4,6 +4,7 @@ mod server;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::db::{load_settings, AppState, DEFAULT_MCP_PORT};
@@ -17,13 +18,24 @@ struct McpRuntimeState {
 #[derive(Clone)]
 pub struct McpController {
     inner: Arc<Mutex<McpRuntimeState>>,
+    tools_changed: broadcast::Sender<()>,
 }
 
 impl McpController {
     pub fn new() -> Self {
+        let (tools_changed, _) = broadcast::channel(16);
         Self {
             inner: Arc::new(Mutex::new(McpRuntimeState { cancel: None })),
+            tools_changed,
         }
+    }
+
+    pub fn subscribe_tools_changed(&self) -> broadcast::Receiver<()> {
+        self.tools_changed.subscribe()
+    }
+
+    pub fn notify_tools_changed(&self) {
+        let _ = self.tools_changed.send(());
     }
 
     pub fn stop(&self) {
@@ -80,18 +92,37 @@ impl McpController {
     }
 }
 
+pub fn notify_plugin_tools_changed(app: &AppHandle) {
+    if let Some(controller) = app.try_state::<McpController>() {
+        controller.notify_tools_changed();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controller_broadcasts_tool_changes() {
+        let controller = McpController::new();
+        let mut receiver = controller.subscribe_tools_changed();
+        controller.notify_tools_changed();
+        assert!(receiver.try_recv().is_ok());
+    }
+}
+
 async fn run_mcp_http(
     app: AppHandle,
     port: u16,
     expected_token: Arc<String>,
     cancel: CancellationToken,
 ) -> Result<(), String> {
-    use axum::{Router, routing::get};
+    use axum::{routing::get, Router};
     use rmcp::transport::{
-        StreamableHttpServerConfig,
         streamable_http_server::{
             session::local::LocalSessionManager, tower::StreamableHttpService,
         },
+        StreamableHttpServerConfig,
     };
 
     let addr = format!("127.0.0.1:{port}");

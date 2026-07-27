@@ -608,6 +608,7 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
         CREATE TABLE IF NOT EXISTS plugin_mcp_exposure (
             plugin_id TEXT PRIMARY KEY,
             exposed INTEGER NOT NULL DEFAULT 0,
+            toolset_fingerprint TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_clipboard_history_created

@@ -64,6 +64,7 @@ window.plugin.on("greeted", (p) => console.log(p));
 - **面板应用**：主面板搜索「Hello 示例」打开，点「打招呼（Runtime）」
 - **独立窗口**：主面板搜索「Hello 独立窗口」打开；它使用原生标题栏，并出现在任务栏或 Dock 中
 - **快捷操作**：搜索「Hello 一下」执行同一个 `hello` 命令
+- **MCP 工具**：在插件设置中开启「向 MCP 暴露工具」后，外部客户端可直接调用 `tempo_plugin_com_example_hello__say_hello`
 
 应用用 `apps[].windowMode` 选择 `normal`（主面板）或 `standalone`（独立窗口），两种模式共用 `rect`。窗口内还可以调整自身矩形或主动关闭：
 

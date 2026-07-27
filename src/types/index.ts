@@ -354,6 +354,13 @@ export interface PluginMcpToolInfo {
   name: string;
   description: string;
   inputSchema: unknown;
+  outputSchema?: unknown;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  } | null;
 }
 
 export type PluginWindowMode = "normal" | "standalone";

@@ -146,6 +146,33 @@ fn payload_too_large(params: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// Shared Runtime command boundary for UI, actions, hooks, and MCP. Callers choose the
+/// command only after applying their own routing/authorization policy.
+pub async fn invoke_runtime_command(
+    host: &Arc<PluginHost>,
+    plugin_id: &str,
+    command_id: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, RpcError> {
+    if command_id.trim().is_empty() {
+        return Err(RpcError::new(
+            codes::INVALID_REQUEST,
+            "missing runtime command id",
+        ));
+    }
+    if payload_too_large(&params) {
+        return Err(RpcError::new(
+            codes::PAYLOAD_TOO_LARGE,
+            "request payload exceeds 1 MiB",
+        ));
+    }
+    let _guard = acquire_slot(host, plugin_id)?;
+    host.supervisor
+        .call(plugin_id, command_id, params, timeout)
+        .await
+}
+
 /// Single entry point for both UI (`plugin_bridge_invoke`) and Runtime-relayed `host.*` calls.
 /// Routes `runtime.*` to the Supervisor (same plugin only); everything else to the Host API.
 pub async fn dispatch(
@@ -158,6 +185,12 @@ pub async fn dispatch(
     if method.trim().is_empty() {
         return Err(RpcError::new(codes::INVALID_REQUEST, "method is required"));
     }
+
+    if let Some(command_id) = method.strip_prefix("runtime.") {
+        return invoke_runtime_command(host, &ctx.plugin_id, command_id, params, DEFAULT_TIMEOUT)
+            .await;
+    }
+
     if payload_too_large(&params) {
         return Err(RpcError::new(
             codes::PAYLOAD_TOO_LARGE,
@@ -166,19 +199,6 @@ pub async fn dispatch(
     }
 
     let _guard = acquire_slot(host, &ctx.plugin_id)?;
-
-    if let Some(command_id) = method.strip_prefix("runtime.") {
-        if command_id.is_empty() {
-            return Err(RpcError::new(
-                codes::INVALID_REQUEST,
-                "missing runtime command id",
-            ));
-        }
-        return host
-            .supervisor
-            .call(&ctx.plugin_id, command_id, params, DEFAULT_TIMEOUT)
-            .await;
-    }
 
     let timeout = if matches!(
         method,

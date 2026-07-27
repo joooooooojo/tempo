@@ -96,6 +96,10 @@ pub fn list_plugins(
                 if let Ok(manifest) = PluginManifest::parse_str(&raw) {
                     row.requires_node_runtime = manifest.requires_node_runtime();
                     row.mcp_tool_count = manifest.contributes.mcp_tools.len();
+                    let fingerprint = manifest.mcp_toolset_fingerprint().unwrap_or_default();
+                    row.mcp_exposed = row.mcp_exposed
+                        && row.mcp_tool_count > 0
+                        && row.mcp_approved_fingerprint == fingerprint;
                 }
             }
         }
@@ -114,12 +118,33 @@ pub struct SetPluginMcpExposedArgs {
 /// (design §11, Phase 2). Defaults to off for every plugin.
 #[tauri::command]
 pub fn set_plugin_mcp_exposed(
+    app: AppHandle,
     state: State<'_, AppState>,
     args: SetPluginMcpExposedArgs,
 ) -> Result<(), String> {
     let conn = state.db.lock();
     ensure_plugin_tables(&conn)?;
-    store_plugin_mcp_exposed(&conn, &args.plugin_id, args.exposed)
+    let fingerprint = if args.exposed {
+        let row = get_installed_plugin(&conn, &args.plugin_id)?
+            .ok_or_else(|| "plugin not found".to_string())?;
+        if !row.trusted {
+            return Err("信任插件后才能向 MCP 暴露工具".into());
+        }
+        let install_path = packages_dir(&app)?
+            .join(&args.plugin_id)
+            .join(&row.current_version);
+        let manifest = ui::read_manifest(&install_path)?;
+        if manifest.contributes.mcp_tools.is_empty() {
+            return Err("plugin does not declare MCP tools".into());
+        }
+        manifest.mcp_toolset_fingerprint()?
+    } else {
+        String::new()
+    };
+    store_plugin_mcp_exposed(&conn, &args.plugin_id, args.exposed, &fingerprint)?;
+    drop(conn);
+    crate::mcp::notify_plugin_tools_changed(&app);
+    Ok(())
 }
 
 /// Switch an enabled plugin from `current_version` to its staged `pending_version` after the
@@ -146,6 +171,7 @@ pub async fn promote_plugin_pending_version(
 
     host.forget_plugin(&plugin_id);
     refresh_contributions(&app, &state, &host)?;
+    crate::mcp::notify_plugin_tools_changed(&app);
     Ok(new_version)
 }
 
@@ -155,6 +181,8 @@ pub struct PluginMcpToolInfo {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    pub output_schema: Option<Value>,
+    pub annotations: Option<crate::plugins::manifest::ContributedMcpToolAnnotations>,
 }
 
 /// The `contributes.mcpTools` a plugin declares (manifest-local names), for the settings UI to
@@ -181,6 +209,8 @@ pub fn list_plugin_mcp_tools(
             name: tool.name.clone(),
             description: tool.description.clone(),
             input_schema: tool.input_schema.clone(),
+            output_schema: tool.output_schema.clone(),
+            annotations: tool.annotations.clone(),
         })
         .collect())
 }
@@ -194,10 +224,23 @@ pub struct TrustPluginArgs {
 }
 
 #[tauri::command]
-pub fn trust_plugin(state: State<'_, AppState>, args: TrustPluginArgs) -> Result<(), String> {
+pub fn trust_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    args: TrustPluginArgs,
+) -> Result<(), String> {
     let conn = state.db.lock();
     ensure_plugin_tables(&conn)?;
-    set_package_trusted(&conn, &args.plugin_id, &args.version, args.trusted)
+    set_package_trusted(&conn, &args.plugin_id, &args.version, args.trusted)?;
+    if !args.trusted
+        && get_installed_plugin(&conn, &args.plugin_id)?
+            .is_some_and(|row| row.current_version == args.version)
+    {
+        store_plugin_mcp_exposed(&conn, &args.plugin_id, false, "")?;
+    }
+    drop(conn);
+    crate::mcp::notify_plugin_tools_changed(&app);
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -251,6 +294,7 @@ pub async fn set_plugin_enabled_command(
     }
 
     refresh_contributions(&app, &state, &host)?;
+    crate::mcp::notify_plugin_tools_changed(&app);
 
     // Design §4.3: a plugin declaring `activationEvents: ["onStartup"]` (and a `main`) gets its
     // Runtime eagerly started right after it's enabled too, not just at the next Tempo boot.
@@ -348,7 +392,9 @@ fn enrich_action_command_input(
     let entry_id = input
         .get("entryId")
         .and_then(Value::as_i64)
-        .ok_or_else(|| RpcError::new(bridge::codes::INVALID_REQUEST, "image entryId is required"))?;
+        .ok_or_else(|| {
+            RpcError::new(bridge::codes::INVALID_REQUEST, "image entryId is required")
+        })?;
     let entry = {
         let conn = state.db.lock();
         crate::clipboard_db::get_clipboard_entry(&conn, entry_id)
@@ -644,6 +690,7 @@ pub async fn plugin_uninstall(
     }
 
     refresh_contributions(&app, &state, &host)?;
+    crate::mcp::notify_plugin_tools_changed(&app);
     Ok(())
 }
 

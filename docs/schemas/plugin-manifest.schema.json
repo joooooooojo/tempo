@@ -212,6 +212,7 @@
         },
         "mcpTools": {
           "type": "array",
+          "maxItems": 64,
           "items": {
             "$ref": "#/$defs/mcpTool"
           },
@@ -433,15 +434,45 @@
         },
         "description": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 1024
         },
         "command": {
           "$ref": "#/$defs/localId"
         },
         "inputSchema": {
-          "type": "object",
-          "default": {}
+          "$ref": "#/$defs/mcpObjectSchema"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/mcpObjectSchema"
+        },
+        "annotations": {
+          "$ref": "#/$defs/mcpToolAnnotations"
         }
+      },
+      "additionalProperties": false
+    },
+    "mcpObjectSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "const": "object"
+        }
+      },
+      "additionalProperties": true,
+      "default": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "mcpToolAnnotations": {
+      "type": "object",
+      "properties": {
+        "readOnlyHint": { "type": "boolean" },
+        "destructiveHint": { "type": "boolean" },
+        "idempotentHint": { "type": "boolean" },
+        "openWorldHint": { "type": "boolean" }
       },
       "additionalProperties": false
     }

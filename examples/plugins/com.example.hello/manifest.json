@@ -3,7 +3,7 @@
   "manifestVersion": 1,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "engines": {
     "tempo": ">=1.2.0",
     "pluginApi": "^1.2.0"
@@ -65,6 +65,36 @@
         "id": "hello",
         "title": "Hello",
         "visibility": "private"
+      }
+    ],
+    "mcpTools": [
+      {
+        "name": "say-hello",
+        "description": "Write a greeting to the plugin log and show a notification",
+        "command": "hello",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "who": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "who": { "type": "string" },
+            "timestamp": { "type": "string" },
+            "logPath": { "type": "string" }
+          },
+          "required": ["who", "timestamp", "logPath"],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false
+        }
       }
     ]
   }

@@ -1,6 +1,8 @@
 //! Plugin package manifest (manifest.json v1).
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use super::ids::{is_valid_local_id, is_valid_plugin_id};
 
@@ -17,6 +19,9 @@ pub const APP_WINDOW_MIN_WIDTH: f64 = 320.0;
 pub const APP_WINDOW_MAX_WIDTH: f64 = 4096.0;
 pub const APP_WINDOW_MIN_HEIGHT: f64 = 240.0;
 pub const APP_WINDOW_MAX_HEIGHT: f64 = 2160.0;
+const MAX_MCP_SCHEMA_BYTES: usize = 64 * 1024;
+const MAX_MCP_TOOLS_PER_PLUGIN: usize = 64;
+const MAX_MCP_DESCRIPTION_CHARS: usize = 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -262,8 +267,29 @@ pub struct ContributedMcpTool {
     pub name: String,
     pub description: String,
     pub command: String,
+    #[serde(default = "default_mcp_input_schema")]
+    pub input_schema: Value,
     #[serde(default)]
-    pub input_schema: serde_json::Value,
+    pub output_schema: Option<Value>,
+    #[serde(default)]
+    pub annotations: Option<ContributedMcpToolAnnotations>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributedMcpToolAnnotations {
+    #[serde(default)]
+    pub read_only_hint: Option<bool>,
+    #[serde(default)]
+    pub destructive_hint: Option<bool>,
+    #[serde(default)]
+    pub idempotent_hint: Option<bool>,
+    #[serde(default)]
+    pub open_world_hint: Option<bool>,
+}
+
+fn default_mcp_input_schema() -> Value {
+    json!({ "type": "object", "properties": {} })
 }
 
 fn default_private() -> String {
@@ -410,12 +436,43 @@ impl PluginManifest {
             }
         }
 
+        if self.contributes.mcp_tools.len() > MAX_MCP_TOOLS_PER_PLUGIN {
+            return Err(format!(
+                "plugins may declare at most {MAX_MCP_TOOLS_PER_PLUGIN} MCP tools"
+            ));
+        }
+        let mut mcp_tool_names = std::collections::HashSet::new();
         for tool in &self.contributes.mcp_tools {
+            if !is_valid_local_id(&tool.name) {
+                return Err(format!("invalid mcpTool name: {}", tool.name));
+            }
+            if !mcp_tool_names.insert(tool.name.as_str()) {
+                return Err(format!("duplicate mcpTool name: {}", tool.name));
+            }
+            if tool.description.trim().is_empty() {
+                return Err(format!("mcpTool {} description is required", tool.name));
+            }
+            if tool.description.chars().count() > MAX_MCP_DESCRIPTION_CHARS {
+                return Err(format!(
+                    "mcpTool {} description exceeds {MAX_MCP_DESCRIPTION_CHARS} characters",
+                    tool.name
+                ));
+            }
             if !command_ids.contains(tool.command.as_str()) {
                 return Err(format!(
                     "mcpTool {} references missing command {}",
                     tool.name, tool.command
                 ));
+            }
+            if self.main.is_none() {
+                return Err(format!(
+                    "mcpTool {} targets command {} but the plugin has no main entry",
+                    tool.name, tool.command
+                ));
+            }
+            validate_mcp_schema(&tool.input_schema, &tool.name, "inputSchema")?;
+            if let Some(schema) = &tool.output_schema {
+                validate_mcp_schema(schema, &tool.name, "outputSchema")?;
             }
         }
 
@@ -449,12 +506,62 @@ impl PluginManifest {
         Ok(())
     }
 
+    pub fn mcp_toolset_fingerprint(&self) -> Result<String, String> {
+        let mut tools = self.contributes.mcp_tools.clone();
+        tools.sort_by(|left, right| left.name.cmp(&right.name));
+        let value = serde_json::to_value(tools)
+            .map_err(|error| format!("serialize MCP toolset: {error}"))?;
+        let canonical = canonicalize_json(value);
+        let bytes = serde_json::to_vec(&canonical)
+            .map_err(|error| format!("serialize canonical MCP toolset: {error}"))?;
+        Ok(hex::encode(Sha256::digest(bytes)))
+    }
+
     pub fn requires_node_runtime(&self) -> bool {
         self.main.is_some()
     }
 
     pub fn has_ui(&self) -> bool {
         !self.contributes.apps.is_empty()
+    }
+}
+
+fn validate_mcp_schema(schema: &Value, tool_name: &str, field: &str) -> Result<(), String> {
+    let object = schema
+        .as_object()
+        .ok_or_else(|| format!("mcpTool {tool_name} {field} must be an object"))?;
+    if object.get("type").and_then(Value::as_str) != Some("object") {
+        return Err(format!(
+            "mcpTool {tool_name} {field} must declare type object"
+        ));
+    }
+    let size = serde_json::to_vec(schema)
+        .map_err(|error| format!("serialize mcpTool {tool_name} {field}: {error}"))?
+        .len();
+    if size > MAX_MCP_SCHEMA_BYTES {
+        return Err(format!(
+            "mcpTool {tool_name} {field} exceeds {MAX_MCP_SCHEMA_BYTES} bytes"
+        ));
+    }
+    jsonschema::validator_for(schema)
+        .map(|_| ())
+        .map_err(|error| format!("mcpTool {tool_name} has invalid {field}: {error}"))
+}
+
+fn canonicalize_json(value: Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.into_iter().map(canonicalize_json).collect()),
+        Value::Object(values) => {
+            let mut entries: Vec<_> = values.into_iter().collect();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, canonicalize_json(value)))
+                    .collect(),
+            )
+        }
+        primitive => primitive,
     }
 }
 
@@ -519,7 +626,7 @@ mod tests {
         let raw = include_str!("../../../examples/plugins/com.example.hello/manifest.json");
         let manifest = PluginManifest::parse_str(raw).unwrap();
         assert_eq!(manifest.id, "com.example.hello");
-        assert_eq!(manifest.version, "1.0.4");
+        assert_eq!(manifest.version, "1.0.5");
     }
 
     #[test]
@@ -706,5 +813,96 @@ mod tests {
             "\"rect\": { \"width\": \"75%\", \"height\": 640, \"x\": \"center\", \"y\": \"10%\" }, \"sessionVersion\": 0",
         );
         assert!(PluginManifest::parse_str(&invalid_session_version).is_err());
+    }
+
+    #[test]
+    fn validates_mcp_tool_contract_and_stable_fingerprint() {
+        let raw = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.mcp",
+          "name": "MCP",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.2.0" },
+          "main": "main.mjs",
+          "contributes": {
+            "commands": [{ "id": "summarize", "title": "Summarize" }],
+            "mcpTools": [{
+              "name": "summarize",
+              "description": "Summarize a note",
+              "command": "summarize",
+              "inputSchema": {
+                "type": "object",
+                "properties": { "id": { "type": "string" }, "limit": { "type": "integer" } },
+                "required": ["id"]
+              },
+              "outputSchema": {
+                "type": "object",
+                "properties": { "summary": { "type": "string" } },
+                "required": ["summary"]
+              },
+              "annotations": { "readOnlyHint": true, "openWorldHint": false }
+            }]
+          }
+        }"#;
+        let reordered = raw.replace(
+            r#""id": { "type": "string" }, "limit": { "type": "integer" }"#,
+            r#""limit": { "type": "integer" }, "id": { "type": "string" }"#,
+        );
+        let first = PluginManifest::parse_str(raw).unwrap();
+        let second = PluginManifest::parse_str(&reordered).unwrap();
+        assert_eq!(
+            first.mcp_toolset_fingerprint().unwrap(),
+            second.mcp_toolset_fingerprint().unwrap()
+        );
+        assert_eq!(
+            first.contributes.mcp_tools[0]
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.read_only_hint),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_mcp_tool_contracts() {
+        let valid = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.mcp",
+          "name": "MCP",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.2.0" },
+          "main": "main.mjs",
+          "contributes": {
+            "commands": [{ "id": "run", "title": "Run" }],
+            "mcpTools": [{
+              "name": "run",
+              "description": "Run",
+              "command": "run",
+              "inputSchema": { "type": "object" }
+            }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(valid).is_ok());
+        assert!(PluginManifest::parse_str(&valid.replace(
+            r#""inputSchema": { "type": "object" }"#,
+            r#""inputSchema": { "type": "string" }"#
+        ))
+        .is_err());
+        assert!(PluginManifest::parse_str(
+            &valid.replace(r#""description": "Run""#, r#""description": "  ""#)
+        )
+        .is_err());
+        let duplicate = valid.replace(
+            "]\n          }",
+            r#", {
+              "name": "run",
+              "description": "Run again",
+              "command": "run",
+              "inputSchema": { "type": "object" }
+            }]
+          }"#,
+        );
+        assert!(PluginManifest::parse_str(&duplicate).is_err());
+        assert!(PluginManifest::parse_str(&valid.replace(r#""main": "main.mjs","#, "")).is_err());
     }
 }

@@ -59,34 +59,83 @@ pub fn ensure_plugin_tables(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS plugin_mcp_exposure (
           plugin_id TEXT PRIMARY KEY,
           exposed INTEGER NOT NULL DEFAULT 0,
+          toolset_fingerprint TEXT NOT NULL DEFAULT '',
           updated_at TEXT NOT NULL
         );
         ",
     )
     .map_err(|e| format!("create plugin tables: {e}"))?;
+    ensure_plugin_mcp_fingerprint_column(conn)?;
     Ok(())
 }
 
-/// User opt-in for exposing a plugin's `contributes.mcpTools` to MCP/AI callers (design §11,
-/// Phase 2). Defaults to `false` for every plugin — nothing is exposed until this is set.
-pub fn set_plugin_mcp_exposed(conn: &Connection, plugin_id: &str, exposed: bool) -> Result<(), String> {
+fn ensure_plugin_mcp_fingerprint_column(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(plugin_mcp_exposure)")
+        .map_err(|error| format!("inspect plugin_mcp_exposure: {error}"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("query plugin_mcp_exposure columns: {error}"))?;
+    let mut has_fingerprint = false;
+    for column in columns {
+        if column.map_err(|error| format!("read plugin_mcp_exposure column: {error}"))?
+            == "toolset_fingerprint"
+        {
+            has_fingerprint = true;
+            break;
+        }
+    }
+    if !has_fingerprint {
+        conn.execute(
+            "ALTER TABLE plugin_mcp_exposure
+             ADD COLUMN toolset_fingerprint TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|error| format!("migrate plugin_mcp_exposure fingerprint: {error}"))?;
+    }
+    Ok(())
+}
+
+/// User opt-in for exactly one reviewed `contributes.mcpTools` contract. Existing approvals
+/// fail closed after an upgrade because their empty/old fingerprint no longer matches.
+pub fn set_plugin_mcp_exposed(
+    conn: &Connection,
+    plugin_id: &str,
+    exposed: bool,
+    toolset_fingerprint: &str,
+) -> Result<(), String> {
     let now = chrono::Local::now().to_rfc3339();
+    let approved_fingerprint = if exposed { toolset_fingerprint } else { "" };
     conn.execute(
-        "INSERT INTO plugin_mcp_exposure (plugin_id, exposed, updated_at) VALUES (?1, ?2, ?3)
-         ON CONFLICT(plugin_id) DO UPDATE SET exposed = excluded.exposed, updated_at = excluded.updated_at",
-        params![plugin_id, exposed as i64, now],
+        "INSERT INTO plugin_mcp_exposure
+           (plugin_id, exposed, toolset_fingerprint, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(plugin_id) DO UPDATE SET
+           exposed = excluded.exposed,
+           toolset_fingerprint = excluded.toolset_fingerprint,
+           updated_at = excluded.updated_at",
+        params![plugin_id, exposed as i64, approved_fingerprint, now],
     )
     .map_err(|e| format!("upsert plugin_mcp_exposure: {e}"))?;
     Ok(())
 }
 
-pub fn is_plugin_mcp_exposed(conn: &Connection, plugin_id: &str) -> bool {
+pub fn is_plugin_mcp_exposed(
+    conn: &Connection,
+    plugin_id: &str,
+    current_fingerprint: &str,
+) -> bool {
     conn.query_row(
-        "SELECT exposed FROM plugin_mcp_exposure WHERE plugin_id = ?1",
+        "SELECT exposed, toolset_fingerprint
+         FROM plugin_mcp_exposure WHERE plugin_id = ?1",
         params![plugin_id],
-        |row| row.get::<_, i64>(0),
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )
-    .map(|v| v != 0)
+    .map(|(exposed, approved_fingerprint)| {
+        exposed != 0
+            && !current_fingerprint.is_empty()
+            && approved_fingerprint == current_fingerprint
+    })
     .unwrap_or(false)
 }
 
@@ -296,6 +345,8 @@ pub struct InstalledPluginRow {
     pub requires_node_runtime: bool,
     pub last_error: Option<String>,
     pub mcp_exposed: bool,
+    #[serde(skip_serializing)]
+    pub mcp_approved_fingerprint: String,
     /// Filled by callers that read the manifest from disk (design §11): number of
     /// `contributes.mcpTools` entries. `0` for plugins with none, or when unread.
     pub mcp_tool_count: usize,
@@ -306,7 +357,8 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
         .prepare(
             "SELECT p.id, p.current_version, p.pending_version, p.enabled, p.runtime_state, p.last_error,
                     v.package_hash, v.trusted_at, v.install_source, v.signature_status,
-                    v.display_publisher, COALESCE(m.exposed, 0)
+                    v.display_publisher, COALESCE(m.exposed, 0),
+                    COALESCE(m.toolset_fingerprint, '')
              FROM plugins p
              LEFT JOIN plugin_versions v
                ON v.plugin_id = p.id AND v.version = p.current_version
@@ -328,12 +380,15 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
                 last_error: row.get(5)?,
                 package_hash: row.get(6)?,
                 trusted: trusted_at.is_some(),
-                install_source: row.get::<_, Option<String>>(8)?.unwrap_or_else(|| "local".into()),
+                install_source: row
+                    .get::<_, Option<String>>(8)?
+                    .unwrap_or_else(|| "local".into()),
                 signature_status: row
                     .get::<_, Option<String>>(9)?
                     .unwrap_or_else(|| "unsigned".into()),
                 display_publisher: row.get(10)?,
                 mcp_exposed: row.get::<_, i64>(11)? != 0,
+                mcp_approved_fingerprint: row.get(12)?,
                 // Filled by caller after reading manifest from disk when needed.
                 requires_node_runtime: false,
                 mcp_tool_count: 0,
@@ -351,8 +406,11 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
 /// Remove all DB bookkeeping for a plugin (uninstall). Package files / data directory removal
 /// is handled by the caller (`commands::plugins::plugin_uninstall`).
 pub fn delete_plugin_records(conn: &Connection, plugin_id: &str) -> Result<(), String> {
-    conn.execute("DELETE FROM plugin_versions WHERE plugin_id = ?1", params![plugin_id])
-        .map_err(|e| format!("delete plugin_versions: {e}"))?;
+    conn.execute(
+        "DELETE FROM plugin_versions WHERE plugin_id = ?1",
+        params![plugin_id],
+    )
+    .map_err(|e| format!("delete plugin_versions: {e}"))?;
     conn.execute(
         "DELETE FROM plugin_mcp_exposure WHERE plugin_id = ?1",
         params![plugin_id],
@@ -370,4 +428,42 @@ pub fn get_installed_plugin(
     Ok(list_installed_plugins(conn)?
         .into_iter()
         .find(|row| row.id == plugin_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_and_requires_matching_mcp_toolset_fingerprint() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE plugin_mcp_exposure (
+               plugin_id TEXT PRIMARY KEY,
+               exposed INTEGER NOT NULL DEFAULT 0,
+               updated_at TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+
+        ensure_plugin_tables(&conn).unwrap();
+        set_plugin_mcp_exposed(&conn, "com.example.hello", true, "fingerprint-a").unwrap();
+        assert!(is_plugin_mcp_exposed(
+            &conn,
+            "com.example.hello",
+            "fingerprint-a"
+        ));
+        assert!(!is_plugin_mcp_exposed(
+            &conn,
+            "com.example.hello",
+            "fingerprint-b"
+        ));
+
+        set_plugin_mcp_exposed(&conn, "com.example.hello", false, "fingerprint-a").unwrap();
+        assert!(!is_plugin_mcp_exposed(
+            &conn,
+            "com.example.hello",
+            "fingerprint-a"
+        ));
+    }
 }

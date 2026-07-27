@@ -303,7 +303,21 @@ Hook 是异步触发，不等待插件结果；失败只写入宿主日志。
         "properties": {
           "id": { "type": "string" }
         },
-        "required": ["id"]
+        "required": ["id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" }
+        },
+        "required": ["summary"]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     }
   ]
@@ -311,6 +325,13 @@ Hook 是异步触发，不等待插件结果；失败只写入宿主日志。
 ```
 
 MCP 工具不会默认暴露。用户必须在 Tempo 插件设置中单独开启该插件的 MCP 暴露开关。
+Tempo 会为工具生成稳定的外部名称
+`tempo_plugin_{plugin_id}__{tool_name}`（`.`、`-` 会转为 `_`），并作为一级工具出现在
+MCP `tools/list` 中。插件不需要也不能自行启动 MCP Server。
+
+`inputSchema` 默认是空 object Schema，输入与可选的 `outputSchema` 都由宿主在 Runtime
+调用前后校验。annotations 是 MCP 客户端提示，不会扩大插件权限。插件工具公共契约变化后，
+现有 MCP 授权会自动失效，用户需要在设置中重新确认。
 
 ## 5. 窗口尺寸和位置
 

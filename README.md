@@ -146,7 +146,7 @@ Action 可通过 `accepts: ["text" | "image"]` 匹配主面板输入，并在 `a
 - 健康检查：`GET http://127.0.0.1:17832/health`（无需鉴权）  
 - Tempo 未运行或 MCP 关闭时客户端无法连接  
 
-**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、番茄钟状态与控制、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，但**默认不向 AI 暴露**；用户须在插件设置中逐项开启后，客户端先调用 `tempo_list_exposed_plugin_tools` 再 `tempo_call_plugin_tool`。
+**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、番茄钟状态与控制、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，但**默认不向 AI 暴露**；用户在插件设置中确认后，插件工具会以 `tempo_plugin_*` 一级 MCP 工具提供给外部客户端。旧的 `tempo_list_exposed_plugin_tools` / `tempo_call_plugin_tool` 入口暂时保留兼容。
 
 ## 🛠️ 技术栈
 

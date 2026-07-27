@@ -1,24 +1,62 @@
 use rmcp::{
-    ErrorData as McpError, ServerHandler,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::*,
-    schemars, tool, tool_handler, tool_router,
+    schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::db::AppState;
 
 fn json_result<T: serde::Serialize>(value: T) -> Result<CallToolResult, McpError> {
-    let text = serde_json::to_string_pretty(&value).map_err(|e| {
-        McpError::internal_error(format!("serialize tool result: {e}"), None)
-    })?;
+    let text = serde_json::to_string_pretty(&value)
+        .map_err(|e| McpError::internal_error(format!("serialize tool result: {e}"), None))?;
     Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
 }
 
 fn tool_err(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.into())])
+}
+
+fn plugin_tool_model(
+    tool: crate::plugins::mcp_bridge::ExposedPluginTool,
+) -> Result<Tool, McpError> {
+    let input_schema = tool.input_schema.as_object().cloned().ok_or_else(|| {
+        McpError::internal_error("plugin MCP input schema is not an object", None)
+    })?;
+    let title = format!("{} · {}", tool.plugin_name, tool.tool_name);
+    let description = format!("[{}] {}", tool.plugin_name, tool.description);
+    let mut model = Tool::new(tool.external_name, description, Arc::new(input_schema))
+        .with_title(title.clone());
+    if let Some(output_schema) = tool.output_schema {
+        let output_schema = output_schema.as_object().cloned().ok_or_else(|| {
+            McpError::internal_error("plugin MCP output schema is not an object", None)
+        })?;
+        model = model.with_raw_output_schema(Arc::new(output_schema));
+    }
+    if let Some(annotations) = tool.annotations {
+        model = model.with_annotations(ToolAnnotations::from_raw(
+            Some(title),
+            annotations.read_only_hint,
+            annotations.destructive_hint,
+            annotations.idempotent_hint,
+            annotations.open_world_hint,
+        ));
+    }
+    Ok(model)
+}
+
+fn list_plugin_tool_models(app: &AppHandle) -> Result<Vec<Tool>, McpError> {
+    crate::plugins::mcp_bridge::list_exposed_tools(app)
+        .map_err(|error| {
+            tracing::warn!(error = %error, "build plugin MCP registry snapshot failed");
+            McpError::internal_error("plugin MCP registry unavailable", None)
+        })?
+        .into_iter()
+        .map(plugin_tool_model)
+        .collect()
 }
 
 fn app_state(app: &AppHandle) -> Result<tauri::State<'_, AppState>, CallToolResult> {
@@ -152,7 +190,9 @@ pub struct CreateSnippetArgs {
     #[schemars(description = "Optional keyboard shortcut / 快捷键")]
     pub shortcut: Option<String>,
     #[serde(default)]
-    #[schemars(description = "Optional language hint for highlighting (e.g. markdown, typescript)")]
+    #[schemars(
+        description = "Optional language hint for highlighting (e.g. markdown, typescript)"
+    )]
     pub language: Option<String>,
 }
 
@@ -213,7 +253,9 @@ pub struct DailyReportArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CallPluginToolArgs {
-    #[schemars(description = "Plugin package id, e.g. com.example.hello (see tempo_list_exposed_plugin_tools)")]
+    #[schemars(
+        description = "Plugin package id, e.g. com.example.hello (see tempo_list_exposed_plugin_tools)"
+    )]
     pub plugin_id: String,
     #[schemars(
         description = "The tool's local name from contributes.mcpTools[].name (see tempo_list_exposed_plugin_tools)"
@@ -359,12 +401,8 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::set_todo_pinned(
-            self.app.clone(),
-            state,
-            args.id,
-            args.pinned,
-        ) {
+        match crate::commands::todos::set_todo_pinned(self.app.clone(), state, args.id, args.pinned)
+        {
             Ok(todo) => json_result(todo),
             Err(e) => Ok(tool_err(e)),
         }
@@ -562,11 +600,8 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::snippets::copy_snippet_to_clipboard(
-            self.app.clone(),
-            state,
-            args.id,
-        ) {
+        match crate::commands::snippets::copy_snippet_to_clipboard(self.app.clone(), state, args.id)
+        {
             Ok(snippet) => json_result(snippet),
             Err(e) => Ok(tool_err(e)),
         }
@@ -631,19 +666,14 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::pomodoro_cmds::start_pomodoro(
-            self.app.clone(),
-            state,
-            args.todo_id,
-        ) {
+        match crate::commands::pomodoro_cmds::start_pomodoro(self.app.clone(), state, args.todo_id)
+        {
             Ok(snapshot) => json_result(snapshot),
             Err(e) => Ok(tool_err(e)),
         }
     }
 
-    #[tool(
-        description = "Pause the Tempo pomodoro/番茄钟 timer. Use when pausing focus/暂停番茄"
-    )]
+    #[tool(description = "Pause the Tempo pomodoro/番茄钟 timer. Use when pausing focus/暂停番茄")]
     fn pause_pomodoro(&self) -> Result<CallToolResult, McpError> {
         let state = match app_state(&self.app) {
             Ok(s) => s,
@@ -655,9 +685,7 @@ impl TempoMcpServer {
         ))
     }
 
-    #[tool(
-        description = "Stop the Tempo pomodoro/番茄钟 timer. Use when ending focus/停止番茄"
-    )]
+    #[tool(description = "Stop the Tempo pomodoro/番茄钟 timer. Use when ending focus/停止番茄")]
     fn stop_pomodoro(&self) -> Result<CallToolResult, McpError> {
         let state = match app_state(&self.app) {
             Ok(s) => s,
@@ -731,8 +759,89 @@ impl TempoMcpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for TempoMcpServer {
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let name = request.name.to_string();
+        if self.tool_router.get(&name).is_some() {
+            let context = ToolCallContext::new(self, request, context);
+            return self.tool_router.call(context).await;
+        }
+
+        let plugin_tool =
+            crate::plugins::mcp_bridge::get_exposed_tool(&self.app, &name).map_err(|error| {
+                tracing::warn!(error = %error, tool_name = %name, "resolve plugin MCP tool failed");
+                McpError::internal_error("plugin MCP registry unavailable", None)
+            })?;
+        if plugin_tool.is_none() {
+            return Err(McpError::invalid_params("tool not found", None));
+        }
+        let arguments = serde_json::Value::Object(request.arguments.unwrap_or_default());
+        match crate::plugins::mcp_bridge::call_exposed_tool_by_external_name(
+            &self.app, &name, arguments,
+        )
+        .await
+        {
+            Ok(value) => Ok(CallToolResult::structured(value)),
+            Err(error) => Ok(tool_err(error)),
+        }
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let mut tools = self.tool_router.list_all();
+        tools.extend(list_plugin_tool_models(&self.app)?);
+        tools.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(ListToolsResult {
+            tools,
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        if let Some(tool) = self.tool_router.get(name) {
+            return Some(tool.clone());
+        }
+        match crate::plugins::mcp_bridge::get_exposed_tool(&self.app, name) {
+            Ok(Some(tool)) => plugin_tool_model(tool).ok(),
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(error = %error, tool_name = %name, "get plugin MCP tool failed");
+                None
+            }
+        }
+    }
+
+    async fn on_initialized(&self, context: rmcp::service::NotificationContext<rmcp::RoleServer>) {
+        let Some(controller) = self.app.try_state::<crate::mcp::McpController>() else {
+            return;
+        };
+        let mut changes = controller.subscribe_tools_changed();
+        let peer = context.peer;
+        tokio::spawn(async move {
+            while let Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) =
+                changes.recv().await
+            {
+                if peer.notify_tool_list_changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
+        )
             .with_server_info(Implementation::new("tempo", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 r#"Tempo is a local desktop productivity app. USE THESE TOOLS (prefer over guessing or editing files) when the user mentions:
@@ -742,7 +851,7 @@ impl ServerHandler for TempoMcpServer {
 - clipboard / 剪贴板历史：search recently copied text
 - pomodoro / 番茄钟 / 专注：get state, start, pause, stop, skip phase
 - usage report / 今日报告 / 屏幕时间 / 使用报告：daily app usage report
-- plugin tools the user has opted into MCP exposure：tempo_list_exposed_plugin_tools then tempo_call_plugin_tool
+- plugin tools the user has opted into MCP exposure: call their `tempo_plugin_*` tools directly; the two tempo_* plugin meta-tools are compatibility fallbacks
 
 Workflow tips:
 1. For "what's on my list" → list_todos first; use get_todo only when full details are needed.
@@ -753,5 +862,37 @@ Workflow tips:
 Requirement: the Tempo desktop app must be running with MCP enabled. If tools fail, tell the user to open Tempo and check Settings → MCP / AI."#
                     .to_string(),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_contract_becomes_first_class_mcp_tool() {
+        let tool = plugin_tool_model(crate::plugins::mcp_bridge::ExposedPluginTool {
+            external_name: "tempo_plugin_com_example_hello__say_hello".into(),
+            plugin_id: "com.example.hello".into(),
+            plugin_name: "Hello".into(),
+            tool_name: "say-hello".into(),
+            description: "Say hello".into(),
+            input_schema: json!({ "type": "object", "properties": {} }),
+            output_schema: Some(json!({ "type": "object", "properties": {} })),
+            annotations: Some(crate::plugins::manifest::ContributedMcpToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(tool.name, "tempo_plugin_com_example_hello__say_hello");
+        assert_eq!(tool.title.as_deref(), Some("Hello · say-hello"));
+        assert!(tool.output_schema.is_some());
+        let annotations = tool.annotations.unwrap();
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.open_world_hint, Some(false));
     }
 }
