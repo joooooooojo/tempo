@@ -446,6 +446,9 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .map(|app| {
+            #[cfg(target_os = "macos")]
+            let mut app = app;
+
             // Set before run() so tao applies Accessory at applicationDidFinishLaunching —
             // setting it later in setup still briefly shows a Dock icon (Regular is the default).
             #[cfg(target_os = "macos")]
