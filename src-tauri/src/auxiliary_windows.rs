@@ -1001,9 +1001,6 @@ fn windows_hwnd(window: &WebviewWindow) -> Option<windows::Win32::Foundation::HW
 }
 
 #[cfg(target_os = "macos")]
-const MACOS_SHELF_CORNER_RADIUS: f64 = 16.0;
-
-#[cfg(target_os = "macos")]
 fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
     use window_vibrancy::{
         apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
@@ -1012,12 +1009,13 @@ fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
     crate::logging::debug_if_err(clear_vibrancy(window), "clear shelf picker macos vibrancy");
     // Popover follows the window's effective appearance (light/dark). HudWindow is a dark
     // HUD material and stays unreadable under Tempo's light-theme foreground colors.
+    // Pass None for radius: do not override AppKit's system window corner radius.
     crate::logging::debug_if_err(
         apply_vibrancy(
             window,
             NSVisualEffectMaterial::Popover,
             Some(NSVisualEffectState::Active),
-            Some(MACOS_SHELF_CORNER_RADIUS),
+            None,
         ),
         "apply shelf picker macos vibrancy",
     );
@@ -1027,6 +1025,7 @@ fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
 fn polish_macos_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
     sync_overlay_window_theme(window);
     apply_macos_shelf_vibrancy(window);
+    crate::macos_overlay_panel::apply_system_window_chrome(window);
 
     crate::logging::debug_if_err(
         window.with_webview(move |webview| unsafe {
@@ -1499,7 +1498,10 @@ pub fn polish_main_panel_window(window: &WebviewWindow) {
     sync_overlay_window_theme(window);
 
     #[cfg(target_os = "macos")]
-    clear_macos_main_panel_vibrancy(window);
+    {
+        clear_macos_main_panel_vibrancy(window);
+        crate::macos_overlay_panel::apply_system_window_chrome(window);
+    }
 
     let background = match window.theme() {
         Ok(tauri::Theme::Dark) => Color(18, 20, 24, 255),
@@ -1605,10 +1607,8 @@ unsafe fn apply_macos_overlay_level(ns_window: *mut std::ffi::c_void) {
 }
 
 #[cfg(target_os = "macos")]
-const MACOS_OVERLAY_CORNER_RADIUS: f64 = 10.0;
-
-#[cfg(target_os = "macos")]
 fn polish_macos_pomodoro_float_window(window: &WebviewWindow) {
+    crate::macos_overlay_panel::apply_system_window_chrome(window);
     crate::logging::debug_if_err(
         window.with_webview(|webview| unsafe {
             apply_macos_native_overlay_window(webview.ns_window());
@@ -1631,20 +1631,6 @@ unsafe fn apply_macos_native_overlay_window(ns_window: *mut std::ffi::c_void) {
     let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
     let _: () = msg_send![ns_window, setOpaque: false];
     let _: () = msg_send![ns_window, setHasShadow: true];
-
-    let content_view: *mut Object = msg_send![ns_window, contentView];
-    if content_view.is_null() {
-        return;
-    }
-
-    let _: () = msg_send![content_view, setWantsLayer: true];
-    let layer: *mut Object = msg_send![content_view, layer];
-    if layer.is_null() {
-        return;
-    }
-
-    let _: () = msg_send![layer, setCornerRadius: MACOS_OVERLAY_CORNER_RADIUS];
-    let _: () = msg_send![layer, setMasksToBounds: true];
 }
 
 #[cfg(target_os = "macos")]

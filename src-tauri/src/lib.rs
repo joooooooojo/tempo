@@ -86,8 +86,12 @@ pub fn run() {
         .register_uri_scheme_protocol(todo_images::TODO_IMAGE_PROTOCOL, |ctx, request| {
             todo_images::todo_image_protocol_response(ctx.app_handle(), request)
         })
-        .register_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |_ctx, request| {
-            app_icons::AppIconService::global().protocol_response(request)
+        .register_asynchronous_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |_ctx, request, responder| {
+            // Extraction (especially macOS `sips`) must not run on the sync protocol
+            // path — that stalls WKWebView while search tiles first paint.
+            tauri::async_runtime::spawn_blocking(move || {
+                responder.respond(app_icons::AppIconService::global().protocol_response(request));
+            });
         })
         .register_uri_scheme_protocol(plugins::ui::PROTOCOL, |ctx, request| {
             plugins::ui::protocol_response(ctx.app_handle(), request)
@@ -183,6 +187,12 @@ pub fn run() {
                 tracing::error!(error = %error, "failed to prepare storage directory");
                 Box::<dyn std::error::Error>::from(std::io::Error::other(error))
             })?;
+            if let Ok(storage_dir) = db::current_storage_dir(app.handle())
+                .or_else(|_| db::default_storage_dir(app.handle()))
+            {
+                app_icons::AppIconService::global()
+                    .configure_disk_cache(storage_dir.join("icon-cache"));
+            }
             let path = db_path(app.handle());
             let conn = init_db(&path).map_err(|error| {
                 tracing::error!(error = %error, "failed to initialize database");

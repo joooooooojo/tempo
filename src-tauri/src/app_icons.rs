@@ -1,6 +1,7 @@
 use parking_lot::{Mutex, RwLock};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 use tauri::http::{
@@ -9,7 +10,7 @@ use tauri::http::{
 };
 
 pub const APP_ICON_PROTOCOL: &str = "tempo-app-icon";
-const MAX_MEMORY_ICONS: usize = 128;
+const MAX_MEMORY_ICONS: usize = 256;
 
 #[derive(Clone)]
 struct AppIconSource {
@@ -52,6 +53,7 @@ pub struct AppIconService {
     sources: RwLock<HashMap<String, AppIconSource>>,
     cache: Mutex<AppIconLru>,
     extraction: Mutex<()>,
+    disk_dir: RwLock<Option<PathBuf>>,
 }
 
 impl AppIconService {
@@ -61,7 +63,18 @@ impl AppIconService {
             sources: RwLock::new(HashMap::new()),
             cache: Mutex::new(AppIconLru::default()),
             extraction: Mutex::new(()),
+            disk_dir: RwLock::new(None),
         })
+    }
+
+    /// Persist resized PNG thumbnails under the Tempo storage root so cold launches
+    /// do not re-run macOS `sips` / Windows extraction for every search result.
+    pub fn configure_disk_cache(&self, dir: PathBuf) {
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(error = %error, path = %dir.display(), "failed to create app icon cache dir");
+            return;
+        }
+        *self.disk_dir.write() = Some(dir);
     }
 
     pub fn icon_url(&self, app_name: &str, source: &str) -> Option<String> {
@@ -83,6 +96,17 @@ impl AppIconService {
             APP_ICON_PROTOCOL,
             &format!("{key}.png"),
         ))
+    }
+
+    /// Register sources and extract thumbnails off the UI path (e.g. after indexing).
+    pub fn prewarm(&self, items: &[(String, String)]) {
+        for (app_name, source) in items {
+            let Some(_) = self.icon_url(app_name, source) else {
+                continue;
+            };
+            let key = icon_key(app_name, source);
+            let _ = self.icon_bytes(&key);
+        }
     }
 
     pub fn protocol_response(&self, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
@@ -110,13 +134,17 @@ impl AppIconService {
             .status(StatusCode::OK)
             .header(CONTENT_TYPE, "image/png")
             .header(CONTENT_LENGTH, bytes.len())
-            .header(CACHE_CONTROL, "public, max-age=86400")
+            .header(CACHE_CONTROL, "public, max-age=31536000, immutable")
             .body(body)
             .unwrap()
     }
 
     fn icon_bytes(&self, key: &str) -> Option<Vec<u8>> {
         if let Some(bytes) = self.cache.lock().get(key) {
+            return Some(bytes);
+        }
+        if let Some(bytes) = self.read_disk(key) {
+            self.cache.lock().insert(key.to_string(), bytes.clone());
             return Some(bytes);
         }
 
@@ -126,13 +154,59 @@ impl AppIconService {
         if let Some(bytes) = self.cache.lock().get(key) {
             return Some(bytes);
         }
+        if let Some(bytes) = self.read_disk(key) {
+            self.cache.lock().insert(key.to_string(), bytes.clone());
+            return Some(bytes);
+        }
 
         let source = self.sources.read().get(key).cloned()?;
         let _icon_context = crate::platform::icon_extraction_thread_context();
         let bytes = crate::platform::extract_icon_png_bytes(&source.app_name, &source.source)?;
+        self.write_disk(key, &bytes);
         self.cache.lock().insert(key.to_string(), bytes.clone());
         Some(bytes)
     }
+
+    fn disk_path(&self, key: &str) -> Option<PathBuf> {
+        self.disk_dir
+            .read()
+            .as_ref()
+            .map(|dir| dir.join(format!("{key}.png")))
+    }
+
+    fn read_disk(&self, key: &str) -> Option<Vec<u8>> {
+        let path = self.disk_path(key)?;
+        match std::fs::read(&path) {
+            Ok(bytes) if !bytes.is_empty() => Some(bytes),
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                tracing::debug!(error = %error, path = %path.display(), "failed to read app icon disk cache");
+                None
+            }
+        }
+    }
+
+    fn write_disk(&self, key: &str, bytes: &[u8]) {
+        let Some(path) = self.disk_path(key) else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                tracing::debug!(error = %error, path = %parent.display(), "failed to ensure app icon cache dir");
+                return;
+            }
+        }
+        if let Err(error) = atomic_write(&path, bytes) {
+            tracing::debug!(error = %error, path = %path.display(), "failed to write app icon disk cache");
+        }
+    }
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temp = path.with_extension("png.tmp");
+    std::fs::write(&temp, bytes)?;
+    std::fs::rename(&temp, path)
 }
 
 fn icon_key(app_name: &str, source: &str) -> String {

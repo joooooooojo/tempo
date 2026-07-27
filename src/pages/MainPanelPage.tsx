@@ -158,6 +158,8 @@ export function MainPanelPage() {
   const [error, setError] = useState<string | null>(null);
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** Ignore Enter/arrows while IME is composing (macOS 拼音选词确认也会发 Enter). */
+  const imeComposingRef = useRef(false);
   const queryRef = useRef(query);
   const clipboardChipRef = useRef<MainPanelClipboardChip | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1030,6 +1032,15 @@ export function MainPanelPage() {
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // IME: Enter confirms a candidate; arrows move the candidate list. keyCode 229 covers
+    // browsers that clear isComposing before the confirming Enter keydown fires.
+    if (
+      imeComposingRef.current ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229
+    ) {
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       if (clipboardChipRef.current) {
@@ -1236,6 +1247,16 @@ export function MainPanelPage() {
                     onChange={(event) => {
                       setQuery(event.target.value);
                       setError(null);
+                    }}
+                    onCompositionStart={() => {
+                      imeComposingRef.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      // Confirming Enter often arrives in the same turn as compositionend;
+                      // clear on the next frame so it does not execute the selected app.
+                      window.requestAnimationFrame(() => {
+                        imeComposingRef.current = false;
+                      });
                     }}
                     onKeyDown={handleKeyDown}
                   />

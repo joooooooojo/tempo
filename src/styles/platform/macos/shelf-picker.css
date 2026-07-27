@@ -1,12 +1,13 @@
 /* macOS-only shelf picker polish.
    Shared / Windows styles stay at pre-change defaults. */
 
-/* Native HudWindow vibrancy already rounds at 16px and draws the window shadow.
-   Extra CSS border / box-shadow / mismatched radius shows up as a black frame and square corners. */
+/* Window corner radius comes from AppKit (titled + fullSizeContentView).
+   Do not set a matching CSS radius on the window chrome — mismatched values
+   show up as a black frame / square corners against the system mask. */
 .shelf-picker-page--full .shelf-picker-panel,
 .shelf-picker-panel {
   border: none;
-  border-radius: 16px;
+  border-radius: 0;
   background: hsl(var(--background) / 0.28);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -19,7 +20,7 @@ html.shelf-picker-window body,
 html.shelf-picker-window #root,
 .shelf-picker-page {
   background: transparent !important;
-  border-radius: 16px;
+  border-radius: 0;
   overflow: hidden;
 }
 

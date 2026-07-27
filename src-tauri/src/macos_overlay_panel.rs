@@ -35,7 +35,16 @@ impl OverlayPanelConfig {
 }
 
 fn overlay_style_mask() -> StyleMask {
-    StyleMask::empty().borderless().nonactivating_panel()
+    // Titled + fullSizeContentView lets AppKit own the window corner radius.
+    // Borderless panels stay square unless we hardcode layer.cornerRadius.
+    StyleMask::empty()
+        .titled()
+        .full_size_content_view()
+        .nonactivating_panel()
+}
+
+fn dialog_host_style_mask() -> StyleMask {
+    StyleMask::empty().titled().full_size_content_view()
 }
 
 fn apply_base(panel: &dyn Panel, input: bool, config: &OverlayPanelConfig) {
@@ -89,12 +98,55 @@ pub fn ensure_input_panel(
     if let Ok(panel) = app.get_webview_panel(label) {
         // Re-apply on every ensure so level/style changes take effect without recreating the panel.
         config.apply_input(panel.as_ref());
+        apply_system_window_chrome(window);
         return Ok(());
     }
 
     let panel = window.to_panel::<OverlayInputPanel>()?;
     config.apply_input(panel.as_ref());
+    apply_system_window_chrome(window);
     Ok(())
+}
+
+/// Hide title-bar chrome while keeping a titled style mask so macOS applies its
+/// standard window corner radius (varies by OS / display). Do not set layer.cornerRadius.
+pub fn apply_system_window_chrome(window: &WebviewWindow) {
+    crate::logging::debug_if_err(
+        window.with_webview(|webview| unsafe {
+            configure_macos_system_window_chrome(webview.ns_window());
+        }),
+        "apply macos system window chrome",
+    );
+}
+
+unsafe fn configure_macos_system_window_chrome(ns_window: *mut std::ffi::c_void) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_window = ns_window.cast::<Object>();
+    if ns_window.is_null() {
+        return;
+    }
+
+    // NSWindowStyleMaskTitled | FullSizeContentView, preserve NonactivatingPanel when set.
+    const TITLED: usize = 1;
+    const NONACTIVATING_PANEL: usize = 1 << 7;
+    const FULL_SIZE_CONTENT_VIEW: usize = 1 << 15;
+    let current: usize = msg_send![ns_window, styleMask];
+    let next = TITLED | FULL_SIZE_CONTENT_VIEW | (current & NONACTIVATING_PANEL);
+    let _: () = msg_send![ns_window, setStyleMask: next];
+
+    // NSWindowTitleHidden — frameless look; AppKit still rounds the window.
+    let _: () = msg_send![ns_window, setTitleVisibility: 1_i64];
+    let _: () = msg_send![ns_window, setTitlebarAppearsTransparent: true];
+
+    // Hide traffic lights on overlay panels.
+    for button in 0_i64..=2 {
+        let btn: *mut Object = msg_send![ns_window, standardWindowButton: button];
+        if !btn.is_null() {
+            let _: () = msg_send![btn, setHidden: true];
+        }
+    }
 }
 
 pub fn show_input_overlay(app: &AppHandle, label: &str) -> tauri::Result<()> {
@@ -121,11 +173,14 @@ pub fn hide_overlay(app: &AppHandle, label: &str) {
 pub fn prepare_for_native_dialog(app: &AppHandle) {
     for label in ["main-panel", "shelf-picker"] {
         if let Ok(panel) = app.get_webview_panel(label) {
-            // Keep borderless, but drop NonactivatingPanel so the sheet can key/focus.
-            panel.set_style_mask(StyleMask::empty().borderless().into());
+            // Keep system-rounded titled chrome, but drop NonactivatingPanel so the sheet can key/focus.
+            panel.set_style_mask(dialog_host_style_mask().into());
             panel.set_level(PanelLevel::ModalPanel.value());
             panel.set_becomes_key_only_if_needed(false);
             panel.show_and_make_key();
+            if let Some(window) = app.get_webview_window(label) {
+                apply_system_window_chrome(&window);
+            }
         }
     }
 }
@@ -138,6 +193,9 @@ pub fn restore_after_native_dialog(app: &AppHandle) {
     ] {
         if let Ok(panel) = app.get_webview_panel(label) {
             config.apply_input(panel.as_ref());
+            if let Some(window) = app.get_webview_window(label) {
+                apply_system_window_chrome(&window);
+            }
         }
     }
 }

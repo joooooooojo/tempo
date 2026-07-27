@@ -69,6 +69,7 @@ export function AppIcon({
           alt=""
           className="size-full rounded-[38.9%] object-contain"
           loading="lazy"
+          decoding="async"
           onError={() => setImageFailed(true)}
         />
       ) : (

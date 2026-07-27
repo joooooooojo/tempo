@@ -627,8 +627,6 @@ fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
 #[cfg(target_os = "macos")]
 fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
     use std::fs;
-    use std::hash::{Hash, Hasher};
-    use std::process::Command;
 
     let app_bundle = find_app_bundle(path)?;
     let icon_path = resolve_macos_icon_path(&app_bundle)?;
@@ -637,60 +635,96 @@ fn extract_icon_png_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
         .to_string_lossy()
         .to_ascii_lowercase();
 
+    // Always serve ~128px thumbnails. Raw CFBundle PNG assets are often 512–1024px and
+    // decoding dozens of them on first search stalls WKWebView.
     if icon_ext == "png" {
-        match fs::read(&icon_path) {
-            Ok(bytes) => Some(bytes),
-            Err(error) => {
-                tracing::debug!(error = %error, "failed to read macos app icon png");
-                None
-            }
-        }
-    } else {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        icon_path.hash(&mut hasher);
-        let out = std::env::temp_dir().join(format!(
-            "tempo-icon-{}-{}.png",
-            std::process::id(),
-            hasher.finish()
-        ));
-
-        let status = match Command::new("sips")
-            .args(["-s", "format", "png", "-Z", "128"])
-            .arg(&icon_path)
-            .arg("--out")
-            .arg(&out)
-            .status()
-        {
-            Ok(status) => status,
-            Err(error) => {
-                tracing::debug!(error = %error, "failed to run macos icon converter");
-                return None;
-            }
-        };
-
-        if !status.success() {
-            if let Err(error) = fs::remove_file(&out) {
-                tracing::debug!(error = %error, "failed to remove incomplete macos icon output");
-            }
-            tracing::debug!(
-                status_code = status.code().unwrap_or(-1),
-                "macos icon converter exited unsuccessfully"
-            );
-            return None;
-        }
-
-        let bytes = match fs::read(&out) {
+        let bytes = match fs::read(&icon_path) {
             Ok(bytes) => bytes,
             Err(error) => {
-                tracing::debug!(error = %error, "failed to read converted macos app icon");
+                tracing::debug!(error = %error, "failed to read macos app icon png");
                 return None;
             }
         };
-        if let Err(error) = fs::remove_file(&out) {
-            tracing::debug!(error = %error, "failed to remove converted macos icon output");
+        if !png_exceeds_max_edge(&bytes, MACOS_ICON_MAX_EDGE) {
+            return Some(bytes);
         }
-        Some(bytes)
+        return convert_macos_icon_with_sips(&icon_path);
     }
+
+    convert_macos_icon_with_sips(&icon_path)
+}
+
+#[cfg(target_os = "macos")]
+const MACOS_ICON_MAX_EDGE: u32 = 128;
+
+#[cfg(target_os = "macos")]
+fn png_exceeds_max_edge(bytes: &[u8], max_edge: u32) -> bool {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    match decoder.read_info() {
+        Ok(reader) => {
+            let info = reader.info();
+            info.width > max_edge || info.height > max_edge
+        }
+        Err(_) => true,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn convert_macos_icon_with_sips(icon_path: &Path) -> Option<Vec<u8>> {
+    use std::fs;
+    use std::hash::{Hash, Hasher};
+    use std::process::Command;
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    icon_path.hash(&mut hasher);
+    let out = std::env::temp_dir().join(format!(
+        "tempo-icon-{}-{}.png",
+        std::process::id(),
+        hasher.finish()
+    ));
+
+    let status = match Command::new("sips")
+        .args([
+            "-s",
+            "format",
+            "png",
+            "-Z",
+            &MACOS_ICON_MAX_EDGE.to_string(),
+        ])
+        .arg(icon_path)
+        .arg("--out")
+        .arg(&out)
+        .status()
+    {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to run macos icon converter");
+            return None;
+        }
+    };
+
+    if !status.success() {
+        if let Err(error) = fs::remove_file(&out) {
+            tracing::debug!(error = %error, "failed to remove incomplete macos icon output");
+        }
+        tracing::debug!(
+            status_code = status.code().unwrap_or(-1),
+            "macos icon converter exited unsuccessfully"
+        );
+        return None;
+    }
+
+    let bytes = match fs::read(&out) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to read converted macos app icon");
+            return None;
+        }
+    };
+    if let Err(error) = fs::remove_file(&out) {
+        tracing::debug!(error = %error, "failed to remove converted macos icon output");
+    }
+    Some(bytes)
 }
 
 #[cfg(target_os = "macos")]
@@ -858,9 +892,255 @@ fn read_macos_plist_value(plist: &Path, key: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Finder-facing name + search aliases for a macOS `.app` bundle.
+///
+/// Official WeChat is `WeChat.app` on disk but displays as `微信` in Finder; indexing
+/// only the filesystem stem makes Chinese queries miss it.
+#[cfg(target_os = "macos")]
+pub fn macos_app_launcher_identity(app_bundle: &Path) -> Option<(String, Vec<String>)> {
+    let fs_name = app_bundle
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().trim().to_string())
+        .filter(|name| !name.is_empty())?;
+
+    let display_name = resolve_macos_display_name(app_bundle)
+        .map(|name| {
+            name.trim()
+                .trim_end_matches(".app")
+                .trim()
+                .to_string()
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| fs_name.clone());
+
+    let mut keywords = Vec::new();
+    push_unique_keyword(&mut keywords, &fs_name, &display_name);
+
+    let plist = app_bundle.join("Contents").join("Info.plist");
+    for key in ["CFBundleDisplayName", "CFBundleName"] {
+        if let Some(value) = read_macos_plist_value(&plist, key) {
+            push_unique_keyword(&mut keywords, &value, &display_name);
+        }
+    }
+    // Keep English marketing names searchable (企业微信 → also match "WeCom").
+    if let Some(value) = read_macos_lproj_bundle_name(app_bundle, "en") {
+        push_unique_keyword(&mut keywords, &value, &display_name);
+    }
+
+    Some((display_name, keywords))
+}
+
+#[cfg(target_os = "macos")]
+fn push_unique_keyword(keywords: &mut Vec<String>, candidate: &str, display_name: &str) {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return;
+    }
+    if candidate.eq_ignore_ascii_case(display_name) {
+        return;
+    }
+    if keywords
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(candidate))
+    {
+        return;
+    }
+    keywords.push(candidate.to_string());
+}
+
 #[cfg(target_os = "macos")]
 fn resolve_macos_display_name(app_bundle: &Path) -> Option<String> {
+    // Spotlight/Launch Services name matches Finder (Messages.app → 信息, Music.app → 音乐).
+    // System apps often have no zh-Hans InfoPlist.strings; root Info.plist stays English.
+    if let Some(name) = macos_mditem_display_name(app_bundle) {
+        return Some(name);
+    }
+
+    // Preferred-language strings (WeChat.app → 微信 when zh-Hans.lproj exists).
+    if let Some(name) = read_macos_localized_bundle_name(app_bundle) {
+        return Some(name);
+    }
+
+    // Base.lproj / root Info.plist — e.g. 企业微信.app stores 企业微信 in Base + root plist.
+    if let Some(name) = read_macos_lproj_bundle_name(app_bundle, "Base") {
+        return Some(name);
+    }
+
     let plist = app_bundle.join("Contents").join("Info.plist");
-    read_macos_plist_value(&plist, "CFBundleDisplayName")
+    if let Some(name) = read_macos_plist_value(&plist, "CFBundleDisplayName")
         .or_else(|| read_macos_plist_value(&plist, "CFBundleName"))
+    {
+        return Some(name);
+    }
+
+    if let Some(name) = macos_file_manager_display_name(app_bundle) {
+        return Some(name);
+    }
+
+    read_macos_lproj_bundle_name(app_bundle, "en")
+}
+
+/// Finder-localized display name via Metadata.framework (`kMDItemDisplayName`).
+#[cfg(target_os = "macos")]
+fn macos_mditem_display_name(app_bundle: &Path) -> Option<String> {
+    use core_foundation::base::{TCFType, CFTypeRef};
+    use core_foundation::string::{CFString, CFStringRef};
+    use core_foundation_sys::base::kCFAllocatorDefault;
+    use std::os::raw::c_void;
+
+    #[link(name = "CoreServices", kind = "framework")]
+    extern "C" {
+        static kMDItemDisplayName: CFStringRef;
+        fn MDItemCreate(allocator: *const c_void, path: CFStringRef) -> *const c_void;
+        fn MDItemCopyAttribute(item: *const c_void, name: CFStringRef) -> CFTypeRef;
+    }
+
+    let path = app_bundle.to_str()?;
+    let cf_path = CFString::new(path);
+    unsafe {
+        let item = MDItemCreate(
+            kCFAllocatorDefault as *const c_void,
+            cf_path.as_concrete_TypeRef(),
+        );
+        if item.is_null() {
+            return None;
+        }
+        let value = MDItemCopyAttribute(item, kMDItemDisplayName);
+        // MDItemCreate returns a +1 retained object.
+        core_foundation::base::CFRelease(item as CFTypeRef);
+        if value.is_null() {
+            return None;
+        }
+        let name = CFString::wrap_under_create_rule(value as CFStringRef).to_string();
+        let cleaned = name.trim().trim_end_matches(".app").trim();
+        (!cleaned.is_empty()).then(|| cleaned.to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_file_manager_display_name(app_bundle: &Path) -> Option<String> {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+    use std::ffi::CString;
+
+    let path = app_bundle.to_str()?;
+    let c_path = CString::new(path).ok()?;
+
+    unsafe {
+        let Some(string_class) = Class::get("NSString") else {
+            return None;
+        };
+        let Some(manager_class) = Class::get("NSFileManager") else {
+            return None;
+        };
+
+        let ns_path: *mut Object = msg_send![string_class, stringWithUTF8String: c_path.as_ptr()];
+        if ns_path.is_null() {
+            return None;
+        }
+        let manager: *mut Object = msg_send![manager_class, defaultManager];
+        if manager.is_null() {
+            return None;
+        }
+        let display: *mut Object = msg_send![manager, displayNameAtPath: ns_path];
+        let name = nsstring_to_rust_string(display);
+        (!name.is_empty()).then_some(name)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn read_macos_localized_bundle_name(app_bundle: &Path) -> Option<String> {
+    for lang in macos_preferred_lproj_names() {
+        if let Some(name) = read_macos_lproj_bundle_name(app_bundle, &lang) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn read_macos_lproj_bundle_name(app_bundle: &Path, lang: &str) -> Option<String> {
+    let strings = app_bundle
+        .join("Contents")
+        .join("Resources")
+        .join(format!("{lang}.lproj"))
+        .join("InfoPlist.strings");
+    read_macos_plist_value(&strings, "CFBundleDisplayName")
+        .or_else(|| read_macos_plist_value(&strings, "CFBundleName"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_preferred_lproj_names() -> Vec<String> {
+    let mut langs = Vec::new();
+    let Some(preferred) = macos_apple_languages() else {
+        return langs;
+    };
+
+    for lang in preferred {
+        let trimmed = lang.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        push_unique_lang(&mut langs, trimmed);
+
+        // zh-Hans-CN → zh-Hans; keep script-compatible bases only (not zh-Hant).
+        if let Some((base, _)) = trimmed.split_once('-') {
+            push_unique_lang(&mut langs, base);
+            // zh-Hans-CN also try zh_CN style folder names used by older bundles.
+            if base.eq_ignore_ascii_case("zh") || base.to_ascii_lowercase().starts_with("zh-") {
+                if trimmed.to_ascii_lowercase().contains("hans") {
+                    push_unique_lang(&mut langs, "zh_CN");
+                    push_unique_lang(&mut langs, "zh-Hans");
+                } else if trimmed.to_ascii_lowercase().contains("hant") {
+                    push_unique_lang(&mut langs, "zh_TW");
+                    push_unique_lang(&mut langs, "zh-Hant");
+                }
+            }
+        }
+        if let Some((base, _)) = trimmed.split_once('_') {
+            push_unique_lang(&mut langs, base);
+        }
+    }
+    langs
+}
+
+#[cfg(target_os = "macos")]
+fn push_unique_lang(langs: &mut Vec<String>, candidate: &str) {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return;
+    }
+    if langs
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(candidate))
+    {
+        return;
+    }
+    langs.push(candidate.to_string());
+}
+
+#[cfg(target_os = "macos")]
+fn macos_apple_languages() -> Option<Vec<String>> {
+    let output = std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleLanguages"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8(output.stdout).ok()?;
+    let mut langs = Vec::new();
+    for token in raw.split(|character: char| {
+        character == '"' || character == '(' || character == ')' || character == ','
+    }) {
+        let lang = token.trim();
+        if !lang.is_empty()
+            && lang
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            langs.push(lang.to_string());
+        }
+    }
+    (!langs.is_empty()).then_some(langs)
 }

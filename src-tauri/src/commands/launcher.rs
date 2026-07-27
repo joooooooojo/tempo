@@ -135,12 +135,13 @@ pub fn restore_launcher_index_snapshot(state: &AppState) {
     match restored {
         Ok(records) if !records.is_empty() => {
             let count = records.len();
-            *launcher_cache().write() = records;
+            *launcher_cache().write() = records.clone();
             tracing::info!(
                 platform = launcher_platform_key(),
                 count,
                 "restored launcher index snapshot"
             );
+            prewarm_launcher_icons(&records);
         }
         Ok(_) => {}
         Err(error) => {
@@ -817,6 +818,8 @@ fn publish_launcher_records(app: &AppHandle, records: &[LauncherRecord]) {
             })
     };
     if !changed {
+        // Snapshot unchanged, but memory icon cache is cold after restart — warm from disk.
+        prewarm_launcher_icons(records);
         return;
     }
 
@@ -837,6 +840,31 @@ fn publish_launcher_records(app: &AppHandle, records: &[LauncherRecord]) {
         app.emit_to("main-panel", "launcher:index-ready", ()),
         "emit launcher index ready",
     );
+    prewarm_launcher_icons(records);
+}
+
+fn prewarm_launcher_icons(records: &[LauncherRecord]) {
+    let items: Vec<(String, String)> = records
+        .iter()
+        .filter_map(|record| {
+            record
+                .icon_source
+                .as_ref()
+                .map(|source| (record.name.clone(), source.clone()))
+        })
+        .collect();
+    if items.is_empty() {
+        return;
+    }
+    crate::logging::spawn_named("tempo-app-icon-prewarm", move || {
+        let started = std::time::Instant::now();
+        crate::app_icons::AppIconService::global().prewarm(&items);
+        tracing::debug!(
+            count = items.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "prewarmed launcher app icons"
+        );
+    });
 }
 
 #[cfg(target_os = "windows")]
@@ -1175,18 +1203,31 @@ fn collect_macos_apps(root: &Path, depth: usize, records: &mut HashMap<String, L
             continue;
         }
         if path.extension().and_then(|value| value.to_str()) == Some("app") {
-            let name = path
+            let fs_name = path
                 .file_stem()
                 .and_then(|value| value.to_str())
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            if !is_launchable_name(&name) {
+            if !is_launchable_name(&fs_name) {
                 continue;
             }
             let target = path.to_string_lossy().into_owned();
-            records.entry(normalize_name(&name)).or_insert_with(|| {
-                launcher_record(name, "macOS 应用", target.clone(), Some(target), Vec::new())
+            let (display_name, extra_keywords) =
+                crate::platform::macos_app_launcher_identity(&path)
+                    .unwrap_or_else(|| (fs_name.clone(), Vec::new()));
+            if !is_launchable_name(&display_name) {
+                continue;
+            }
+            // Dedup by bundle path so localized renames never collide with another app.
+            records.entry(target.clone()).or_insert_with(|| {
+                launcher_record(
+                    display_name,
+                    "macOS 应用",
+                    target.clone(),
+                    Some(target),
+                    extra_keywords,
+                )
             });
         } else {
             collect_macos_apps(&path, depth + 1, records);
