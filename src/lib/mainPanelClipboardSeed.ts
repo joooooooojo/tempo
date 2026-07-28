@@ -1,5 +1,8 @@
 import type { MainPanelClipboardSeed } from "@/types";
 import type { QuickActionInput } from "@/apps/types";
+import {
+  formatClipboardFilesPreview,
+} from "@/lib/clipboardFiles";
 
 /** Short text goes straight into the search input; longer text uses a leading chip. */
 export const MAIN_PANEL_CLIPBOARD_INLINE_MAX_LEN = 48;
@@ -45,6 +48,13 @@ export function resolveQuickActionInput(
       height: seed.imageHeight,
     };
   }
+  if (seed?.kind === "file" && seed.entryId != null && seed.paths && seed.paths.length > 0) {
+    return {
+      kind: "file",
+      entryId: seed.entryId,
+      paths: seed.paths,
+    };
+  }
   if (seed?.kind === "text" && seed.fullText?.trim()) {
     return { kind: "text", text: seed.fullText.trim() };
   }
@@ -60,6 +70,12 @@ export type MainPanelClipboardChip =
       imageUrl: string;
       imageWidth?: number | null;
       imageHeight?: number | null;
+    }
+  | {
+      kind: "file";
+      entryId: number;
+      paths: string[];
+      label: string;
     };
 
 export function seedToMainPanelChip(
@@ -79,6 +95,19 @@ export function seedToMainPanelChip(
       imageUrl: seed.imageUrl,
       imageWidth: seed.imageWidth,
       imageHeight: seed.imageHeight,
+    };
+  }
+  if (seed.kind === "file" && seed.entryId != null) {
+    const paths =
+      seed.paths && seed.paths.length > 0
+        ? seed.paths
+        : [];
+    if (paths.length === 0) return null;
+    return {
+      kind: "file",
+      entryId: seed.entryId,
+      paths,
+      label: truncateClipboardChipLabel(formatClipboardFilesPreview(paths)),
     };
   }
   return null;

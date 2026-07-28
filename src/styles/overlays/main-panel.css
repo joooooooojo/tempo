@@ -381,6 +381,42 @@ html.main-panel-window #root {
   height: 17px;
 }
 
+.main-panel-clipboard-chip-file {
+  display: inline-flex;
+  align-items: center;
+}
+
+.main-panel-clipboard-chip:has(.clipboard-file-glyph) {
+  padding: 4px 8px;
+}
+
+.follow-tooltip-trigger {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+}
+
+.follow-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 6px 10px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow:
+    0 8px 24px hsl(0 0% 0% / 0.12),
+    0 1px 0 hsl(0 0% 100% / 0.04) inset;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .main-panel-loading-tile {
   display: flex;
   height: 84px;

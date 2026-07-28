@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppIcon } from "@/components/AppIcon";
+import { ClipboardFileGlyph } from "@/components/clipboard/ClipboardFileGlyph";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import {
   clipboardKindLabel,
@@ -30,6 +31,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import {
+  formatClipboardFilesFooter,
+  formatClipboardFilesPreview,
+  parseClipboardFilePaths,
+} from "@/lib/clipboardFiles";
 import { cn, formatRelativeTime, previewLines } from "@/lib/utils";
 import type { ClipboardEntry } from "@/types";
 
@@ -264,10 +270,14 @@ function ClipboardTableRow({
   onTogglePinned: () => void;
 }) {
   const isImage = entry.kind === "image";
+  const isFile = entry.kind === "file";
+  const filePaths = isFile ? parseClipboardFilePaths(entry.content) : [];
   const sourceLabel = clipboardSourceLabel(entry);
   const detailLabel = isImage
     ? shelfImageSize(entry.image_width, entry.image_height).replace(/\s×\s/g, "×")
-    : `${Array.from(entry.content).length} 字符`;
+    : isFile
+      ? formatClipboardFilesFooter(filePaths)
+      : `${Array.from(entry.content).length} 字符`;
 
   return (
     <TableRow
@@ -281,7 +291,11 @@ function ClipboardTableRow({
           <span
             className={cn(
               "font-semibold",
-              isImage ? "text-amber-700 dark:text-amber-300" : "text-emerald-600 dark:text-emerald-300"
+              isImage
+                ? "text-amber-700 dark:text-amber-300"
+                : isFile
+                  ? "text-cyan-700 dark:text-cyan-300"
+                  : "text-emerald-600 dark:text-emerald-300"
             )}
           >
             {clipboardKindLabel(entry.kind)}
@@ -305,6 +319,18 @@ function ClipboardTableRow({
               </span>
             </span>
           </button>
+        ) : isFile ? (
+          <div
+            className="inline-flex max-w-full items-center gap-2"
+            title={filePaths.join("\n")}
+          >
+            <span className="flex h-10 w-9 shrink-0 items-center justify-center">
+              <ClipboardFileGlyph paths={filePaths} size="chip" />
+            </span>
+            <pre className="m-0 block min-w-0 truncate font-sans text-[12px] leading-[17px] text-foreground/88">
+              {formatClipboardFilesPreview(filePaths)}
+            </pre>
+          </div>
         ) : (
           <pre className="m-0 block max-w-full truncate font-sans text-[12px] leading-[17px] text-foreground/88">
             {previewLines(entry.content, 1)}

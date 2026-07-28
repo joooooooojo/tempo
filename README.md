@@ -118,7 +118,7 @@ await tempo.invoke("hello", { who: "Tempo" });
 await tempo.notify.show({ title: "Hi" });
 ```
 
-Action 可通过 `accepts: ["text" | "image"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一；两种目标都会收到结构化的 `{ actionId, query, input }`。
+Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一；两种目标都会收到结构化的 `{ actionId, query, input }`。
 
 宿主侧常用 Bridge 方法（节选）：`mainPanel.hide` / `mainPanel.back` / `mainPanel.setSize`、独立窗口专用的 `window.setRect` / `window.close`、`app.open`、`external.open`（仅 http(s)/mailto）、`notify.show`、`theme.get` / `theme.onChange`、`storage.plugin.get|set|delete|list`、`session.push` 等。
 

@@ -81,7 +81,10 @@ Manifest v1 保持兼容，在现有 `contributes.mcpTools` 项上增加可选�
   "inputSchema": {
     "type": "object",
     "properties": {
-      "id": { "type": "string" }
+      "id": {
+        "type": "string",
+        "description": "Stored note id to summarize"
+      }
     },
     "required": ["id"],
     "additionalProperties": false
@@ -89,7 +92,10 @@ Manifest v1 保持兼容，在现有 `contributes.mcpTools` 项上增加可选�
   "outputSchema": {
     "type": "object",
     "properties": {
-      "summary": { "type": "string" }
+      "summary": {
+        "type": "string",
+        "description": "Short summary of the note"
+      }
     },
     "required": ["summary"]
   },
@@ -109,6 +115,7 @@ Manifest v1 保持兼容，在现有 `contributes.mcpTools` 项上增加可选�
 - 每个插件最多声明 64 个 MCP tools，description 最长 1024 字符。
 - `command` 必须引用同包 `commands[].id`，且插件必须包含 `main`。
 - `inputSchema` 缺省为 `{ "type": "object", "properties": {} }`。
+- 建议为 `inputSchema` / `outputSchema` 的每个 `properties.*` 提供非空 `description`，便于 MCP 客户端填参与理解返回值；**description 不是必填**，缺失不会导致校验失败。
 - 输入、输出 Schema 必须是 JSON object，且能够被 JSON Schema 编译器接受。
 - 每个输入或输出 Schema 序列化后不得超过 64 KiB。
 - 输入 Schema 顶层必须声明 `type: "object"`，与 MCP arguments 模型一致。

@@ -213,6 +213,16 @@ html.shelf-picker-window #root,
   color: #fff8f1;
 }
 
+.shelf-card__header--file {
+  background:
+    linear-gradient(
+      135deg,
+      hsl(190 70% 38% / 0.94) 0%,
+      hsl(196 64% 28% / 0.96) 100%
+    );
+  color: #ecfeff;
+}
+
 .shelf-card__header--snippet {
   background:
     linear-gradient(
@@ -231,6 +241,11 @@ html.shelf-picker-window #root,
 
 .shelf-card__header--image .shelf-card__app {
   color: #fff8f1;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.shelf-card__header--file .shelf-card__app {
+  color: #ecfeff;
   background: rgba(0, 0, 0, 0.28);
 }
 

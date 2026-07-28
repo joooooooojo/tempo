@@ -45,6 +45,11 @@
   color: #fff7ed;
 }
 
+.shelf-card__header--file {
+  background: linear-gradient(180deg, rgba(14, 116, 144, 0.95), rgba(21, 94, 117, 0.94));
+  color: #ecfeff;
+}
+
 .shelf-card__header--snippet {
   background: linear-gradient(180deg, rgba(59, 130, 246, 0.95), rgba(37, 99, 235, 0.92));
   color: #eff6ff;
@@ -95,6 +100,11 @@
 
 .shelf-card__header--image .shelf-card__app {
   color: #fff7ed;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.shelf-card__header--file .shelf-card__app {
+  color: #ecfeff;
   background: rgba(0, 0, 0, 0.24);
 }
 
@@ -163,4 +173,7 @@
   text-align: center;
   font-size: 11px;
   color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -1,6 +1,11 @@
 use crate::clipboard_db::{
-    encode_rgba_png, get_clipboard_entry, hash_bytes, insert_clipboard_image,
-    insert_clipboard_text, touch_clipboard_entry, ClipboardEntry,
+    encode_rgba_png, get_clipboard_entry, get_clipboard_entry_by_content_hash, hash_bytes,
+    insert_clipboard_files, insert_clipboard_image, insert_clipboard_text, touch_clipboard_entry,
+    ClipboardEntry,
+};
+use crate::clipboard_files::{
+    ensure_clipboard_paths_exist, parse_clipboard_paths, read_clipboard_file_paths,
+    serialize_clipboard_paths, write_clipboard_file_paths, FileClipboardError,
 };
 use crate::clipboard_images::save_clipboard_image_png;
 use crate::clipboard_images::{
@@ -12,6 +17,7 @@ use arboard::ImageData;
 use arboard::{Clipboard, Error as ClipboardError};
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "windows")]
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -39,6 +45,7 @@ enum ClipboardCaptureResult {
 }
 
 enum ClipboardSnapshot {
+    Files(Vec<PathBuf>),
     Image(ImageData<'static>),
     Text(String),
     Empty,
@@ -58,6 +65,7 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
     crate::logging::spawn_named("tempo-clipboard-watcher", move || {
         let mut last_text_hash = String::new();
         let mut last_image_hash = String::new();
+        let mut last_files_hash = String::new();
         let mut last_retention_purge = std::time::Instant::now();
 
         #[cfg(target_os = "windows")]
@@ -73,7 +81,11 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
         #[cfg(target_os = "macos")]
         let mut last_pasteboard_change_count = macos_pasteboard_change_count();
 
-        baseline_clipboard_hashes(&mut last_text_hash, &mut last_image_hash);
+        baseline_clipboard_hashes(
+            &mut last_text_hash,
+            &mut last_image_hash,
+            &mut last_files_hash,
+        );
 
         loop {
             let should_capture = wait_for_clipboard_change(
@@ -144,6 +156,7 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
                 max_entries,
                 &mut last_text_hash,
                 &mut last_image_hash,
+                &mut last_files_hash,
             ) {
                 ClipboardCaptureResult::Captured { changed } => changed,
                 ClipboardCaptureResult::Busy => {
@@ -161,6 +174,7 @@ pub fn start_clipboard_watcher(app: AppHandle, state: AppState) {
                             max_entries,
                             &mut last_text_hash,
                             &mut last_image_hash,
+                            &mut last_files_hash,
                         ) {
                             ClipboardCaptureResult::Captured { changed } => changed,
                             ClipboardCaptureResult::Busy => {
@@ -215,8 +229,22 @@ fn wait_for_clipboard_change(
 
 /// Read current clipboard hashes without inserting history or seeding the main panel.
 /// Prevents startup (or a spurious first poll) from treating pre-existing content as a fresh copy.
-fn baseline_clipboard_hashes(last_text_hash: &mut String, last_image_hash: &mut String) {
+fn baseline_clipboard_hashes(
+    last_text_hash: &mut String,
+    last_image_hash: &mut String,
+    last_files_hash: &mut String,
+) {
     match read_clipboard_snapshot() {
+        Ok(ClipboardSnapshot::Files(paths)) => {
+            let Some(content) = serialize_clipboard_paths(&paths) else {
+                return;
+            };
+            let hash = crate::clipboard_db::hash_content(&content);
+            last_files_hash.clear();
+            last_files_hash.push_str(&hash);
+            last_text_hash.clear();
+            last_image_hash.clear();
+        }
         Ok(ClipboardSnapshot::Image(image)) => {
             let width = image.width as u32;
             let height = image.height as u32;
@@ -234,6 +262,7 @@ fn baseline_clipboard_hashes(last_text_hash: &mut String, last_image_hash: &mut 
             last_image_hash.clear();
             last_image_hash.push_str(&content_hash);
             last_text_hash.clear();
+            last_files_hash.clear();
         }
         Ok(ClipboardSnapshot::Text(text)) => {
             if text.is_empty() {
@@ -243,6 +272,7 @@ fn baseline_clipboard_hashes(last_text_hash: &mut String, last_image_hash: &mut 
             last_text_hash.clear();
             last_text_hash.push_str(&hash);
             last_image_hash.clear();
+            last_files_hash.clear();
         }
         Ok(ClipboardSnapshot::Empty) | Err(_) => {}
     }
@@ -256,8 +286,36 @@ fn capture_clipboard_snapshot(
     max_entries: u32,
     last_text_hash: &mut String,
     last_image_hash: &mut String,
+    last_files_hash: &mut String,
 ) -> ClipboardCaptureResult {
     match read_clipboard_snapshot() {
+        Ok(ClipboardSnapshot::Files(paths)) => {
+            let Some(content) = serialize_clipboard_paths(&paths) else {
+                return ClipboardCaptureResult::Captured { changed: false };
+            };
+            let hash = crate::clipboard_db::hash_content(&content);
+            if hash == *last_files_hash {
+                // Same paths re-copied: history stays, but main-panel seed must refresh
+                // so clearing the chip then copying again can re-fill.
+                let seeded = refresh_main_panel_seed_by_hash(state, &hash);
+                return ClipboardCaptureResult::Captured { changed: seeded };
+            }
+
+            last_files_hash.clear();
+            last_files_hash.push_str(&hash);
+            last_text_hash.clear();
+            last_image_hash.clear();
+
+            let inserted = {
+                let conn = state.db.lock();
+                insert_clipboard_files(&conn, &paths, source_app, source_process, max_entries)
+            };
+            let changed = inserted.is_some();
+            if let Some(entry) = &inserted {
+                record_recent_clipboard_for_main_panel(state, entry);
+            }
+            ClipboardCaptureResult::Captured { changed }
+        }
         Ok(ClipboardSnapshot::Image(image)) => {
             let width = image.width as u32;
             let height = image.height as u32;
@@ -275,12 +333,14 @@ fn capture_clipboard_snapshot(
 
             let content_hash = hash_bytes(&png_bytes);
             if content_hash == *last_image_hash {
-                return ClipboardCaptureResult::Captured { changed: false };
+                let seeded = refresh_main_panel_seed_by_hash(state, &content_hash);
+                return ClipboardCaptureResult::Captured { changed: seeded };
             }
 
             last_image_hash.clear();
             last_image_hash.push_str(&content_hash);
             last_text_hash.clear();
+            last_files_hash.clear();
 
             let inserted =
                 if let Ok(storage_key) = save_clipboard_image_png(app, &content_hash, &png_bytes) {
@@ -317,7 +377,7 @@ fn capture_clipboard_snapshot(
                 record_recent_clipboard_for_main_panel(state, entry);
             }
 
-            return ClipboardCaptureResult::Captured { changed };
+            ClipboardCaptureResult::Captured { changed }
         }
         Ok(ClipboardSnapshot::Text(text)) => {
             if text.is_empty() {
@@ -326,12 +386,14 @@ fn capture_clipboard_snapshot(
 
             let hash = crate::clipboard_db::hash_content(&text);
             if hash == *last_text_hash {
-                return ClipboardCaptureResult::Captured { changed: false };
+                let seeded = refresh_main_panel_seed_by_hash(state, &hash);
+                return ClipboardCaptureResult::Captured { changed: seeded };
             }
 
             last_text_hash.clear();
             last_text_hash.push_str(&hash);
             last_image_hash.clear();
+            last_files_hash.clear();
 
             let inserted = {
                 let conn = state.db.lock();
@@ -354,21 +416,41 @@ fn capture_clipboard_snapshot(
 
 fn read_clipboard_snapshot() -> Result<ClipboardSnapshot, ClipboardError> {
     let _guard = clipboard_access_guard();
-    let mut clipboard = Clipboard::new()?;
 
     #[cfg(target_os = "windows")]
     {
         return match windows_preferred_clipboard_format() {
+            Some(WindowsClipboardFormat::Files) => match read_clipboard_file_paths() {
+                Ok(Some(paths)) => Ok(ClipboardSnapshot::Files(paths)),
+                Ok(None) => Ok(ClipboardSnapshot::Empty),
+                Err(FileClipboardError::Busy) => Err(ClipboardError::ClipboardOccupied),
+                Err(FileClipboardError::Unavailable) => Ok(ClipboardSnapshot::Empty),
+            },
             Some(WindowsClipboardFormat::Image) => {
+                let mut clipboard = Clipboard::new()?;
                 clipboard.get_image().map(ClipboardSnapshot::Image)
             }
-            Some(WindowsClipboardFormat::Text) => clipboard.get_text().map(ClipboardSnapshot::Text),
+            Some(WindowsClipboardFormat::Text) => {
+                let mut clipboard = Clipboard::new()?;
+                clipboard.get_text().map(ClipboardSnapshot::Text)
+            }
             None => Ok(ClipboardSnapshot::Empty),
         };
     }
 
     #[cfg(not(target_os = "windows"))]
     {
+        #[cfg(target_os = "macos")]
+        {
+            match read_clipboard_file_paths() {
+                Ok(Some(paths)) => return Ok(ClipboardSnapshot::Files(paths)),
+                Ok(None) => {}
+                Err(FileClipboardError::Busy) => return Err(ClipboardError::ClipboardOccupied),
+                Err(FileClipboardError::Unavailable) => {}
+            }
+        }
+
+        let mut clipboard = Clipboard::new()?;
         match clipboard.get_image() {
             Ok(image) => Ok(ClipboardSnapshot::Image(image)),
             Err(error) if clipboard_error_is_busy(&error) => Err(error),
@@ -392,9 +474,98 @@ fn clipboard_error_is_busy(error: &ClipboardError) -> bool {
     matches!(error, ClipboardError::ClipboardOccupied)
 }
 
+/// Manually ingest whatever is currently on the OS clipboard into history + main-panel seed.
+/// Used when the user pastes into the main panel after the auto-seed window has expired.
+pub fn ingest_system_clipboard_for_main_panel(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<Option<ClipboardEntry>, String> {
+    let settings = {
+        let conn = state.db.lock();
+        load_settings(&conn)
+    };
+    let max_entries = settings.clipboard_max_entries.max(1).min(1000);
+    let (source_app, source_process) = resolve_clipboard_source(
+        get_foreground_app(),
+        None,
+        None,
+    );
+
+    let snapshot = read_clipboard_snapshot().map_err(|error| error.to_string())?;
+    let entry = match snapshot {
+        ClipboardSnapshot::Files(paths) => {
+            let conn = state.db.lock();
+            insert_clipboard_files(
+                &conn,
+                &paths,
+                source_app.as_deref(),
+                source_process.as_deref(),
+                max_entries,
+            )
+        }
+        ClipboardSnapshot::Image(image) => {
+            let width = image.width as u32;
+            let height = image.height as u32;
+            let pixel_count = width as u64 * height as u64;
+            if pixel_count == 0 || pixel_count > crate::clipboard_db::MAX_CLIPBOARD_IMAGE_PIXELS {
+                return Ok(None);
+            }
+            let Some(png_bytes) = encode_rgba_png(width, height, image.bytes.as_ref()) else {
+                return Ok(None);
+            };
+            if png_bytes.len() > crate::clipboard_db::MAX_CLIPBOARD_IMAGE_BYTES {
+                return Ok(None);
+            }
+            let content_hash = hash_bytes(&png_bytes);
+            let Ok(storage_key) = save_clipboard_image_png(app, &content_hash, &png_bytes) else {
+                return Ok(None);
+            };
+            cache_decoded_clipboard_image(
+                state,
+                &storage_key,
+                width,
+                height,
+                image.bytes.as_ref().to_vec(),
+            );
+            let conn = state.db.lock();
+            insert_clipboard_image(
+                &conn,
+                &storage_key,
+                &content_hash,
+                width,
+                height,
+                source_app.as_deref(),
+                source_process.as_deref(),
+                max_entries,
+            )
+        }
+        ClipboardSnapshot::Text(text) => {
+            if text.trim().is_empty() {
+                return Ok(None);
+            }
+            let conn = state.db.lock();
+            insert_clipboard_text(
+                &conn,
+                &text,
+                source_app.as_deref(),
+                source_process.as_deref(),
+                max_entries,
+            )
+        }
+        ClipboardSnapshot::Empty => None,
+    };
+
+    if let Some(entry) = &entry {
+        record_recent_clipboard_for_main_panel(state, entry);
+        emit_clipboard_update(app);
+    }
+    Ok(entry)
+}
+
 #[cfg(target_os = "windows")]
 #[derive(Clone, Copy)]
 enum WindowsClipboardFormat {
+    Files,
     Image,
     Text,
 }
@@ -405,8 +576,13 @@ fn windows_preferred_clipboard_format() -> Option<WindowsClipboardFormat> {
         IsClipboardFormatAvailable, RegisterClipboardFormatW,
     };
 
+    const CF_HDROP: u32 = 15;
     const CF_UNICODETEXT: u32 = 13;
     const CF_DIBV5: u32 = 17;
+
+    if unsafe { IsClipboardFormatAvailable(CF_HDROP).is_ok() } {
+        return Some(WindowsClipboardFormat::Files);
+    }
 
     let png_name = windows_wide("PNG");
     let png_format = unsafe { RegisterClipboardFormatW(windows::core::PCWSTR(png_name.as_ptr())) };
@@ -677,6 +853,14 @@ pub fn write_clipboard_text(state: &AppState, text: &str) -> Result<(), String> 
     })
 }
 
+pub fn write_clipboard_files(state: &AppState, paths: &[PathBuf]) -> Result<(), String> {
+    debug_clipboard_log(format!("write files requested count={}", paths.len()));
+    with_skip_capture(state, || {
+        let _guard = clipboard_access_guard();
+        write_clipboard_file_paths(paths)
+    })
+}
+
 pub fn write_clipboard_image(
     state: &AppState,
     app: &AppHandle,
@@ -792,6 +976,15 @@ pub fn use_clipboard_entry(
             debug_clipboard_log("plain_text_only=true; image copy continues because this setting only applies to text");
         }
         write_clipboard_image(state, app, &entry.content)?;
+    } else if entry.kind == "file" {
+        let paths = parse_clipboard_paths(&entry.content)?;
+        ensure_clipboard_paths_exist(&paths)?;
+        debug_clipboard_log(format!(
+            "use entry id={} kind=file path_count={}",
+            entry.id,
+            paths.len()
+        ));
+        write_clipboard_files(state, &paths)?;
     } else {
         debug_clipboard_log(format!(
             "use entry id={} kind={} text_chars={}",
@@ -873,6 +1066,11 @@ pub(crate) fn clipboard_entry_content_summary(
             clipboard_reference_kind(&entry.content),
             entry.content.chars().count()
         )
+    } else if entry.kind == "file" {
+        let path_count = parse_clipboard_paths(&entry.content)
+            .map(|paths| paths.len())
+            .unwrap_or(0);
+        format!("file_paths={path_count}")
     } else {
         format!("text_chars={}", entry.content.chars().count())
     }
@@ -958,6 +1156,20 @@ pub(crate) fn record_recent_clipboard_for_main_panel(state: &AppState, entry: &C
         image_width: entry.image_width,
         image_height: entry.image_height,
     });
+}
+
+/// Same clipboard payload re-copied: reuse history row but refresh main-panel seed timestamp.
+/// Returns true when a seed was written (callers may emit UI updates).
+fn refresh_main_panel_seed_by_hash(state: &AppState, content_hash: &str) -> bool {
+    let entry = {
+        let conn = state.db.lock();
+        get_clipboard_entry_by_content_hash(&conn, content_hash)
+    };
+    let Some(entry) = entry else {
+        return false;
+    };
+    record_recent_clipboard_for_main_panel(state, &entry);
+    true
 }
 
 fn with_skip_capture<T>(

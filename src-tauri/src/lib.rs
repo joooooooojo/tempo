@@ -8,6 +8,7 @@ mod app_icons;
 mod asset_protocol;
 mod auxiliary_windows;
 mod clipboard_db;
+mod clipboard_files;
 mod clipboard_images;
 mod clipboard_watcher;
 mod logging;
@@ -370,6 +371,7 @@ pub fn run() {
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::copy_clipboard_entry,
             commands::clipboard::get_main_panel_clipboard_seed,
+            commands::clipboard::seed_main_panel_from_system_clipboard,
             commands::clipboard::clear_main_panel_clipboard_seed,
             commands::snippets::get_snippets,
             commands::snippets::get_snippet_groups,

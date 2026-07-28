@@ -145,6 +145,27 @@ pub fn insert_clipboard_image(
     )
 }
 
+pub fn insert_clipboard_files(
+    conn: &Connection,
+    paths: &[std::path::PathBuf],
+    source_app: Option<&str>,
+    source_process: Option<&str>,
+    max_entries: u32,
+) -> Option<ClipboardEntry> {
+    let content = crate::clipboard_files::serialize_clipboard_paths(paths)?;
+    upsert_clipboard_entry(
+        conn,
+        &content,
+        &hash_content(&content),
+        "file",
+        source_app,
+        source_process,
+        None,
+        None,
+        max_entries,
+    )
+}
+
 fn upsert_clipboard_entry(
     conn: &Connection,
     content: &str,
@@ -239,6 +260,21 @@ pub fn get_clipboard_entry(conn: &Connection, id: i64) -> Option<ClipboardEntry>
             map_clipboard_row,
         ),
         "load clipboard entry",
+    )
+}
+
+pub fn get_clipboard_entry_by_content_hash(
+    conn: &Connection,
+    content_hash: &str,
+) -> Option<ClipboardEntry> {
+    optional_db_row(
+        conn.query_row(
+            "SELECT id, content, kind, source_app, source_process, image_width, image_height, pinned, created_at
+         FROM clipboard_history WHERE content_hash = ?1 ORDER BY id DESC LIMIT 1",
+            [content_hash],
+            map_clipboard_row,
+        ),
+        "load clipboard entry by content hash",
     )
 }
 

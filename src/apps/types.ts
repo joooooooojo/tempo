@@ -62,7 +62,7 @@ export type BuiltinApp = TempoApp;
 export type OpenBuiltinAppOptions = OpenAppOptions;
 
 /** Input kinds an action can declare in `accepts`. */
-export type QuickActionAcceptKind = "text" | "image";
+export type QuickActionAcceptKind = "text" | "image" | "file";
 
 /** Runtime main-panel input, including the empty state. */
 export type QuickActionInputKind = "none" | QuickActionAcceptKind;
@@ -76,6 +76,11 @@ export type QuickActionInput =
       imageUrl: string;
       width?: number | null;
       height?: number | null;
+    }
+  | {
+      kind: "file";
+      entryId: number;
+      paths: string[];
     };
 
 /** Runtime helpers passed into a quick action when the user runs it. */

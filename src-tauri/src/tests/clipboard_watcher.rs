@@ -63,3 +63,23 @@ fn clipboard_entry_summary_does_not_include_text_content() {
     assert!(!summary.contains("secret"));
     assert!(!summary.contains("clipboard text"));
 }
+
+#[test]
+fn clipboard_entry_summary_for_files_reports_path_count() {
+    let entry = ClipboardEntry {
+        id: 2,
+        content: r#"["C:\\a.pdf","C:\\b.docx"]"#.to_string(),
+        kind: "file".to_string(),
+        source_app: None,
+        source_process: None,
+        source_icon_data_url: None,
+        image_width: None,
+        image_height: None,
+        pinned: false,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+
+    let summary = clipboard_entry_content_summary(&entry);
+    assert_eq!(summary, "file_paths=2");
+    assert!(!summary.contains("a.pdf"));
+}

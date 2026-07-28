@@ -9,6 +9,12 @@ export type ActionInput =
       filePath?: string;
       width?: number | null;
       height?: number | null;
+    }
+  | {
+      kind: "file";
+      entryId: number;
+      /** Absolute local paths from a clipboard file history entry. */
+      paths: string[];
     };
 
 /** Payload delivered to an action's target app or Runtime command. */

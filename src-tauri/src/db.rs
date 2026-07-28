@@ -228,7 +228,7 @@ pub struct RecentClipboardForMainPanel {
     pub image_height: Option<u32>,
 }
 
-pub const MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS: i64 = 10_000;
+pub const MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS: i64 = 30_000;
 
 #[derive(Debug, Default)]
 pub struct ClipboardRuntime {

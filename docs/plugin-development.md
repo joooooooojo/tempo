@@ -2,7 +2,7 @@
 
 本文面向希望为 Tempo 开发第三方插件的开发者，描述当前已经实现的插件格式、运行方式和调试流程。
 
-- Host API 版本：`1.2.0`
+- Host API 版本：`1.3.0`
 - Manifest 版本：`1`
 - [Host API 参考](./plugin-host-api.md)
 - [manifest.json JSON Schema](./schemas/plugin-manifest.schema.json)
@@ -52,7 +52,7 @@ com.example.my-plugin/
   "version": "1.0.0",
   "engines": {
     "tempo": ">=1.2.0",
-    "pluginApi": "^1.2.0"
+    "pluginApi": "^1.3.0"
   },
   "kind": "ui",
   "contributes": {
@@ -236,7 +236,8 @@ Runtime 运行在独立 Node 进程中，拥有与本机 Node 相近的文件、
 ```
 
 UI 可以将 `imageUrl` 用于 `<img>`、Canvas 或图片编辑器。文字输入的结构为
-`{ kind: "text", text: "..." }`；无输入为 `{ kind: "none" }`。
+`{ kind: "text", text: "..." }`；文件输入为 `{ kind: "file", entryId, paths }`；无输入为
+`{ kind: "none" }`。
 
 直接执行 Runtime command：
 
@@ -258,13 +259,16 @@ UI 可以将 `imageUrl` 用于 `<img>`、Canvas 或图片编辑器。文字输�
   └─ action.command → Runtime 执行 handler，invocation 作为 params
 ```
 
-`accepts` 支持 `text`、`image`，默认是 `["text"]`。它既表示 action 能消费的输入，
+`accepts` 支持 `text`、`image`、`file`，默认是 `["text"]`。它既表示 action 能消费的输入，
 也决定推荐时机。兼容字段 `requiresQuery` 仍可读取，但一律映射为 `["text"]`；新插件应使用
 `accepts`。
 
+文件输入来自剪贴板文件历史：`input.kind === "file"` 时，UI 与 Runtime 都会收到本机绝对路径数组
+`paths`（不复制文件内容）。图片 Runtime command 仍额外提供 `input.filePath`（本地 PNG 缓存路径）。
+
 一个 command 可以被多个 action、hook 或 MCP tool 复用。仅声明 command 不会自动产生主面板入口。
 `query` 保留用于兼容旧 action 和标题模板，实际输入以 `input` 为准。`visibility` 默认是
-`private`；Host API `1.2.0` 的 UI、Action、Hook 和 MCP 调用都只路由到当前插件。
+`private`；Host API `1.3.0` 的 UI、Action、Hook 和 MCP 调用都只路由到当前插件。
 `public` 为后续跨插件调用保留，当前没有向第三方插件开放跨插件 command 入口。
 
 ### hooks
@@ -375,7 +379,10 @@ const who = await tempo.settings.get("default-who", "world");
       "inputSchema": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" }
+          "id": {
+            "type": "string",
+            "description": "Stored note id to summarize"
+          }
         },
         "required": ["id"],
         "additionalProperties": false
@@ -383,7 +390,10 @@ const who = await tempo.settings.get("default-who", "world");
       "outputSchema": {
         "type": "object",
         "properties": {
-          "summary": { "type": "string" }
+          "summary": {
+            "type": "string",
+            "description": "Short summary of the note"
+          }
         },
         "required": ["summary"]
       },
@@ -404,8 +414,10 @@ Tempo 会为工具生成稳定的外部名称
 MCP `tools/list` 中。插件不需要也不能自行启动 MCP Server。
 
 `inputSchema` 默认是空 object Schema，输入与可选的 `outputSchema` 都由宿主在 Runtime
-调用前后校验。annotations 是 MCP 客户端提示，不会扩大插件权限。插件工具公共契约变化后，
-现有 MCP 授权会自动失效，用户需要在设置中重新确认。
+调用前后校验。建议为 `inputSchema` / `outputSchema` 的每个 `properties.*` 写上非空
+`description`（便于 MCP / AI 客户端理解参数），但**不是必填**，缺省不会导致安装失败。
+annotations 是 MCP 客户端提示，不会扩大插件权限。插件工具公共契约变化后，现有 MCP
+授权会自动失效，用户需要在设置中重新确认。
 
 ## 5. 窗口尺寸和位置
 
@@ -470,7 +482,7 @@ interface PluginContext {
 - `action/hook/mcpTool.command` 是否引用了同包 `commands[].id`。
 - `main` 和 `index.html` 是否位于包根目录。
 - manifest 声明的 command 是否在 `activate` 中注册。
-- `engines.pluginApi` 是否包含当前 Host API `1.2.0`。
+- `engines.pluginApi` 是否包含当前 Host API `1.3.0`。
 - 插件是否已信任、启用，含 `main` 时 Node Runtime 是否已安装。
 
 ## 8. 发布前检查

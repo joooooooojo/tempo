@@ -434,7 +434,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["text", "image"]
+            "enum": ["text", "image", "file"]
           },
           "default": ["text"],
           "description": "Input kinds for which this action is recommended and can run."
@@ -502,10 +502,12 @@
           "$ref": "#/$defs/localId"
         },
         "inputSchema": {
-          "$ref": "#/$defs/mcpObjectSchema"
+          "$ref": "#/$defs/mcpObjectSchema",
+          "description": "JSON Schema for tool arguments. Prefer a non-empty description on each properties.* entry for MCP / AI clients (optional, not required)."
         },
         "outputSchema": {
-          "$ref": "#/$defs/mcpObjectSchema"
+          "$ref": "#/$defs/mcpObjectSchema",
+          "description": "JSON Schema for tool results. Prefer a non-empty description on each properties.* entry (optional, not required)."
         },
         "annotations": {
           "$ref": "#/$defs/mcpToolAnnotations"
@@ -519,6 +521,21 @@
       "properties": {
         "type": {
           "const": "object"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/mcpPropertySchema"
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {
+          "type": ["boolean", "object"]
         }
       },
       "additionalProperties": true,
@@ -526,6 +543,17 @@
         "type": "object",
         "properties": {}
       }
+    },
+    "mcpPropertySchema": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional human-readable parameter description for MCP clients / AI tool callers. Recommended for both inputSchema and outputSchema properties."
+        }
+      },
+      "additionalProperties": true
     },
     "mcpToolAnnotations": {
       "type": "object",

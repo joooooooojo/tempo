@@ -15,7 +15,9 @@ pub struct ClipboardHistoryPage {
     pub has_more: bool,
 }
 use crate::clipboard_watcher::prewarm_clipboard_image_cache;
-use crate::clipboard_watcher::{copy_clipboard_entry_by_id, write_clipboard_text};
+use crate::clipboard_watcher::{
+    copy_clipboard_entry_by_id, ingest_system_clipboard_for_main_panel, write_clipboard_text,
+};
 use crate::db::{AppState, MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS};
 
 fn hydrate_clipboard_icons(entries: &mut [ClipboardEntry]) {
@@ -136,6 +138,60 @@ pub struct MainPanelClipboardSeed {
     pub image_width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
+}
+
+fn main_panel_seed_from_entry(
+    entry: &crate::clipboard_db::ClipboardEntry,
+) -> Result<Option<MainPanelClipboardSeed>, String> {
+    if entry.kind == "text" {
+        if entry.content.trim().is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(MainPanelClipboardSeed {
+            kind: "text".into(),
+            full_text: Some(entry.content.clone()),
+            entry_id: Some(entry.id),
+            image_url: None,
+            image_width: None,
+            image_height: None,
+            paths: None,
+        }));
+    }
+
+    if entry.kind == "image" {
+        return Ok(Some(MainPanelClipboardSeed {
+            kind: "image".into(),
+            full_text: None,
+            entry_id: Some(entry.id),
+            image_url: Some(hydrate_clipboard_image_content(&entry.content)),
+            image_width: entry.image_width,
+            image_height: entry.image_height,
+            paths: None,
+        }));
+    }
+
+    if entry.kind == "file" {
+        let paths = crate::clipboard_files::parse_clipboard_paths(&entry.content)?
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        if paths.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(MainPanelClipboardSeed {
+            kind: "file".into(),
+            full_text: None,
+            entry_id: Some(entry.id),
+            image_url: None,
+            image_width: None,
+            image_height: None,
+            paths: Some(paths),
+        }));
+    }
+
+    Ok(None)
 }
 
 #[tauri::command]
@@ -166,6 +222,7 @@ pub fn get_main_panel_clipboard_seed(
             image_url: None,
             image_width: None,
             image_height: None,
+            paths: None,
         }));
     }
 
@@ -178,22 +235,34 @@ pub fn get_main_panel_clipboard_seed(
             return Ok(None);
         };
         drop(conn);
-        let image_url = if entry.kind == "image" {
-            Some(hydrate_clipboard_image_content(&entry.content))
-        } else {
-            None
+        return main_panel_seed_from_entry(&entry);
+    }
+
+    if recent.kind == "file" {
+        let Some(entry_id) = recent.entry_id else {
+            return Ok(None);
         };
-        return Ok(Some(MainPanelClipboardSeed {
-            kind: "image".into(),
-            full_text: None,
-            entry_id: Some(entry_id),
-            image_url,
-            image_width: recent.image_width.or(entry.image_width),
-            image_height: recent.image_height.or(entry.image_height),
-        }));
+        let conn = state.db.lock();
+        let Some(entry) = crate::clipboard_db::get_clipboard_entry(&conn, entry_id) else {
+            return Ok(None);
+        };
+        drop(conn);
+        return main_panel_seed_from_entry(&entry);
     }
 
     Ok(None)
+}
+
+/// Manual paste into the main panel: read OS clipboard now (even if auto-seed expired).
+#[tauri::command]
+pub fn seed_main_panel_from_system_clipboard(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<Option<MainPanelClipboardSeed>, String> {
+    let Some(entry) = ingest_system_clipboard_for_main_panel(&app, &state)? else {
+        return Ok(None);
+    };
+    main_panel_seed_from_entry(&entry)
 }
 
 #[tauri::command]

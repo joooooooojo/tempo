@@ -34,7 +34,7 @@ pub mod codes {
 }
 
 /// Host Bridge API semver (design §7.2) — independent from the Tempo product version.
-pub const HOST_API_VERSION: &str = "1.2.0";
+pub const HOST_API_VERSION: &str = "1.3.0";
 
 /// Max single-message size (design §7): 1 MiB.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;

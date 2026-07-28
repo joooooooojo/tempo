@@ -17,6 +17,7 @@
 @import "./components/todo-calendar.css";
 @import "./components/ui.css";
 @import "./components/shelf-card.css";
+@import "./components/clipboard-file-glyph.css";
 @import "./components/settings.css";
 @import "./overlays/main-panel.css";
 @import "./overlays/shelf-picker.css";

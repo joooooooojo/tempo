@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { AppIcon } from "@/components/AppIcon";
 import { CodeHighlight } from "@/components/CodeHighlight";
 import { cn, formatRelativeTime, isWindowsTarget, previewLines } from "@/lib/utils";
@@ -6,13 +6,15 @@ import { cn, formatRelativeTime, isWindowsTarget, previewLines } from "@/lib/uti
 type ShelfCardProps = {
   selected?: boolean;
   headerLabel: string;
-  headerTone: "text" | "image" | "snippet";
+  headerTone: "text" | "image" | "file" | "snippet";
   timeLabel: string;
   sourceApp?: string | null;
   sourceAppIcon?: string | null;
   content: string;
   language?: string | null;
   imageSrc?: string | null;
+  /** Custom body (e.g. file glyph). Takes precedence over image/text. */
+  body?: ReactNode;
   footer: string;
   title?: string;
   onClick?: () => void;
@@ -22,6 +24,7 @@ type ShelfCardProps = {
 const headerToneClass = {
   text: "shelf-card__header--text",
   image: "shelf-card__header--image",
+  file: "shelf-card__header--file",
   snippet: "shelf-card__header--snippet",
 } as const;
 
@@ -35,6 +38,7 @@ export function ShelfCard({
   content,
   language,
   imageSrc,
+  body,
   footer,
   title,
   onClick,
@@ -52,6 +56,8 @@ export function ShelfCard({
     if (isWindowsTarget) return;
     onDoubleClick?.();
   };
+
+  const bodyMode = body ? "custom" : imageSrc ? "image" : "text";
 
   return (
     <button
@@ -80,10 +86,14 @@ export function ShelfCard({
         <div
           className={cn(
             "shelf-card__body-inner",
-            imageSrc ? "shelf-card__body-inner--image" : "shelf-card__body-inner--text"
+            bodyMode === "text"
+              ? "shelf-card__body-inner--text"
+              : "shelf-card__body-inner--image"
           )}
         >
-          {imageSrc ? (
+          {body ? (
+            body
+          ) : imageSrc ? (
             <img
               src={imageSrc}
               alt=""
@@ -128,11 +138,15 @@ export function shelfImageSize(width?: number | null, height?: number | null) {
 }
 
 export function clipboardKindLabel(kind: string) {
-  return kind === "image" ? "图片" : "文本";
+  if (kind === "image") return "图片";
+  if (kind === "file") return "文件";
+  return "文本";
 }
 
-export function clipboardHeaderTone(kind: string): "text" | "image" {
-  return kind === "image" ? "image" : "text";
+export function clipboardHeaderTone(kind: string): "text" | "image" | "file" {
+  if (kind === "image") return "image";
+  if (kind === "file") return "file";
+  return "text";
 }
 
 export function clipboardSourceLabel(entry: {

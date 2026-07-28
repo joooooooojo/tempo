@@ -19,8 +19,10 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { AppIcon } from "@/components/AppIcon";
+import { ClipboardFileGlyph } from "@/components/clipboard/ClipboardFileGlyph";
 import { ReminderDialog } from "@/components/ReminderDialog";
 import { Button } from "@/components/ui/button";
+import { FollowTooltip } from "@/components/ui/follow-tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -61,6 +63,7 @@ import {
   shouldInlineClipboardText,
   type MainPanelClipboardChip,
 } from "@/lib/mainPanelClipboardSeed";
+import { formatClipboardFilesPreview } from "@/lib/clipboardFiles";
 import { cn } from "@/lib/utils";
 import type {
   MainPanelClipboardSeed,
@@ -78,6 +81,8 @@ const MAX_SEARCH_RESULTS = GRID_COLUMNS * 4;
 const SEARCH_QUERY_DEBOUNCE_MS = 80;
 /** Typing changes result height often; native window resize each time feels like input lag. */
 const MAIN_PANEL_RESIZE_DEBOUNCE_MS = 100;
+/** Pending clipboard chip (text/image/file) is cleared if panel stays closed this long. */
+const CLIPBOARD_CHIP_STALE_MS = 30_000;
 const SEARCH_WIDTH = 800;
 /** Fallback only when content has not mounted yet; prefer measured scrollHeight. */
 const SEARCH_FALLBACK_HEIGHT = 370;
@@ -160,6 +165,9 @@ export function MainPanelPage() {
   const imeComposingRef = useRef(false);
   const queryRef = useRef(query);
   const clipboardChipRef = useRef<MainPanelClipboardChip | null>(null);
+  /** Timestamp when panel was hidden while a clipboard chip was active. */
+  const clipboardChipHiddenAtRef = useRef<number | null>(null);
+  const panelVisibleRef = useRef(true);
   const contentRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<string | null>(null);
   const modeRef = useRef<MainPanelMode>("search");
@@ -286,6 +294,7 @@ export function MainPanelPage() {
     queryRef.current = "";
     setClipboardChip(null);
     clipboardChipRef.current = null;
+    clipboardChipHiddenAtRef.current = null;
     setRecentExpanded(false);
     setPinnedExpanded(false);
     setSearchExpanded(false);
@@ -310,19 +319,19 @@ export function MainPanelPage() {
     void api.clearMainPanelClipboardSeed().catch(console.error);
   }, [isTauri]);
 
-  const applyClipboardSeedFromBackend = useCallback(async () => {
-    if (!isTauri) return;
-    try {
-      const seed = await api.getMainPanelClipboardSeed();
-      if (!seed) {
-        // Keep any blur-preserved chip; only skip injecting.
-        return;
-      }
+  const clearClipboardChipLocal = useCallback(() => {
+    setClipboardChip(null);
+    clipboardChipRef.current = null;
+    clipboardChipHiddenAtRef.current = null;
+  }, []);
+
+  const applySeedToUi = useCallback(
+    (seed: MainPanelClipboardSeed) => {
       if (seed.kind === "text" && seed.fullText) {
         if (shouldInlineClipboardText(seed.fullText)) {
-          setClipboardChip(null);
-          clipboardChipRef.current = null;
+          clearClipboardChipLocal();
           setQuery(seed.fullText.trim());
+          queryRef.current = seed.fullText.trim();
         } else {
           const chip = seedToMainPanelChip(seed);
           setClipboardChip(chip);
@@ -338,16 +347,84 @@ export function MainPanelPage() {
         clipboardChipRef.current = chip;
         setQuery("");
         queryRef.current = "";
+        return;
       }
-    } catch (error) {
-      console.error(error);
+      if (seed.kind === "file") {
+        const chip = seedToMainPanelChip(seed);
+        setClipboardChip(chip);
+        clipboardChipRef.current = chip;
+        setQuery("");
+        queryRef.current = "";
+      }
+    },
+    [clearClipboardChipLocal]
+  );
+
+  const applyClipboardSeedFromBackend = useCallback(
+    async (options?: { replace?: boolean }) => {
+      if (!isTauri) return;
+      const replace = options?.replace === true;
+      try {
+        const seed = await api.getMainPanelClipboardSeed();
+        if (!seed) {
+          // Keep any blur-preserved chip when not forcing a blank state.
+          return;
+        }
+        if (
+          !replace &&
+          (clipboardChipRef.current || queryRef.current.trim())
+        ) {
+          return;
+        }
+        applySeedToUi(seed);
+      } catch (error) {
+        console.error(error);
+      }
+    },
+    [applySeedToUi, isTauri]
+  );
+
+  /** Manual Ctrl/Cmd+V: pull current OS clipboard even after auto-seed expired. */
+  const handleManualPaste = useCallback(
+    async (event: React.ClipboardEvent<HTMLInputElement>) => {
+      if (!isTauri || modeRef.current !== "search") return;
+      event.preventDefault();
+      try {
+        const seed = await api.seedMainPanelFromSystemClipboard();
+        if (!seed) {
+          toast.error("剪贴板中没有可粘贴的内容");
+          return;
+        }
+        applySeedToUi(seed);
+        window.requestAnimationFrame(() => {
+          inputRef.current?.focus();
+        });
+      } catch (error) {
+        console.error(error);
+        toast.error(error instanceof Error ? error.message : "粘贴失败");
+      }
+    },
+    [applySeedToUi, isTauri]
+  );
+
+  const markClipboardChipHidden = useCallback(() => {
+    if (clipboardChipRef.current) {
+      clipboardChipHiddenAtRef.current = Date.now();
     }
-  }, [isTauri]);
+    panelVisibleRef.current = false;
+  }, []);
 
   const clipboardSeedForActions = useMemo((): MainPanelClipboardSeed | null => {
     if (!clipboardChip) return null;
     if (clipboardChip.kind === "text") {
       return { kind: "text", fullText: clipboardChip.fullText };
+    }
+    if (clipboardChip.kind === "file") {
+      return {
+        kind: "file",
+        entryId: clipboardChip.entryId,
+        paths: clipboardChip.paths,
+      };
     }
     return {
       kind: "image",
@@ -360,6 +437,8 @@ export function MainPanelPage() {
 
   const hideAndResetMainPanel = useCallback(async () => {
     clearMainPanelSession();
+    clipboardChipHiddenAtRef.current = null;
+    panelVisibleRef.current = false;
     dismissClipboardSeed();
     await hideMainPanel();
     resetMainPanelState();
@@ -371,11 +450,13 @@ export function MainPanelPage() {
     const appId = activeAppIdRef.current;
     if (modeRef.current === "app" && appId) {
       writeMainPanelSession(appId);
+      panelVisibleRef.current = false;
       await hideMainPanel();
       return;
     }
+    markClipboardChipHidden();
     await hideMainPanel();
-  }, []);
+  }, [markClipboardChipHidden]);
 
   const backToSearch = useCallback(() => {
     toast.dismiss();
@@ -614,15 +695,34 @@ export function MainPanelPage() {
     const prepareForOpen = () => {
       armed = false;
       window.clearTimeout(armTimer);
+      panelVisibleRef.current = true;
       setOpenRevision((current) => current + 1);
       refreshDisabledBuiltins();
       const restored = restoreSessionIfNeeded();
       if (!restored && modeRef.current === "search") {
         setSelectedKey(null);
-        // Blur-preserved chip/query stays; only inject clipboard when search is empty.
-        if (!clipboardChipRef.current && !queryRef.current.trim()) {
+
+        const hiddenAt = clipboardChipHiddenAtRef.current;
+        clipboardChipHiddenAtRef.current = null;
+        const chipStale =
+          Boolean(clipboardChipRef.current) &&
+          hiddenAt != null &&
+          Date.now() - hiddenAt >= CLIPBOARD_CHIP_STALE_MS;
+
+        if (chipStale) {
+          // Closed >30s with a pending chip: drop preserved UI, then allow a fresh seed.
+          clearClipboardChipLocal();
+          setQuery("");
+          queryRef.current = "";
+          void applyClipboardSeedFromBackend();
+        } else if (clipboardChipRef.current) {
+          // Panel was hidden (not visible): newer copies while closed may replace the chip.
+          // Never replace while the panel stays open — copying panel content must not swap the seed.
+          void applyClipboardSeedFromBackend({ replace: true });
+        } else if (!queryRef.current.trim()) {
           void applyClipboardSeedFromBackend();
         }
+
         // The native window can lose focus while its startup page is still visible. DOM focus
         // alone cannot recover from that state, so reactivate the window before focusing input.
         void appWindow
@@ -644,10 +744,21 @@ export function MainPanelPage() {
       const appId = activeAppIdRef.current;
       if (modeRef.current === "app" && appId) {
         writeMainPanelSession(appId);
+        panelVisibleRef.current = false;
         return;
       }
       clearMainPanelSession();
       // Keep search chip/query across shortcut hide, same as blur.
+      markClipboardChipHidden();
+    });
+    const unlistenClipboard = listen("clipboard-update", () => {
+      // While visible: never replace an existing chip (copying panel content must not swap it).
+      // If the chip was cleared, allow a new/same copy to fill again.
+      if (!panelVisibleRef.current) return;
+      if (modeRef.current !== "search") return;
+      if (clipboardChipRef.current) return;
+      if (queryRef.current.trim()) return;
+      void applyClipboardSeedFromBackend();
     });
     const unlistenIndex = listen("launcher:index-ready", () => void loadApps());
     // Close the startup race where the background index finishes after the first
@@ -676,14 +787,17 @@ export function MainPanelPage() {
       window.clearTimeout(armTimer);
       void unlistenOpen.then((unlisten) => unlisten());
       void unlistenShortcutHide.then((unlisten) => unlisten());
+      void unlistenClipboard.then((unlisten) => unlisten());
       void unlistenIndex.then((unlisten) => unlisten());
       unlistenBlur?.();
     };
   }, [
     applyClipboardSeedFromBackend,
+    clearClipboardChipLocal,
     hidePreservingSession,
     isTauri,
     loadApps,
+    markClipboardChipHidden,
     openBuiltinApp,
     refreshDisabledBuiltins,
   ]);
@@ -1259,20 +1373,14 @@ export function MainPanelPage() {
               <>
                 <div className="main-panel-search-field">
                   {clipboardChip ? (
-                    <div
-                      className="main-panel-clipboard-chip"
-                      data-no-drag
-                      title={
-                        clipboardChip.kind === "text"
-                          ? clipboardChip.fullText
-                          : "图片"
-                      }
-                    >
+                    <div className="main-panel-clipboard-chip" data-no-drag>
                       {clipboardChip.kind === "text" ? (
                         <>
-                          <span className="main-panel-clipboard-chip-label">
-                            {clipboardChip.label}
-                          </span>
+                          <FollowTooltip content={clipboardChip.fullText}>
+                            <span className="main-panel-clipboard-chip-label">
+                              {clipboardChip.label}
+                            </span>
+                          </FollowTooltip>
                           <Button
                             type="button"
                             variant="ghost"
@@ -1293,14 +1401,24 @@ export function MainPanelPage() {
                             <Pencil className="size-3.5" />
                           </Button>
                         </>
+                      ) : clipboardChip.kind === "file" ? (
+                        <FollowTooltip
+                          content={formatClipboardFilesPreview(clipboardChip.paths)}
+                        >
+                          <span className="main-panel-clipboard-chip-file">
+                            <ClipboardFileGlyph paths={clipboardChip.paths} size="chip" />
+                          </span>
+                        </FollowTooltip>
                       ) : (
-                        <img
-                          src={clipboardChip.imageUrl}
-                          alt=""
-                          className="main-panel-clipboard-chip-image"
-                          width={clipboardChip.imageWidth ?? undefined}
-                          height={clipboardChip.imageHeight ?? undefined}
-                        />
+                        <FollowTooltip content="图片">
+                          <img
+                            src={clipboardChip.imageUrl}
+                            alt=""
+                            className="main-panel-clipboard-chip-image"
+                            width={clipboardChip.imageWidth ?? undefined}
+                            height={clipboardChip.imageHeight ?? undefined}
+                          />
+                        </FollowTooltip>
                       )}
                     </div>
                   ) : null}
@@ -1312,6 +1430,9 @@ export function MainPanelPage() {
                     autoComplete="off"
                     spellCheck={false}
                     aria-label="搜索应用或输入命令"
+                    onPaste={(event) => {
+                      void handleManualPaste(event);
+                    }}
                     onChange={(event) => {
                       setQuery(event.target.value);
                       setError(null);
@@ -1536,7 +1657,7 @@ function SearchResults({
     <div className="main-panel-sections">
       {!hasResults ? (
         <p className="main-panel-empty" role="status">
-          暂无匹配内容
+          无匹配结果
         </p>
       ) : null}
 

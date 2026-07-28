@@ -1,6 +1,6 @@
 # Tempo Plugin Host API
 
-本文描述 Host API `1.2.0` 已实现的调用方式。接口实现以 `src-tauri/src/plugins/bridge.rs`、`plugin-ui/bridge-client.js` 和 `plugin-runtime/bootstrap.mjs` 为准。
+本文描述 Host API `1.3.0` 已实现的调用方式。接口实现以 `src-tauri/src/plugins/bridge.rs`、`plugin-ui/bridge-client.js` 和 `plugin-runtime/bootstrap.mjs` 为准。
 
 - [插件开发指南](./plugin-development.md)
 - [Manifest Schema](./schemas/plugin-manifest.schema.json)
@@ -43,6 +43,12 @@ type ActionInvocation = {
         filePath?: string;
         width?: number | null;
         height?: number | null;
+      }
+    | {
+        kind: "file";
+        entryId: number;
+        /** Absolute local paths from a clipboard file entry. */
+        paths: string[];
       };
 };
 

@@ -147,7 +147,7 @@ export interface Settings {
 export interface ClipboardEntry {
   id: number;
   content: string;
-  kind: "text" | "image" | string;
+  kind: "text" | "image" | "file" | string;
   source_app?: string | null;
   source_process?: string | null;
   source_icon_data_url?: string | null;
@@ -164,12 +164,13 @@ export interface ClipboardHistoryPage {
 }
 
 export interface MainPanelClipboardSeed {
-  kind: "text" | "image" | string;
+  kind: "text" | "image" | "file" | string;
   fullText?: string | null;
   entryId?: number | null;
   imageUrl?: string | null;
   imageWidth?: number | null;
   imageHeight?: number | null;
+  paths?: string[] | null;
 }
 
 export interface Snippet {
@@ -413,7 +414,7 @@ export interface PluginActionContribution {
   appId?: string | null;
   /** Runtime id of the command this action invokes: `{pluginId}/{commandLocalId}`. */
   commandId?: string | null;
-  accepts: Array<"text" | "image">;
+  accepts: Array<"text" | "image" | "file">;
   titleTemplate?: string | null;
 }
 

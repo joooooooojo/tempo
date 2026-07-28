@@ -237,6 +237,7 @@ pub struct ContributedAction {
 pub enum ActionInputKind {
     Text,
     Image,
+    File,
 }
 
 impl ContributedAction {
@@ -887,7 +888,7 @@ mod tests {
         let raw = include_str!("../../../examples/plugins/com.example.hello/manifest.json");
         let manifest = PluginManifest::parse_str(raw).unwrap();
         assert_eq!(manifest.id, "com.example.hello");
-        assert_eq!(manifest.version, "1.0.5");
+        assert_eq!(manifest.version, "1.0.9");
     }
 
     #[test]
@@ -988,6 +989,32 @@ mod tests {
         assert_eq!(action.command, None);
         assert_eq!(action.accepted_inputs(), vec![ActionInputKind::Image]);
         assert!(!manifest.requires_node_runtime());
+    }
+
+    #[test]
+    fn action_can_accept_file_input() {
+        let raw = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.files",
+          "name": "Files",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.3.0" },
+          "contributes": {
+            "commands": [{ "id": "open", "title": "Open" }],
+            "actions": [{
+              "id": "open-files",
+              "name": "Open files",
+              "accepts": ["file"],
+              "command": "open"
+            }]
+          },
+          "main": "main.mjs"
+        }"#;
+        let manifest = PluginManifest::parse_str(raw).unwrap();
+        assert_eq!(
+            manifest.contributes.actions[0].accepted_inputs(),
+            vec![ActionInputKind::File]
+        );
     }
 
     #[test]
@@ -1093,7 +1120,10 @@ mod tests {
               "command": "summarize",
               "inputSchema": {
                 "type": "object",
-                "properties": { "id": { "type": "string" }, "limit": { "type": "integer" } },
+                "properties": {
+                  "id": { "type": "string", "description": "Note id to summarize" },
+                  "limit": { "type": "integer", "description": "Max summary length in characters" }
+                },
                 "required": ["id"]
               },
               "outputSchema": {
@@ -1106,8 +1136,10 @@ mod tests {
           }
         }"#;
         let reordered = raw.replace(
-            r#""id": { "type": "string" }, "limit": { "type": "integer" }"#,
-            r#""limit": { "type": "integer" }, "id": { "type": "string" }"#,
+            r#""id": { "type": "string", "description": "Note id to summarize" },
+                  "limit": { "type": "integer", "description": "Max summary length in characters" }"#,
+            r#""limit": { "type": "integer", "description": "Max summary length in characters" },
+                  "id": { "type": "string", "description": "Note id to summarize" }"#,
         );
         let first = PluginManifest::parse_str(raw).unwrap();
         let second = PluginManifest::parse_str(&reordered).unwrap();
@@ -1122,6 +1154,48 @@ mod tests {
                 .and_then(|annotations| annotations.read_only_hint),
             Some(true)
         );
+    }
+
+    #[test]
+    fn allows_mcp_schema_properties_without_description() {
+        let raw = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.mcp",
+          "name": "MCP",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.2.0" },
+          "main": "main.mjs",
+          "contributes": {
+            "commands": [{ "id": "run", "title": "Run" }],
+            "mcpTools": [{
+              "name": "run",
+              "description": "Run",
+              "command": "run",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "who": { "type": "string" }
+                }
+              },
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "ok": { "type": "boolean" }
+                }
+              }
+            }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(raw).is_ok());
+
+        let with_desc = raw.replace(
+            r#""who": { "type": "string" }"#,
+            r#""who": { "type": "string", "description": "Who to greet" }"#,
+        ).replace(
+            r#""ok": { "type": "boolean" }"#,
+            r#""ok": { "type": "boolean", "description": "Whether the run succeeded" }"#,
+        );
+        assert!(PluginManifest::parse_str(&with_desc).is_ok());
     }
 
     #[test]

@@ -162,6 +162,8 @@ export const api = {
   copyClipboardEntry: (id: number) => invoke<void>("copy_clipboard_entry", { id }),
   getMainPanelClipboardSeed: () =>
     invoke<MainPanelClipboardSeed | null>("get_main_panel_clipboard_seed"),
+  seedMainPanelFromSystemClipboard: () =>
+    invoke<MainPanelClipboardSeed | null>("seed_main_panel_from_system_clipboard"),
   clearMainPanelClipboardSeed: () => invoke<void>("clear_main_panel_clipboard_seed"),
   getSnippets: (query?: string, groupId?: number | null, sort?: string) =>
     invoke<Snippet[]>("get_snippets", { query, groupId, sort }),

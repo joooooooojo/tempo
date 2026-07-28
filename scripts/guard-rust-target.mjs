@@ -22,7 +22,7 @@ function positiveNumberFromEnv(name, fallback) {
 }
 
 const maxTargetGiB = positiveNumberFromEnv("TEMPO_RUST_TARGET_MAX_GIB", 12);
-const minFreeGiB = positiveNumberFromEnv("TEMPO_MIN_FREE_DISK_GIB", 15);
+const minFreeGiB = positiveNumberFromEnv("TEMPO_MIN_FREE_DISK_GIB", 10);
 
 function measureDirectory(path) {
   const pending = [path];

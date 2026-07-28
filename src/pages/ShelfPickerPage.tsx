@@ -20,9 +20,14 @@ import {
   shelfImageSize,
   shelfTimeLabel,
 } from "@/components/clipboard/ShelfCard";
+import { ClipboardFileGlyph } from "@/components/clipboard/ClipboardFileGlyph";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuxiliaryWindowShell } from "@/hooks/useAuxiliaryWindow";
 import { api } from "@/lib/api";
+import {
+  formatClipboardFilesFooter,
+  parseClipboardFilePaths,
+} from "@/lib/clipboardFiles";
 import { isWindowsTarget } from "@/lib/utils";
 import type { ClipboardEntry, Snippet } from "@/types";
 
@@ -511,21 +516,30 @@ export function ShelfPickerPage() {
             {entries.length === 0 ? (
               <div className="shelf-picker-empty">暂无剪贴记录</div>
             ) : (
-              entries.map((entry, index) => (
+              entries.map((entry, index) => {
+                const isImage = entry.kind === "image";
+                const isFile = entry.kind === "file";
+                const filePaths = isFile ? parseClipboardFilePaths(entry.content) : [];
+                return (
                 <MemoShelfCard
                   key={entry.id}
                   selected={index === clipboardIndex}
                   headerLabel={clipboardKindLabel(entry.kind)}
                   headerTone={clipboardHeaderTone(entry.kind)}
                   timeLabel={shelfTimeLabel(entry.created_at)}
-                  sourceApp={clipboardSourceLabel(entry)}
-                  sourceAppIcon={entry.source_icon_data_url}
-                  content={entry.kind === "image" ? "" : entry.content}
-                  imageSrc={entry.kind === "image" ? entry.content : null}
+                  sourceApp={isFile ? null : clipboardSourceLabel(entry)}
+                  sourceAppIcon={isFile ? null : entry.source_icon_data_url}
+                  content={isImage || isFile ? "" : entry.content}
+                  imageSrc={isImage ? entry.content : null}
+                  body={
+                    isFile ? <ClipboardFileGlyph paths={filePaths} size="card" /> : undefined
+                  }
                   footer={
-                    entry.kind === "image"
+                    isImage
                       ? shelfImageSize(entry.image_width, entry.image_height)
-                      : shelfCharCount(entry.content)
+                      : isFile
+                        ? formatClipboardFilesFooter(filePaths)
+                        : shelfCharCount(entry.content)
                   }
                   onClick={() => setClipboardIndex(index)}
                   onDoubleClick={() => {
@@ -538,7 +552,8 @@ export function ShelfPickerPage() {
                   }}
                   title="双击复制到剪贴板并置顶"
                 />
-              ))
+              );
+              })
             )}
           </ShelfTrackViewport>
 

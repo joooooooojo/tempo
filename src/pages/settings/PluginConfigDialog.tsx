@@ -278,7 +278,7 @@ function SettingFieldRow({
           <SelectTrigger className="h-9 min-w-[9rem] text-[13px]">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent overlayLayer>
             <SelectGroup>
               {items.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
@@ -319,7 +319,7 @@ function SettingFieldRow({
                 : "未选择"}
             </SelectValue>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent overlayLayer>
             <SelectGroup>
               {items.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
