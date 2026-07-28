@@ -100,6 +100,14 @@ pub fn list_plugins(
                     row.requires_node_runtime = manifest.requires_node_runtime();
                     row.kind = manifest.resolved_kind().to_string();
                     row.mcp_tool_count = manifest.contributes.mcp_tools.len();
+                    let disabled_tools =
+                        crate::plugins::trust::get_plugin_mcp_disabled_tools(&conn, &row.id)?;
+                    row.mcp_enabled_tool_count = manifest
+                        .contributes
+                        .mcp_tools
+                        .iter()
+                        .filter(|tool| !disabled_tools.iter().any(|name| name == &tool.name))
+                        .count();
                     row.settings_count = manifest.contributes.settings.len();
                     let fingerprint = manifest.mcp_toolset_fingerprint().unwrap_or_default();
                     row.mcp_exposed = row.mcp_exposed

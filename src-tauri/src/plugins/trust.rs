@@ -449,6 +449,8 @@ pub struct InstalledPluginRow {
     /// Filled by callers that read the manifest from disk (design §11): number of
     /// `contributes.mcpTools` entries. `0` for plugins with none, or when unread.
     pub mcp_tool_count: usize,
+    /// Number of current manifest MCP tools not disabled by the user.
+    pub mcp_enabled_tool_count: usize,
     /// Number of `contributes.settings` entries from the current package manifest.
     pub settings_count: usize,
     /// First install time of this plugin id (`plugins.installed_at`).
@@ -499,6 +501,7 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
                 requires_node_runtime: false,
                 kind: String::new(),
                 mcp_tool_count: 0,
+                mcp_enabled_tool_count: 0,
                 settings_count: 0,
             })
         })

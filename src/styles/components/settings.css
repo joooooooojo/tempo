@@ -30,7 +30,8 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 10px;
+  min-height: 48px;
+  padding: 12px 10px;
   border: 0;
   border-radius: 12px;
   background: transparent;
@@ -218,7 +219,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
+  min-height: 58px;
   padding: 8px 12px;
   border-top: 1px solid hsl(var(--border) / 0.45);
 }
@@ -250,8 +251,26 @@
   display: flex;
   min-width: 0;
   flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+}
+
+.plugin-item__title-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
   align-items: baseline;
   gap: 6px;
+}
+
+.plugin-item__tags {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .plugin-item__name {
@@ -280,62 +299,6 @@
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.plugin-kind {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.plugin-kind--builtin {
-  background: hsl(210 16% 50% / 0.12);
-  color: hsl(210 18% 40%);
-}
-
-.plugin-kind--hybrid {
-  background: hsl(158 45% 40% / 0.14);
-  color: hsl(158 42% 32%);
-}
-
-.plugin-kind--ui {
-  background: hsl(214 72% 48% / 0.12);
-  color: hsl(214 55% 38%);
-}
-
-.plugin-kind--headless {
-  background: hsl(32 80% 48% / 0.14);
-  color: hsl(28 65% 36%);
-}
-
-.plugin-kind--unknown {
-  background: hsl(var(--foreground) / 0.06);
-  color: hsl(var(--muted-foreground));
-}
-
-.dark .plugin-kind--builtin {
-  background: hsl(210 16% 70% / 0.16);
-  color: hsl(210 20% 78%);
-}
-
-.dark .plugin-kind--hybrid {
-  background: hsl(158 40% 55% / 0.18);
-  color: hsl(158 45% 72%);
-}
-
-.dark .plugin-kind--ui {
-  background: hsl(214 70% 60% / 0.18);
-  color: hsl(214 70% 78%);
-}
-
-.dark .plugin-kind--headless {
-  background: hsl(32 75% 55% / 0.18);
-  color: hsl(32 80% 72%);
 }
 
 .plugin-item--disabled {
@@ -455,8 +418,9 @@
 
   .settings-nav__item {
     min-width: max-content;
+    min-height: 44px;
     align-items: center;
-    padding: 8px 12px;
+    padding: 10px 12px;
   }
 
   .settings-main__body {

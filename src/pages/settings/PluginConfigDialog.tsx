@@ -127,10 +127,10 @@ export function PluginConfigDialog({
     try {
       if (target.source === "plugin") {
         await api.setPluginMcpExposed(target.id, exposed);
-        onPluginMcpChanged?.();
       } else {
         await api.setBuiltinMcpExposed(target.id, exposed);
       }
+      onPluginMcpChanged?.();
     } catch (error) {
       setMcpExposed(previous);
       toast.error(error instanceof Error ? error.message : String(error));
@@ -151,6 +151,7 @@ export function PluginConfigDialog({
         await api.setBuiltinMcpToolEnabled(target.id, toolName, enabled);
         setMcpTools(await api.listBuiltinMcpTools(target.id));
       }
+      onPluginMcpChanged?.();
     } catch (error) {
       setMcpTools(previous);
       toast.error(error instanceof Error ? error.message : String(error));

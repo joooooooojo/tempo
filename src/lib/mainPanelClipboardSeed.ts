@@ -30,7 +30,7 @@ export function resolveQuickActionQuery(
 ): string {
   const trimmed = inputQuery.trim();
   if (seed?.kind === "text" && seed.fullText) {
-    return trimmed || seed.fullText.trim();
+    return seed.fullText.trim();
   }
   return trimmed;
 }

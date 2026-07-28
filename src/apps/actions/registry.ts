@@ -39,15 +39,25 @@ function usageTimeMs(value: string | null | undefined): number {
 }
 
 /**
- * Actions compatible with the current input, sorted by last use (then use count).
+ * Actions compatible with the current input and optional action search, sorted by usage.
  * Unused actions keep registration order after used ones.
  */
 export function listVisibleQuickActions(
   input: QuickActionInput,
-  usageById?: Map<string, QuickActionUsageHint>
+  usageById?: Map<string, QuickActionUsageHint>,
+  searchQuery = ""
 ): QuickAction[] {
   if (input.kind === "none") return [];
-  const visible = listQuickActions().filter((action) => action.accepts.includes(input.kind));
+  const searchTerms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const visible = listQuickActions().filter((action) => {
+    if (!action.accepts.includes(input.kind)) return false;
+    if (searchTerms.length === 0) return true;
+    const searchable = [action.name, action.id, action.titleTemplate, ...(action.keywords ?? [])]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return searchTerms.every((term) => searchable.includes(term));
+  });
 
   if (!usageById || usageById.size === 0) return visible;
 

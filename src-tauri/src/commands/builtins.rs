@@ -33,6 +33,7 @@ pub fn list_builtin_mcp_tools(
 pub struct BuiltinMcpStatus {
     pub exposed: bool,
     pub tool_count: usize,
+    pub enabled_tool_count: usize,
 }
 
 #[tauri::command]
@@ -41,13 +42,16 @@ pub fn get_builtin_mcp_status(
     app_id: String,
 ) -> Result<BuiltinMcpStatus, String> {
     validate_builtin_app_id(&app_id)?;
-    let tool_count = builtin_mcp_tools_for_app(&app_id).len();
     let conn = state.db.lock();
     ensure_builtin_mcp_tables(&conn)?;
+    let tools = list_builtin_mcp_tool_infos(&conn, &app_id)?;
+    let tool_count = tools.len();
+    let enabled_tool_count = tools.iter().filter(|tool| tool.enabled).count();
     let exposed = is_builtin_mcp_exposed(&conn, &app_id);
     Ok(BuiltinMcpStatus {
         exposed,
         tool_count,
+        enabled_tool_count,
     })
 }
 

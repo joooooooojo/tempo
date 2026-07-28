@@ -498,6 +498,7 @@ export function MainPanelPage() {
       imageHeight: clipboardChip.imageHeight,
     };
   }, [clipboardChip]);
+  const hasClipboardActionContext = clipboardSeedForActions !== null;
 
   const hideAndResetMainPanel = useCallback(async () => {
     clearMainPanelSession();
@@ -864,7 +865,7 @@ export function MainPanelPage() {
   const normalizedQuery = query.trim();
   const liveNormalizedQuery = normalizedQuery;
   useEffect(() => {
-    if (!isTauri || !normalizedQuery) {
+    if (!isTauri || !normalizedQuery || hasClipboardActionContext) {
       setMatchedSearchApps([]);
       return;
     }
@@ -907,7 +908,13 @@ export function MainPanelPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [isTauri, launcherIndexRevision, normalizedQuery, searchIndexRevision]);
+  }, [
+    hasClipboardActionContext,
+    isTauri,
+    launcherIndexRevision,
+    normalizedQuery,
+    searchIndexRevision,
+  ]);
 
   const recentSource = useMemo<RecentEntry[]>(() => {
     const appsById = new Map(apps.map((app) => [app.id, app]));
@@ -985,9 +992,11 @@ export function MainPanelPage() {
     ? pinnedApps
     : pinnedApps.slice(0, PINNED_COLLAPSED_COUNT);
 
-  const visibleSearchApps = searchExpanded
-    ? matchedSearchApps
-    : matchedSearchApps.slice(0, SEARCH_COLLAPSED_COUNT);
+  const visibleSearchApps = hasClipboardActionContext
+    ? []
+    : searchExpanded
+      ? matchedSearchApps
+      : matchedSearchApps.slice(0, SEARCH_COLLAPSED_COUNT);
 
   const quickActionUsageById = useMemo(() => {
     const map = new Map<
@@ -1024,8 +1033,12 @@ export function MainPanelPage() {
   // Recommendations only when there is real input (text / image), never on the empty home.
   const visibleQuickActions = useMemo(() => {
     if (quickActionInput.kind === "none") return [];
-    return listVisibleQuickActions(quickActionInput, quickActionUsageById);
-  }, [quickActionInput, quickActionUsageById]);
+    return listVisibleQuickActions(
+      quickActionInput,
+      quickActionUsageById,
+      hasClipboardActionContext ? normalizedQuery : ""
+    );
+  }, [hasClipboardActionContext, normalizedQuery, quickActionInput, quickActionUsageById]);
 
   const showSearchLayout =
     Boolean(normalizedQuery) || quickActionInput.kind !== "none";
@@ -1263,7 +1276,7 @@ export function MainPanelPage() {
     selectedKeyRef.current = null;
     setSelectedKey(null);
     setError(null);
-    dismissClipboardSeed();
+    if (!clipboardChipRef.current) dismissClipboardSeed();
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -1511,7 +1524,8 @@ export function MainPanelPage() {
                       }}
                       onChange={(event) => {
                         const nextQuery = event.target.value;
-                        const clearedByUser = Boolean(queryRef.current) && !nextQuery;
+                        const clearedByUser =
+                          !clipboardChipRef.current && Boolean(queryRef.current) && !nextQuery;
                         queryRef.current = nextQuery;
                         setQuery(nextQuery);
                         setError(null);
@@ -1569,7 +1583,7 @@ export function MainPanelPage() {
             ) : showSearchLayout ? (
               <SearchResults
                 apps={visibleSearchApps}
-                totalAppCount={matchedSearchApps.length}
+                totalAppCount={hasClipboardActionContext ? 0 : matchedSearchApps.length}
                 quickActions={visibleQuickActions}
                 expanded={searchExpanded}
                 query={quickActionQuery}

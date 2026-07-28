@@ -321,6 +321,8 @@ export interface InstalledPlugin {
   mcpExposed: boolean;
   /** Number of `contributes.mcpTools` this plugin declares (0 = nothing to expose). */
   mcpToolCount: number;
+  /** Number of declared MCP tools currently enabled at the per-tool level. */
+  mcpEnabledToolCount: number;
   /** Number of `contributes.settings` entries from the current package. */
   settingsCount: number;
   /** First install time for this plugin id (ISO / RFC3339). */
@@ -376,6 +378,7 @@ export interface PluginMcpToolInfo {
 export interface BuiltinMcpStatus {
   exposed: boolean;
   toolCount: number;
+  enabledToolCount: number;
 }
 
 /** Shared shape for MCP method rows in settings dialogs. */

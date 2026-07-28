@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tag } from "@/components/ui/tag";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AppIconView, listBuiltinApps, subscribeApps } from "@/apps";
@@ -49,19 +50,11 @@ function pluginKindLabel(kind: string | undefined) {
   }
 }
 
-function pluginKindClass(kind: string | undefined) {
-  switch (kind) {
-    case "hybrid":
-      return "plugin-kind--hybrid";
-    case "headless":
-      return "plugin-kind--headless";
-    case "ui":
-      return "plugin-kind--ui";
-    case "builtin":
-      return "plugin-kind--builtin";
-    default:
-      return "plugin-kind--unknown";
-  }
+function mcpStatusLabel(exposed: boolean, toolCount: number, enabledToolCount: number) {
+  if (toolCount <= 0) return null;
+  if (!exposed || enabledToolCount <= 0) return "MCP 已停用";
+  if (enabledToolCount >= toolCount) return "MCP 已启用";
+  return `MCP 部分启用 ${enabledToolCount}`;
 }
 
 export function PluginSettingsSection() {
@@ -98,7 +91,7 @@ export function PluginSettingsSection() {
           const status = await api.getBuiltinMcpStatus(appId);
           return [appId, status] as const;
         } catch {
-          return [appId, { exposed: true, toolCount: 0 }] as const;
+          return [appId, { exposed: false, toolCount: 0, enabledToolCount: 0 }] as const;
         }
       })
     );
@@ -120,7 +113,10 @@ export function PluginSettingsSection() {
 
   const handlePluginMcpChanged = useCallback(() => {
     void refresh();
-  }, [refresh]);
+    if (builtinPlugins.length > 0) {
+      void refreshBuiltinMcpStatus(builtinPlugins.map((app) => app.id));
+    }
+  }, [builtinPlugins, refresh, refreshBuiltinMcpStatus]);
 
   const importPluginFrom = async (mode: "directory" | "zip") => {
     try {
@@ -260,6 +256,11 @@ export function PluginSettingsSection() {
               const hasConfig =
                 (plugin.settingsCount ?? 0) > 0 || plugin.mcpToolCount > 0;
               const enabled = plugin.enabled;
+              const mcpLabel = mcpStatusLabel(
+                plugin.mcpExposed && enabled,
+                plugin.mcpToolCount,
+                plugin.mcpEnabledToolCount ?? plugin.mcpToolCount
+              );
 
               return (
                 <li
@@ -275,12 +276,15 @@ export function PluginSettingsSection() {
                   </span>
 
                   <div className="plugin-item__identity" title={plugin.lastError || plugin.id}>
-                    <span className="plugin-item__name">{plugin.name || plugin.id}</span>
-                    <span className="plugin-item__version">v{plugin.currentVersion}</span>
-                    {kindLabel ? (
-                      <span className={cn("plugin-kind", pluginKindClass(plugin.kind))}>
-                        {kindLabel}
-                      </span>
+                    <div className="plugin-item__title-row">
+                      <span className="plugin-item__name">{plugin.name || plugin.id}</span>
+                      <span className="plugin-item__version">v{plugin.currentVersion}</span>
+                    </div>
+                    {kindLabel || mcpLabel ? (
+                      <div className="plugin-item__tags">
+                        {kindLabel ? <Tag value={kindLabel} size="sm" /> : null}
+                        {mcpLabel ? <Tag value={mcpLabel} size="sm" /> : null}
+                      </div>
                     ) : null}
                     {statusMeta ? (
                       <span className="plugin-item__meta">{statusMeta}</span>
@@ -398,6 +402,14 @@ export function PluginSettingsSection() {
                 hasBuiltinConfigPanel(app.id) ||
                 (builtinMcpStatus[app.id]?.toolCount ?? 0) > 0;
               const enabled = !disabledBuiltinIds.has(app.id);
+              const mcpStatus = builtinMcpStatus[app.id];
+              const mcpLabel = mcpStatus
+                ? mcpStatusLabel(
+                    mcpStatus.exposed,
+                    mcpStatus.toolCount,
+                    mcpStatus.enabledToolCount ?? mcpStatus.toolCount
+                  )
+                : null;
 
               return (
                 <li
@@ -408,8 +420,13 @@ export function PluginSettingsSection() {
                     <AppIconView icon={app.icon} className="size-4 opacity-80" />
                   </span>
                   <div className="plugin-item__identity" title={app.id}>
-                    <span className="plugin-item__name">{app.name}</span>
-                    <span className={cn("plugin-kind", pluginKindClass("builtin"))}>内置</span>
+                    <div className="plugin-item__title-row">
+                      <span className="plugin-item__name">{app.name}</span>
+                    </div>
+                    <div className="plugin-item__tags">
+                      <Tag value="内置" size="sm" />
+                      {mcpLabel ? <Tag value={mcpLabel} size="sm" /> : null}
+                    </div>
                   </div>
                   <div className="plugin-item__controls">
                     <Switch
