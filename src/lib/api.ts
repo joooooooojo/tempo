@@ -142,6 +142,11 @@ export const api = {
     invoke<void>("set_main_panel_size", { width, height }),
   setMainPanelRect: (rect: PluginAppRect) =>
     invoke<void>("set_main_panel_rect", { rect }),
+  getMainPanelPosition: () =>
+    invoke<{ x: number; y: number }>("get_main_panel_position"),
+  setMainPanelPosition: (x: number, y: number) =>
+    invoke<void>("set_main_panel_position", { x, y }),
+  saveMainPanelPosition: () => invoke<void>("save_main_panel_position"),
   showMainPanel: () => invoke<void>("show_main_panel_window"),
   exportTodosBackup: (path: string) =>
     invoke<void>("export_todos_backup", { path }),

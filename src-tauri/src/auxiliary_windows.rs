@@ -1,12 +1,12 @@
 use tauri::window::Color;
 #[cfg(target_os = "macos")]
 use tauri::PhysicalPosition;
-use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
-};
 #[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalSize, State, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
+};
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,6 +17,7 @@ pub const MAIN_PANEL_MAX_WIDTH: f64 = 920.0;
 pub const MAIN_PANEL_INITIAL_HEIGHT: f64 = 370.0;
 pub const MAIN_PANEL_MIN_HEIGHT: f64 = 58.0;
 pub const MAIN_PANEL_MAX_HEIGHT: f64 = 760.0;
+const MAIN_PANEL_POSITION_SETTING: &str = "main_panel_position";
 
 pub const SHELF_PICKER_LABEL: &str = "shelf-picker";
 pub const SHELF_HEIGHT: f64 = 292.0;
@@ -99,7 +100,9 @@ pub fn show_main_panel(app: &AppHandle) -> tauri::Result<()> {
         window
     };
 
-    place_main_panel_window(app, &window, width, height, true)?;
+    if !place_main_panel_at_saved_position(app, &window, width, height)? {
+        place_main_panel_window(app, &window, width, height, true)?;
+    }
     crate::logging::debug_if_err(
         window.set_always_on_top(true),
         "set main panel always on top",
@@ -187,15 +190,135 @@ pub fn set_main_panel_rect(
     let window = app
         .get_webview_window(MAIN_PANEL_LABEL)
         .ok_or_else(|| "未找到主面板窗口".to_string())?;
-    // App rects are applied immediately after a cursor-following open. The native window may
-    // still report its previous monitor during that transition, so resolve from the cursor.
-    let resolved = crate::plugins::windows::resolve_window_rect(&app, None, &rect)?;
-    window
-        .set_position(resolved.position)
-        .map_err(|error| error.to_string())?;
+    let current_position = window.outer_position().map_err(|error| error.to_string())?;
+    let resolved = crate::plugins::windows::resolve_window_rect(&app, Some(&window), &rect)?;
+    let position = crate::plugins::windows::preserve_omitted_rect_position(
+        &rect,
+        resolved.position,
+        current_position,
+    );
     window
         .set_size(resolved.physical_size)
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(position)
         .map_err(|error| error.to_string())
+}
+
+fn ensure_main_panel_caller(window: &WebviewWindow) -> Result<(), String> {
+    if window.label() != MAIN_PANEL_LABEL {
+        return Err("仅主面板可以调整主面板位置".to_string());
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct MainPanelPosition {
+    x: f64,
+    y: f64,
+}
+
+#[tauri::command]
+pub fn get_main_panel_position(window: WebviewWindow) -> Result<MainPanelPosition, String> {
+    ensure_main_panel_caller(&window)?;
+    let scale = window.scale_factor().map_err(|error| error.to_string())?;
+    let position = window
+        .outer_position()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+    Ok(MainPanelPosition {
+        x: position.x,
+        y: position.y,
+    })
+}
+
+#[tauri::command]
+pub fn set_main_panel_position(window: WebviewWindow, x: f64, y: f64) -> Result<(), String> {
+    ensure_main_panel_caller(&window)?;
+    window
+        .set_position(tauri::LogicalPosition::new(x.round(), y.round()))
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+struct StoredMainPanelPosition {
+    x: i32,
+    y: i32,
+}
+
+#[tauri::command]
+pub fn save_main_panel_position(
+    window: WebviewWindow,
+    state: State<'_, crate::db::AppState>,
+) -> Result<(), String> {
+    ensure_main_panel_caller(&window)?;
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let stored = StoredMainPanelPosition {
+        x: position.x,
+        y: position.y,
+    };
+    let value = serde_json::to_string(&stored).map_err(|error| error.to_string())?;
+    let conn = state.db.lock();
+    crate::db::set_setting(&conn, MAIN_PANEL_POSITION_SETTING, &value);
+    Ok(())
+}
+
+fn load_main_panel_position(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
+    let state = app.try_state::<crate::db::AppState>()?;
+    let conn = state.db.lock();
+    let value = crate::db::get_setting(&conn, MAIN_PANEL_POSITION_SETTING, "");
+    let stored = serde_json::from_str::<StoredMainPanelPosition>(&value).ok()?;
+    Some(PhysicalPosition::new(stored.x, stored.y))
+}
+
+fn monitor_containing_position(
+    app: &AppHandle,
+    position: PhysicalPosition<i32>,
+) -> Option<Monitor> {
+    app.available_monitors().ok()?.into_iter().find(|monitor| {
+        let origin = monitor.position();
+        let size = monitor.size();
+        position.x >= origin.x
+            && position.y >= origin.y
+            && i64::from(position.x) < i64::from(origin.x) + i64::from(size.width)
+            && i64::from(position.y) < i64::from(origin.y) + i64::from(size.height)
+    })
+}
+
+fn clamp_position_to_monitor(
+    position: PhysicalPosition<i32>,
+    window_size: PhysicalSize<u32>,
+    monitor: &Monitor,
+) -> PhysicalPosition<i32> {
+    let work_area = monitor.work_area();
+    let max_x = i64::from(work_area.position.x)
+        + i64::from(work_area.size.width.saturating_sub(window_size.width));
+    let max_y = i64::from(work_area.position.y)
+        + i64::from(work_area.size.height.saturating_sub(window_size.height));
+    PhysicalPosition::new(
+        i64::from(position.x).clamp(i64::from(work_area.position.x), max_x) as i32,
+        i64::from(position.y).clamp(i64::from(work_area.position.y), max_y) as i32,
+    )
+}
+
+fn place_main_panel_at_saved_position(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    width: f64,
+    height: f64,
+) -> tauri::Result<bool> {
+    let Some(position) = load_main_panel_position(app) else {
+        return Ok(false);
+    };
+    let Some(monitor) = monitor_containing_position(app, position) else {
+        return Ok(false);
+    };
+
+    window.set_position(position)?;
+    place_main_panel_window(app, window, width, height, false)?;
+    let window_size = window.outer_size()?;
+    window.set_position(clamp_position_to_monitor(position, window_size, &monitor))?;
+    Ok(true)
 }
 
 fn resize_main_panel_height_only(

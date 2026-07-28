@@ -161,6 +161,8 @@ export function MainPanelPage() {
   const [error, setError] = useState<string | null>(null);
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const inputMeasureRef = useRef<HTMLSpanElement>(null);
+  const inputWrapperRef = useRef<HTMLDivElement>(null);
   /** Ignore Enter/arrows while IME is composing (macOS 拼音选词确认也会发 Enter). */
   const imeComposingRef = useRef(false);
   const queryRef = useRef(query);
@@ -176,40 +178,103 @@ export function MainPanelPage() {
   const needsSearchSizeRef = useRef(false);
   const isTauri = isTauriRuntime();
 
-  /** Empty search field: drag to move (Raycast-style). Non-empty: keep text selection/caret. */
+  const focusSearchInputAtEnd = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+  }, []);
+
+  /** Match ZTools: keep the input interactive and move the window through its surrounding field. */
   const beginMainPanelDrag = useCallback(
-    (event: React.MouseEvent) => {
+    async (event: React.MouseEvent) => {
       if (event.button !== 0 || !isTauri) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (target.closest("button, a, [data-no-drag]")) return;
-      // Only gate on query while the search input is showing.
-      if (modeRef.current === "search" && queryRef.current.trim().length > 0) return;
+      if (target.closest("input, button, a, [data-no-drag]")) return;
 
-      const startX = event.clientX;
-      const startY = event.clientY;
-      let started = false;
+      const startScreenX = event.screenX;
+      const startScreenY = event.screenY;
+      let dragReady = true;
+      let dragging = false;
+      let moved = false;
+      let offsetX = 0;
+      let offsetY = 0;
+      let lastX = 0;
+      let lastY = 0;
 
-      const onMove = (moveEvent: MouseEvent) => {
-        if (started) return;
-        const dx = moveEvent.clientX - startX;
-        const dy = moveEvent.clientY - startY;
-        if (dx * dx + dy * dy < 25) return;
-        started = true;
+      function cleanup() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onEnd);
+      }
+
+      function cancelDrag() {
+        dragReady = false;
+        dragging = false;
         cleanup();
-        void getCurrentWindow().startDragging();
-      };
+      }
 
-      const cleanup = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", cleanup);
-      };
+      function finishDrag(endTarget?: EventTarget | null) {
+        if (!dragReady && !dragging) return;
+        const shouldSave = moved;
+        cancelDrag();
+        if (shouldSave) {
+          void api
+            .setMainPanelPosition(lastX, lastY)
+            .then(() => api.saveMainPanelPosition())
+            .catch(() => undefined);
+        }
+        if (
+          modeRef.current === "search" &&
+          (!(endTarget instanceof Element) || !endTarget.closest("input, button, a"))
+        ) {
+          inputRef.current?.focus({ preventScroll: true });
+        }
+      }
 
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", cleanup);
+      function onMove(moveEvent: MouseEvent) {
+        if (moveEvent.buttons === 0) {
+          finishDrag(moveEvent.target);
+          return;
+        }
+        if (!dragging) return;
+        lastX = moveEvent.screenX - offsetX;
+        lastY = moveEvent.screenY - offsetY;
+        moved = true;
+        void api.setMainPanelPosition(lastX, lastY);
+      }
+
+      function onEnd(endEvent: MouseEvent) {
+        finishDrag(endEvent.target);
+      }
+
+      // Register synchronously so mouseup cannot be lost while position is requested.
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onEnd);
+
+      try {
+        const position = await api.getMainPanelPosition();
+        if (!dragReady) return;
+        offsetX = startScreenX - position.x;
+        offsetY = startScreenY - position.y;
+        dragging = true;
+      } catch {
+        cancelDrag();
+      }
     },
     [isTauri]
   );
+
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    const measure = inputMeasureRef.current;
+    const wrapper = inputWrapperRef.current;
+    if (!input || !measure || !wrapper) return;
+
+    const contentWidth = query ? measure.offsetWidth + 10 : 2;
+    input.style.width = `${Math.max(2, Math.min(contentWidth, wrapper.clientWidth))}px`;
+  }, [clipboardChip, mode, query]);
 
   const [appsRevision, setAppsRevision] = useState(0);
   const [disabledBuiltinIds, setDisabledBuiltinIds] = useState<Set<string>>(new Set());
@@ -377,11 +442,12 @@ export function MainPanelPage() {
           return;
         }
         applySeedToUi(seed);
+        window.requestAnimationFrame(focusSearchInputAtEnd);
       } catch (error) {
         console.error(error);
       }
     },
-    [applySeedToUi, isTauri]
+    [applySeedToUi, focusSearchInputAtEnd, isTauri]
   );
 
   /** Manual Ctrl/Cmd+V: pull current OS clipboard even after auto-seed expired. */
@@ -396,15 +462,13 @@ export function MainPanelPage() {
           return;
         }
         applySeedToUi(seed);
-        window.requestAnimationFrame(() => {
-          inputRef.current?.focus();
-        });
+        window.requestAnimationFrame(focusSearchInputAtEnd);
       } catch (error) {
         console.error(error);
         toast.error(error instanceof Error ? error.message : "粘贴失败");
       }
     },
-    [applySeedToUi, isTauri]
+    [applySeedToUi, focusSearchInputAtEnd, isTauri]
   );
 
   const markClipboardChipHidden = useCallback(() => {
@@ -474,11 +538,8 @@ export function MainPanelPage() {
       needsSearchSizeRef.current = true;
       void api.getLauncherUsage().then(setUsageItems).catch(console.error);
     }
-    window.requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-  }, [isTauri]);
+    window.requestAnimationFrame(focusSearchInputAtEnd);
+  }, [focusSearchInputAtEnd, isTauri]);
 
   const openBuiltinApp = useCallback(
     (appId: string, options?: OpenBuiltinAppOptions) => {
@@ -674,12 +735,7 @@ export function MainPanelPage() {
     let unlistenBlur: (() => void) | undefined;
     const appWindow = getCurrentWindow();
 
-    const focusSearchInput = () => {
-      inputRef.current?.focus();
-      if (!clipboardChipRef.current) {
-        inputRef.current?.select();
-      }
-    };
+    const focusSearchInput = focusSearchInputAtEnd;
 
     const restoreSessionIfNeeded = () => {
       if (modeRef.current === "app" && activeAppIdRef.current) {
@@ -794,6 +850,7 @@ export function MainPanelPage() {
   }, [
     applyClipboardSeedFromBackend,
     clearClipboardChipLocal,
+    focusSearchInputAtEnd,
     hidePreservingSession,
     isTauri,
     loadApps,
@@ -1200,6 +1257,15 @@ export function MainPanelPage() {
     dismissClipboardSeed();
   };
 
+  const clearSearchQuery = () => {
+    queryRef.current = "";
+    setQuery("");
+    selectedKeyRef.current = null;
+    setSelectedKey(null);
+    setError(null);
+    dismissClipboardSeed();
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     // IME: Enter confirms a candidate; arrows move the candidate list. keyCode 229 covers
     // browsers that clear isComposing before the confirming Enter keydown fires.
@@ -1212,6 +1278,10 @@ export function MainPanelPage() {
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      if (event.currentTarget.value) {
+        clearSearchQuery();
+        return;
+      }
       if (clipboardChipRef.current) {
         clearClipboardChip();
         return;
@@ -1392,10 +1462,7 @@ export function MainPanelPage() {
                               setClipboardChip(null);
                               clipboardChipRef.current = null;
                               dismissClipboardSeed();
-                              window.requestAnimationFrame(() => {
-                                inputRef.current?.focus();
-                                inputRef.current?.select();
-                              });
+                              window.requestAnimationFrame(focusSearchInputAtEnd);
                             }}
                           >
                             <Pencil className="size-3.5" />
@@ -1422,33 +1489,47 @@ export function MainPanelPage() {
                       )}
                     </div>
                   ) : null}
-                  <input
-                    ref={inputRef}
-                    value={query}
-                    className="main-panel-input"
-                    placeholder={clipboardChip ? "搜索匹配" : "搜索应用或输入命令"}
-                    autoComplete="off"
-                    spellCheck={false}
-                    aria-label="搜索应用或输入命令"
-                    onPaste={(event) => {
-                      void handleManualPaste(event);
-                    }}
-                    onChange={(event) => {
-                      setQuery(event.target.value);
-                      setError(null);
-                    }}
-                    onCompositionStart={() => {
-                      imeComposingRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      // Confirming Enter often arrives in the same turn as compositionend;
-                      // clear on the next frame so it does not execute the selected app.
-                      window.requestAnimationFrame(() => {
-                        imeComposingRef.current = false;
-                      });
-                    }}
-                    onKeyDown={handleKeyDown}
-                  />
+                  <div ref={inputWrapperRef} className="main-panel-input-wrapper">
+                    <span ref={inputMeasureRef} className="main-panel-input-measure" aria-hidden>
+                      {query}
+                    </span>
+                    {!query ? (
+                      <span className="main-panel-input-placeholder" aria-hidden>
+                        {clipboardChip ? "搜索匹配" : "搜索应用或输入命令"}
+                      </span>
+                    ) : null}
+                    <input
+                      ref={inputRef}
+                      value={query}
+                      className="main-panel-input"
+                      placeholder=""
+                      autoComplete="off"
+                      spellCheck={false}
+                      aria-label="搜索应用或输入命令"
+                      onPaste={(event) => {
+                        void handleManualPaste(event);
+                      }}
+                      onChange={(event) => {
+                        const nextQuery = event.target.value;
+                        const clearedByUser = Boolean(queryRef.current) && !nextQuery;
+                        queryRef.current = nextQuery;
+                        setQuery(nextQuery);
+                        setError(null);
+                        if (clearedByUser) dismissClipboardSeed();
+                      }}
+                      onCompositionStart={() => {
+                        imeComposingRef.current = true;
+                      }}
+                      onCompositionEnd={() => {
+                        // Confirming Enter often arrives in the same turn as compositionend;
+                        // clear on the next frame so it does not execute the selected app.
+                        window.requestAnimationFrame(() => {
+                          imeComposingRef.current = false;
+                        });
+                      }}
+                      onKeyDown={handleKeyDown}
+                    />
+                  </div>
                 </div>
                 <Button
                   type="button"

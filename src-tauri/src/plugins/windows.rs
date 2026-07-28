@@ -135,9 +135,13 @@ pub async fn open_plugin_window(
         return Ok(());
     }
 
-    // Opening follows the cursor just like the main panel. Using the panel's
-    // current_monitor here can briefly return the monitor it occupied before this open.
-    let resolved = resolve_window_rect(&app, None, &rect)?;
+    let main_panel = app.get_webview_window(crate::auxiliary_windows::MAIN_PANEL_LABEL);
+    let resolved = resolve_window_rect(&app, main_panel.as_ref(), &rect)?;
+    let position = main_panel
+        .as_ref()
+        .and_then(|window| window.outer_position().ok())
+        .map(|current| preserve_omitted_rect_position(&rect, resolved.position, current))
+        .unwrap_or(resolved.position);
 
     host.register_plugin_window(
         label.clone(),
@@ -175,7 +179,7 @@ pub async fn open_plugin_window(
             return Err(error.to_string());
         }
     };
-    if let Err(error) = window.set_position(resolved.position) {
+    if let Err(error) = window.set_position(position) {
         host.remove_plugin_window(&label);
         crate::logging::debug_if_err(window.destroy(), "destroy unpositioned plugin window");
         return Err(error.to_string());
@@ -245,14 +249,35 @@ pub fn set_plugin_window_rect(app: &AppHandle, label: &str, rect: &AppRect) -> R
     let window = app
         .get_webview_window(label)
         .ok_or_else(|| "plugin window not found".to_string())?;
+    let current_position = window.outer_position().map_err(|error| error.to_string())?;
     let resolved = resolve_window_rect(app, Some(&window), rect)?;
-    window
-        .set_position(resolved.position)
-        .map_err(|error| error.to_string())?;
+    let position = preserve_omitted_rect_position(rect, resolved.position, current_position);
     window
         .set_size(resolved.physical_size)
         .map_err(|error| error.to_string())?;
+    window
+        .set_position(position)
+        .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+pub(crate) fn preserve_omitted_rect_position(
+    rect: &AppRect,
+    resolved: PhysicalPosition<i32>,
+    current: PhysicalPosition<i32>,
+) -> PhysicalPosition<i32> {
+    PhysicalPosition::new(
+        if rect.x.is_some() {
+            resolved.x
+        } else {
+            current.x
+        },
+        if rect.y.is_some() {
+            resolved.y
+        } else {
+            current.y
+        },
+    )
 }
 
 pub fn resolve_window_rect(
@@ -519,6 +544,26 @@ mod tests {
                 APP_WINDOW_MAX_HEIGHT,
             ),
             DEFAULT_APP_WINDOW_HEIGHT
+        );
+    }
+
+    #[test]
+    fn omitted_position_axes_preserve_the_current_window_position() {
+        let resolved = PhysicalPosition::new(100, 200);
+        let current = PhysicalPosition::new(640, 360);
+        let rect = AppRect::default();
+        assert_eq!(
+            preserve_omitted_rect_position(&rect, resolved, current),
+            current
+        );
+
+        let rect = AppRect {
+            x: Some(RectValue::Pixels(100.0)),
+            ..AppRect::default()
+        };
+        assert_eq!(
+            preserve_omitted_rect_position(&rect, resolved, current),
+            PhysicalPosition::new(100, 360)
         );
     }
 

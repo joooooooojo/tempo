@@ -104,10 +104,45 @@ html.main-panel-window #root {
   border-radius: 6px;
 }
 
-.main-panel-input {
+.main-panel-input-wrapper {
+  position: relative;
+  display: flex;
   min-width: 0;
-  height: 48px;
   flex: 1;
+  align-items: center;
+  overflow: hidden;
+  font: inherit;
+  font-size: 25px;
+  font-weight: 430;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.main-panel-input-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.main-panel-input-placeholder {
+  position: absolute;
+  left: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.72;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-panel-input {
+  width: 2px;
+  min-width: 2px;
+  max-width: 100%;
+  height: 48px;
+  flex: none;
   border: 0;
   outline: 0;
   background: transparent;
@@ -119,11 +154,6 @@ html.main-panel-window #root {
   letter-spacing: 0;
   user-select: text;
   -webkit-user-select: text;
-}
-
-.main-panel-input::placeholder {
-  color: hsl(var(--muted-foreground));
-  opacity: 0.72;
 }
 
 .main-panel-logo-button {
@@ -438,7 +468,7 @@ html.main-panel-window #root {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .main-panel-input {
+  .main-panel-input-wrapper {
     font-size: 21px;
   }
 }
