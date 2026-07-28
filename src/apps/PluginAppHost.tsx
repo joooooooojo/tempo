@@ -39,6 +39,10 @@ interface PluginToHostRpcMessage {
   params?: unknown;
 }
 
+interface PluginReadyMessage {
+  type: "tempo-plugin-ready";
+}
+
 function isPluginRpcMessage(data: unknown): data is PluginToHostRpcMessage {
   return (
     Boolean(data) &&
@@ -46,6 +50,14 @@ function isPluginRpcMessage(data: unknown): data is PluginToHostRpcMessage {
     (data as { type?: unknown }).type === "tempo-plugin-rpc" &&
     typeof (data as { id?: unknown }).id === "string" &&
     typeof (data as { method?: unknown }).method === "string"
+  );
+}
+
+function isPluginReadyMessage(data: unknown): data is PluginReadyMessage {
+  return (
+    Boolean(data) &&
+    typeof data === "object" &&
+    (data as { type?: unknown }).type === "tempo-plugin-ready"
   );
 }
 
@@ -151,12 +163,23 @@ export function PluginAppHost({
 
   useEffect(() => {
     if (!prepared || !pluginId) return;
+    const preparedView = prepared;
     const viewInstanceId = prepared.viewInstanceId;
     const resolvedPluginId = pluginId;
 
     function onMessage(event: MessageEvent) {
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (originRef.current && event.origin !== originRef.current) return;
+      if (isPluginReadyMessage(event.data)) {
+        postToPlugin({
+          type: "tempo-plugin-context",
+          apiVersion: preparedView.apiVersion,
+          theme: preparedView.theme,
+          params: preparedView.params,
+          session: preparedView.session ?? null,
+        });
+        return;
+      }
       if (!isPluginRpcMessage(event.data)) return;
 
       const { id, method, params: rpcParams } = event.data;

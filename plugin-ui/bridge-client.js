@@ -154,4 +154,6 @@
       return context ? Promise.resolve(context) : new Promise((resolve) => contextWaiters.push(resolve));
     },
   };
+
+  window.parent.postMessage({ type: "tempo-plugin-ready" }, "*");
 })();

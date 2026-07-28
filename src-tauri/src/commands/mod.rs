@@ -4,6 +4,7 @@ pub mod hosts;
 pub mod launcher;
 pub mod markdown;
 pub mod plugins;
+pub mod plugin_dev;
 pub mod port_manager;
 pub mod reports;
 pub mod settings;

@@ -15,6 +15,30 @@ npm install @tempo/plugin-sdk
 
 **必须把 SDK 打进你的 `main.mjs` / UI 产物。** Tempo 不会在用户机器上再下载一份 SDK。
 
+### 开发服务 UI
+
+插件开发助手使用本地服务 URL 时，页面不是由 `tempo-plugin://` 提供，宿主无法自动修改 HTML。
+应用入口需要安装开发 Bridge：
+
+```ts
+import "@tempo/plugin-sdk/dev";
+```
+
+Vite 项目也可以在现有 `vite.config.ts` 中使用仅 `serve` 阶段生效的适配器：
+
+```ts
+import { defineConfig } from "vite";
+import { tempoPluginDev } from "@tempo/plugin-sdk/vite";
+
+export default defineConfig({
+  plugins: [tempoPluginDev()],
+  server: { host: "127.0.0.1" },
+});
+```
+
+该适配器只注入与正式页面相同的 `window.plugin` Bridge，不启动 Vite、不执行 build，也不修改
+`dist`。开发助手选择静态目录时仍由 `tempo-plugin://` 自动注入 Bridge，无需以上配置。
+
 ## Runtime
 
 ```ts

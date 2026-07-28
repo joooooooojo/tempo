@@ -20,6 +20,11 @@ import type {
   PluginSettingsBundle,
   BuiltinMcpStatus,
   PluginRuntimeStatus,
+  PluginDevConnectionStatus,
+  PluginDevPreferences,
+  PluginDevProbeResult,
+  PluginDevProject,
+  PluginDevProjectDetail,
   PluginUiPrepareResult,
   PluginWindowContext,
   PortRecord,
@@ -305,6 +310,63 @@ export const api = {
   setPluginSettingsValues: (pluginId: string, values: Record<string, unknown>) =>
     invoke<Record<string, unknown>>("set_plugin_settings_values", {
       args: { pluginId, values },
+    }),
+
+  // Plugin development assistant
+  listPluginDevProjects: () =>
+    invoke<PluginDevProject[]>("plugin_dev_list_projects"),
+  createPluginDevProject: (args: {
+    rootPath: string;
+    pluginId: string;
+    name: string;
+    kind: "ui" | "headless" | "hybrid";
+  }) => invoke<PluginDevProjectDetail>("plugin_dev_create_project", { args }),
+  openPluginDevProject: (rootPath: string) =>
+    invoke<PluginDevProjectDetail>("plugin_dev_open_project", {
+      args: { rootPath },
+    }),
+  getPluginDevProject: (projectId: string) =>
+    invoke<PluginDevProjectDetail>("plugin_dev_get_project", {
+      args: { projectId },
+    }),
+  writePluginDevManifest: (projectId: string, raw: string, expectedHash: string) =>
+    invoke<PluginDevProjectDetail>("plugin_dev_write_manifest", {
+      args: { projectId, raw, expectedHash },
+    }),
+  updatePluginDevPreferences: (
+    projectId: string,
+    preferences: PluginDevPreferences
+  ) =>
+    invoke<PluginDevProjectDetail>("plugin_dev_update_preferences", {
+      args: { projectId, preferences },
+    }),
+  probePluginDevUiUrl: (url: string) =>
+    invoke<PluginDevProbeResult>("plugin_dev_probe_ui_url", {
+      args: { url },
+    }),
+  connectPluginDevProject: (projectId: string) =>
+    invoke<PluginDevConnectionStatus>("plugin_dev_connect", {
+      args: { projectId },
+    }),
+  disconnectPluginDevProject: (projectId: string) =>
+    invoke<PluginDevConnectionStatus>("plugin_dev_disconnect", {
+      args: { projectId },
+    }),
+  reconnectPluginDevRuntime: (projectId: string) =>
+    invoke<PluginDevConnectionStatus>("plugin_dev_reconnect_runtime", {
+      args: { projectId },
+    }),
+  simulatePluginDevHook: (projectId: string, event: string, payload: unknown) =>
+    invoke<unknown>("plugin_dev_simulate_hook", {
+      args: { projectId, event, payload },
+    }),
+  runPluginDevMcpTool: (projectId: string, toolName: string, argumentsValue: unknown) =>
+    invoke<unknown>("plugin_dev_run_mcp_tool", {
+      args: { projectId, toolName, arguments: argumentsValue },
+    }),
+  forgetPluginDevProject: (projectId: string) =>
+    invoke<void>("plugin_dev_forget_project", {
+      args: { projectId },
     }),
   listBuiltinMcpTools: (appId: string) =>
     invoke<PluginMcpToolInfo[]>("list_builtin_mcp_tools", { appId }),

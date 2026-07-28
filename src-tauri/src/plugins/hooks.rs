@@ -48,8 +48,29 @@ pub fn dispatch_event(app: &AppHandle, host: &Arc<PluginHost>, event: &str, payl
         }
     };
 
+    for development in host.development_plugins() {
+        if !development.receive_real_hooks {
+            continue;
+        }
+        for hook in &development.manifest.contributes.hooks {
+            if hook.event != event {
+                continue;
+            }
+            spawn_hook_call(
+                host.clone(),
+                development.manifest.id.clone(),
+                hook.command.clone(),
+                event.to_string(),
+                payload.clone(),
+            );
+        }
+    }
+
     for row in rows {
         if !row.enabled || !row.trusted {
+            continue;
+        }
+        if host.development_plugin(&row.id).is_some() {
             continue;
         }
         let manifest_path = packages_root
@@ -67,29 +88,38 @@ pub fn dispatch_event(app: &AppHandle, host: &Arc<PluginHost>, event: &str, payl
             if hook.event != event {
                 continue;
             }
-            let plugin_id = row.id.clone();
-            let command_id = hook.command.clone();
-            let host = host.clone();
-            let payload = payload.clone();
-            let event = event.to_string();
-            // `dispatch_event` may be called from a plain OS thread (e.g. the clipboard
-            // watcher), not necessarily inside a Tokio task — use the app-wide async runtime
-            // handle rather than `tokio::spawn`, which requires an ambient runtime context.
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = host
-                    .supervisor
-                    .call(&plugin_id, &command_id, payload, DEFAULT_TIMEOUT)
-                    .await
-                {
-                    tracing::warn!(
-                        plugin_id = %plugin_id,
-                        command = %command_id,
-                        event = %event,
-                        error = %error,
-                        "plugin hook invocation failed"
-                    );
-                }
-            });
+            spawn_hook_call(
+                host.clone(),
+                row.id.clone(),
+                hook.command.clone(),
+                event.to_string(),
+                payload.clone(),
+            );
         }
     }
+}
+
+fn spawn_hook_call(
+    host: Arc<PluginHost>,
+    plugin_id: String,
+    command_id: String,
+    event: String,
+    payload: Value,
+) {
+    // Hook dispatch may start from a plain OS thread, so use Tauri's runtime handle.
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = host
+            .supervisor
+            .call(&plugin_id, &command_id, payload, DEFAULT_TIMEOUT)
+            .await
+        {
+            tracing::warn!(
+                plugin_id = %plugin_id,
+                command = %command_id,
+                event = %event,
+                error = %error,
+                "plugin hook invocation failed"
+            );
+        }
+    });
 }

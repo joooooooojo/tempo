@@ -19,6 +19,7 @@
 @import "./components/shelf-card.css";
 @import "./components/clipboard-file-glyph.css";
 @import "./components/settings.css";
+@import "./components/plugin-dev-assistant.css";
 @import "./overlays/main-panel.css";
 @import "./overlays/shelf-picker.css";
 @import "@platform-styles";

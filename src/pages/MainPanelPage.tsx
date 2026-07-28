@@ -91,12 +91,19 @@ const APP_CHROME_HEIGHT = 58;
 const BUILTIN_USAGE_PREFIX = "builtin:";
 const PLUGIN_USAGE_PREFIX = "plugin:";
 /** Skip host padding: edge-to-edge builtins, and all plugins (authors pad themselves). */
-const FLUSH_APP_IDS = new Set(["hosts", "translate", "port-manager", "settings"]);
+const FLUSH_APP_IDS = new Set([
+  "hosts",
+  "translate",
+  "port-manager",
+  "plugin-dev-assistant",
+  "settings",
+]);
 /** Fill host via h-full/flex ? do not wrap in ScrollArea (breaks height chain). */
 const FILL_HEIGHT_APP_IDS = new Set([
   "hosts",
   "translate",
   "port-manager",
+  "plugin-dev-assistant",
   "todo",
   "settings",
 ]);

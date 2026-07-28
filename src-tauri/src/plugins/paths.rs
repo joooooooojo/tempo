@@ -25,6 +25,10 @@ pub fn plugin_data_dir(app: &AppHandle, plugin_id: &str) -> Result<PathBuf, Stri
     Ok(plugins_root(app)?.join("data").join(plugin_id))
 }
 
+pub fn plugin_dev_data_dir(app: &AppHandle, project_id: &str) -> Result<PathBuf, String> {
+    Ok(plugins_root(app)?.join("dev-data").join(project_id))
+}
+
 pub fn staging_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(plugins_root(app)?.join("_staging"))
 }

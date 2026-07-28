@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import {
   BarChart3,
+  Braces,
   Cable,
   ClipboardList,
   FileCode2,
@@ -24,6 +25,7 @@ import { TodoPage } from "@/pages/TodoPage";
 import { HostsPage } from "@/pages/tools/hosts/HostsPage";
 import { PortManagerPage } from "@/pages/tools/port-manager/PortManagerPage";
 import { TranslatePage } from "@/pages/tools/translate/TranslatePage";
+import { PluginDevAssistantPage } from "@/pages/PluginDevAssistantPage";
 
 export { BUILTIN_OWNER } from "@/apps/constants";
 
@@ -36,7 +38,7 @@ function wrapPage(Page: ComponentType): ComponentType<TempoAppProps> {
 function reactApp(
   partial: Omit<TempoApp, "source" | "ui"> & {
     component: ComponentType<TempoAppProps>;
-  }
+  },
 ): TempoApp {
   const { component, ...rest } = partial;
   return {
@@ -97,6 +99,13 @@ const BUILTIN_APP_DEFS: TempoApp[] = [
     component: wrapPage(PortManagerPage),
   }),
   reactApp({
+    id: "plugin-dev-assistant",
+    name: "插件开发助手",
+    keywords: ["plugin", "插件", "开发", "manifest", "headless"],
+    icon: lucideIcon(Braces),
+    component: wrapPage(PluginDevAssistantPage),
+  }),
+  reactApp({
     id: "settings",
     name: "设置",
     keywords: ["settings", "设置", "偏好", "配置"],
@@ -120,12 +129,15 @@ function assertOwner(ownerPluginId: string, appId: string) {
   const existingOwner = ownerById.get(appId);
   if (existingOwner && existingOwner !== ownerPluginId) {
     throw new Error(
-      `App id "${appId}" is already owned by "${existingOwner}"; cannot register as "${ownerPluginId}"`
+      `App id "${appId}" is already owned by "${existingOwner}"; cannot register as "${ownerPluginId}"`,
     );
   }
 }
 
-export function registerApp(ownerPluginId: string, app: TempoApp): Registration {
+export function registerApp(
+  ownerPluginId: string,
+  app: TempoApp,
+): Registration {
   assertOwner(ownerPluginId, app.id);
   if (byId.has(app.id) && ownerById.get(app.id) !== ownerPluginId) {
     throw new Error(`Duplicate app id "${app.id}"`);
@@ -134,7 +146,9 @@ export function registerApp(ownerPluginId: string, app: TempoApp): Registration 
   const existingIndex = apps.findIndex((item) => item.id === app.id);
   if (existingIndex >= 0) {
     if (ownerById.get(app.id) !== ownerPluginId) {
-      throw new Error(`Cannot replace app "${app.id}" owned by another registrant`);
+      throw new Error(
+        `Cannot replace app "${app.id}" owned by another registrant`,
+      );
     }
     apps[existingIndex] = app;
   } else {

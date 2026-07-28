@@ -9,7 +9,26 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use tauri::AppHandle;
 
+use super::manifest::PluginManifest;
 use super::supervisor::Supervisor;
+
+#[derive(Debug, Clone)]
+pub enum DevelopmentUiSource {
+    Url(String),
+    Static(PathBuf),
+}
+
+#[derive(Debug, Clone)]
+pub struct DevelopmentPlugin {
+    pub session_id: String,
+    pub project_id: String,
+    pub root_path: PathBuf,
+    pub manifest: PluginManifest,
+    pub ui_source: Option<DevelopmentUiSource>,
+    pub runtime_entry: Option<PathBuf>,
+    pub receive_real_hooks: bool,
+    pub use_production_data: bool,
+}
 
 #[derive(Debug, Clone)]
 pub struct PluginRegistryEntry {
@@ -55,6 +74,8 @@ pub struct PluginHost {
     views: Mutex<HashMap<String, ViewInstance>>,
     registry: Mutex<HashMap<String, PluginRegistryEntry>>,
     hash_index: Mutex<HashMap<String, String>>,
+    development: Mutex<HashMap<String, DevelopmentPlugin>>,
+    development_hash_index: Mutex<HashMap<String, String>>,
     subscriptions: Mutex<HashMap<String, SubscriptionEntry>>,
     inflight: Mutex<HashMap<String, usize>>,
     plugin_windows: Mutex<HashMap<String, PluginWindowInstance>>,
@@ -67,6 +88,8 @@ impl PluginHost {
             views: Mutex::new(HashMap::new()),
             registry: Mutex::new(HashMap::new()),
             hash_index: Mutex::new(HashMap::new()),
+            development: Mutex::new(HashMap::new()),
+            development_hash_index: Mutex::new(HashMap::new()),
             subscriptions: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
             plugin_windows: Mutex::new(HashMap::new()),
@@ -85,12 +108,66 @@ impl PluginHost {
     }
 
     pub fn plugin_entry(&self, plugin_id: &str) -> Option<PluginRegistryEntry> {
+        if let Some(entry) = self.development_plugin(plugin_id) {
+            let install_path = match &entry.ui_source {
+                Some(DevelopmentUiSource::Static(path)) => path.clone(),
+                _ => entry.root_path.clone(),
+            };
+            return Some(PluginRegistryEntry {
+                plugin_id: entry.manifest.id.clone(),
+                version: entry.manifest.version.clone(),
+                package_hash: String::new(),
+                install_path,
+                name: entry.manifest.name.clone(),
+                requires_node_runtime: entry.manifest.requires_node_runtime(),
+                main: entry.manifest.main.clone(),
+            });
+        }
         self.registry.lock().get(plugin_id).cloned()
     }
 
     pub fn resolve_hash(&self, plugin_hash: &str) -> Option<PluginRegistryEntry> {
-        let plugin_id = self.hash_index.lock().get(plugin_hash).cloned()?;
+        let plugin_id = self
+            .development_hash_index
+            .lock()
+            .get(plugin_hash)
+            .cloned()
+            .or_else(|| self.hash_index.lock().get(plugin_hash).cloned())?;
         self.plugin_entry(&plugin_id)
+    }
+
+    pub fn register_development_plugin(&self, entry: DevelopmentPlugin) {
+        let plugin_id = entry.manifest.id.clone();
+        let plugin_hash = super::ui::plugin_hash_of(&plugin_id);
+        self.development.lock().insert(plugin_id.clone(), entry);
+        self.development_hash_index
+            .lock()
+            .insert(plugin_hash, plugin_id);
+    }
+
+    pub fn development_plugin(&self, plugin_id: &str) -> Option<DevelopmentPlugin> {
+        self.development.lock().get(plugin_id).cloned()
+    }
+
+    pub fn development_plugins(&self) -> Vec<DevelopmentPlugin> {
+        self.development.lock().values().cloned().collect()
+    }
+
+    pub fn remove_development_plugin(&self, plugin_id: &str) -> Option<DevelopmentPlugin> {
+        let removed = self.development.lock().remove(plugin_id);
+        if removed.is_some() {
+            self.development_hash_index
+                .lock()
+                .retain(|_, id| id != plugin_id);
+        }
+        removed
+    }
+
+    pub fn plugin_storage_namespace(&self, plugin_id: &str) -> String {
+        self.development_plugin(plugin_id)
+            .filter(|entry| !entry.use_production_data)
+            .map(|entry| format!("__tempo_dev__:{}:{plugin_id}", entry.project_id))
+            .unwrap_or_else(|| plugin_id.to_string())
     }
 
     pub fn forget_plugin(&self, plugin_id: &str) {

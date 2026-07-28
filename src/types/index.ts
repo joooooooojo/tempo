@@ -452,3 +452,69 @@ export interface PluginRpcError {
   message: string;
   data?: unknown;
 }
+
+export interface PluginDevProject {
+  id: string;
+  rootPath: string;
+  pluginId?: string | null;
+  name?: string | null;
+  kind?: string | null;
+  lastOpenedAt: string;
+  createdAt: string;
+  connected: boolean;
+}
+
+export interface PluginDevManifestDiagnostic {
+  severity: "error" | "warning" | "info" | string;
+  code: string;
+  line?: number | null;
+  column?: number | null;
+  message: string;
+}
+
+export interface PluginDevManifestDocument {
+  raw: string;
+  hash: string;
+  parsed?: unknown;
+  valid: boolean;
+  diagnostics: PluginDevManifestDiagnostic[];
+}
+
+export interface PluginDevPreferences {
+  uiSourceKind?: "url" | "static" | null;
+  uiServiceUrl?: string | null;
+  uiStaticRoot?: string | null;
+  runtimeDevEntry?: string | null;
+  autoReconnectRuntime: boolean;
+  receiveRealHooks: boolean;
+  useProductionData: boolean;
+}
+
+export interface PluginDevConnectionStatus {
+  connected: boolean;
+  pluginId?: string | null;
+  state: "disconnected" | "connected" | "partial" | "failed" | string;
+  uiState?: string | null;
+  runtimeState?: string | null;
+  message?: string | null;
+}
+
+export interface PluginDevProjectDetail {
+  project: PluginDevProject;
+  manifest: PluginDevManifestDocument;
+  preferences: PluginDevPreferences;
+  connection: PluginDevConnectionStatus;
+}
+
+export interface PluginDevProbeResult {
+  reachable: boolean;
+  status?: number | null;
+  message: string;
+}
+
+export interface PluginDevLogEvent {
+  pluginId: string;
+  source: "stdout" | "stderr" | string;
+  message: string;
+  at: string;
+}

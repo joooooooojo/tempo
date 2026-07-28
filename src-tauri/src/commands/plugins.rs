@@ -10,7 +10,9 @@ use crate::db::AppState;
 use crate::plugins::bridge::{self, ConnectionContext, RpcError};
 use crate::plugins::host::PluginHost;
 use crate::plugins::ids::{is_valid_local_id, runtime_id};
-use crate::plugins::loader::{scan_enabled_contributions, PluginContributionBundle};
+use crate::plugins::loader::{
+    scan_enabled_contributions, with_development_contributions, PluginContributionBundle,
+};
 use crate::plugins::manifest::PluginManifest;
 use crate::plugins::package::{import_directory, import_zip, InstalledPackage};
 use crate::plugins::paths::{packages_dir, plugin_data_dir, trash_dir};
@@ -125,7 +127,8 @@ pub fn list_plugins(
                                 .iter()
                                 .find_map(|action| action.icon.as_ref())
                         });
-                    row.icon_url = icon_rel.and_then(|icon| plugin_icon_data_url(&install_path, icon));
+                    row.icon_url =
+                        icon_rel.and_then(|icon| plugin_icon_data_url(&install_path, icon));
                 }
             }
         }
@@ -341,11 +344,8 @@ pub fn get_plugin_settings_bundle(
             placeholder: setting.placeholder.clone(),
         })
         .collect();
-    let values = crate::plugins::settings::read_values(
-        &conn,
-        &plugin_id,
-        &manifest.contributes.settings,
-    )?;
+    let values =
+        crate::plugins::settings::read_values(&conn, &plugin_id, &manifest.contributes.settings)?;
     let fingerprint = manifest.mcp_toolset_fingerprint().unwrap_or_default();
     let mcp_tool_count = manifest.contributes.mcp_tools.len();
     let mcp_exposed = row.mcp_exposed
@@ -427,7 +427,10 @@ pub fn set_plugin_mcp_tool_enabled(
         .iter()
         .any(|tool| tool.name == args.tool_name)
     {
-        return Err(format!("plugin does not declare MCP tool {}", args.tool_name));
+        return Err(format!(
+            "plugin does not declare MCP tool {}",
+            args.tool_name
+        ));
     }
     crate::plugins::trust::set_plugin_mcp_tool_enabled(
         &conn,
@@ -556,7 +559,8 @@ fn refresh_contributions(
     host: &Arc<PluginHost>,
 ) -> Result<Vec<PluginContributionBundle>, String> {
     let conn = app_state.db.lock();
-    let bundles = scan_enabled_contributions(app, host, &conn)?;
+    let bundles =
+        with_development_contributions(scan_enabled_contributions(app, host, &conn)?, host);
     drop(conn);
     let _ = app.emit(CONTRIBUTIONS_CHANGED_EVENT, ());
     Ok(bundles)
@@ -571,7 +575,10 @@ pub fn list_plugin_contributions(
     host: State<'_, Arc<PluginHost>>,
 ) -> Result<Vec<PluginContributionBundle>, String> {
     let conn = state.db.lock();
-    scan_enabled_contributions(&app, &host, &conn)
+    Ok(with_development_contributions(
+        scan_enabled_contributions(&app, &host, &conn)?,
+        &host,
+    ))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -721,6 +728,42 @@ pub fn plugin_ui_prepare(
         return Err(format!("invalid app id: {}", args.app_id));
     }
 
+    if let Some(development) = host.development_plugin(&args.plugin_id) {
+        let app_contrib = development
+            .manifest
+            .contributes
+            .apps
+            .iter()
+            .find(|candidate| candidate.id == args.app_id)
+            .ok_or_else(|| format!("plugin does not contribute app {}", args.app_id))?;
+        let entry_url = match development.ui_source.as_ref() {
+            Some(crate::plugins::host::DevelopmentUiSource::Url(url)) => url.clone(),
+            Some(crate::plugins::host::DevelopmentUiSource::Static(_)) => {
+                let plugin_hash = ui::plugin_hash_of(&development.manifest.id);
+                ui::plugin_entry_url(&plugin_hash, &app_contrib.entry)
+            }
+            None => return Err("开发插件没有配置 UI 连接".into()),
+        };
+        let conn = state.db.lock();
+        let theme = crate::db::get_setting(&conn, "theme", "system");
+        let owner_window_label = host
+            .plugin_window(window.label())
+            .filter(|owner| {
+                owner.plugin_id == development.manifest.id && owner.app_local_id == args.app_id
+            })
+            .map(|_| window.label());
+        let view_instance_id =
+            host.create_view(&development.manifest.id, &args.app_id, owner_window_label);
+        return Ok(PluginUiPrepareResult {
+            view_instance_id,
+            entry_url,
+            theme,
+            api_version: bridge::HOST_API_VERSION.to_string(),
+            params: args.params,
+            session: args.session_payload,
+        });
+    }
+
     let conn = state.db.lock();
     ensure_plugin_tables(&conn)?;
     let row = get_installed_plugin(&conn, &args.plugin_id)?
@@ -813,6 +856,10 @@ pub async fn plugin_ui_serialize_session(
     let Some(payload) = payload else {
         return Ok(());
     };
+
+    if host.development_plugin(&view.plugin_id).is_some() {
+        return Ok(());
+    }
 
     let conn = state.db.lock();
     ensure_plugin_tables(&conn)?;

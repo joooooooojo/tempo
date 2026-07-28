@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use tauri::AppHandle;
 
-use super::host::{PluginHost, PluginRegistryEntry};
+use super::host::{DevelopmentPlugin, DevelopmentUiSource, PluginHost, PluginRegistryEntry};
 use super::ids::runtime_id;
 use super::manifest::{ActionInputKind, AppRect, PluginManifest, PluginWindowMode};
 use super::paths::packages_dir;
@@ -60,6 +60,82 @@ pub struct PluginContributionBundle {
     pub requires_node_runtime: bool,
     pub apps: Vec<PluginAppContribution>,
     pub actions: Vec<PluginActionContribution>,
+}
+
+pub fn development_contribution_bundle(
+    development: &DevelopmentPlugin,
+) -> PluginContributionBundle {
+    let manifest = &development.manifest;
+    let plugin_id = &manifest.id;
+    let plugin_hash = plugin_hash_of(plugin_id);
+    let apps = manifest
+        .contributes
+        .apps
+        .iter()
+        .map(|contrib| PluginAppContribution {
+            id: runtime_id(plugin_id, &contrib.id),
+            local_id: contrib.id.clone(),
+            name: contrib.name.clone(),
+            keywords: contrib.keywords.clone(),
+            icon_url: contrib
+                .icon
+                .as_ref()
+                .map(|icon| plugin_icon_url(&plugin_hash, icon)),
+            entry_path: match &development.ui_source {
+                Some(DevelopmentUiSource::Url(url)) => url.clone(),
+                _ => plugin_entry_url(&plugin_hash, &contrib.entry),
+            },
+            window_mode: contrib.window_mode.clone(),
+            rect: contrib.rect.clone(),
+        })
+        .collect();
+    let actions = manifest
+        .contributes
+        .actions
+        .iter()
+        .map(|contrib| PluginActionContribution {
+            id: runtime_id(plugin_id, &contrib.id),
+            local_id: contrib.id.clone(),
+            name: contrib.name.clone(),
+            keywords: contrib.keywords.clone(),
+            icon_url: contrib
+                .icon
+                .as_ref()
+                .map(|icon| plugin_icon_url(&plugin_hash, icon)),
+            app_id: contrib
+                .app
+                .as_ref()
+                .map(|app_id| runtime_id(plugin_id, app_id)),
+            command_id: contrib
+                .command
+                .as_ref()
+                .map(|command_id| runtime_id(plugin_id, command_id)),
+            accepts: contrib.accepted_inputs(),
+            title_template: contrib.title_template.clone(),
+        })
+        .collect();
+
+    PluginContributionBundle {
+        plugin_id: plugin_id.clone(),
+        version: manifest.version.clone(),
+        package_hash: "development".into(),
+        name: manifest.name.clone(),
+        description: manifest.description.clone(),
+        requires_node_runtime: development.runtime_entry.is_some(),
+        apps,
+        actions,
+    }
+}
+
+pub fn with_development_contributions(
+    mut installed: Vec<PluginContributionBundle>,
+    host: &PluginHost,
+) -> Vec<PluginContributionBundle> {
+    for development in host.development_plugins() {
+        installed.retain(|bundle| bundle.plugin_id != development.manifest.id);
+        installed.push(development_contribution_bundle(&development));
+    }
+    installed
 }
 
 /// Scan every enabled + trusted plugin on disk, refresh the host's protocol/registry maps, and

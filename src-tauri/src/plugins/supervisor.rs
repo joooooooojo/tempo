@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex as SyncMutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
 use crate::db::AppState;
@@ -82,7 +82,10 @@ struct RuntimeProcess {
 
 impl RuntimeProcess {
     fn is_usable(&self) -> bool {
-        matches!(*self.state.lock(), RuntimeState::Active | RuntimeState::Starting)
+        matches!(
+            *self.state.lock(),
+            RuntimeState::Active | RuntimeState::Starting
+        )
     }
 }
 
@@ -157,7 +160,10 @@ impl Supervisor {
     ) -> Result<Value, RpcError> {
         self.ensure_started(plugin_id).await?;
         let process = self.get(plugin_id).ok_or_else(|| {
-            RpcError::new(bridge::codes::RUNTIME_UNAVAILABLE, "plugin runtime is not running")
+            RpcError::new(
+                bridge::codes::RUNTIME_UNAVAILABLE,
+                "plugin runtime is not running",
+            )
         })?;
 
         let id = generate_id();
@@ -196,6 +202,15 @@ impl Supervisor {
     /// Disable/uninstall path (design §6.2 `disable`): mark draining, ask for graceful
     /// shutdown, then kill the process tree if it doesn't exit in time.
     pub async fn stop(&self, plugin_id: &str) {
+        self.stop_with_grace(plugin_id, SHUTDOWN_GRACE).await;
+    }
+
+    pub async fn stop_development(&self, plugin_id: &str) {
+        self.stop_with_grace(plugin_id, Duration::from_millis(750))
+            .await;
+    }
+
+    async fn stop_with_grace(&self, plugin_id: &str, grace: Duration) {
         let Some(process) = self.processes.lock().remove(plugin_id) else {
             return;
         };
@@ -203,11 +218,14 @@ impl Supervisor {
         self.persist_state(plugin_id, RuntimeState::Draining);
 
         for (_, pending) in process.pending.lock().drain() {
-            let _ = pending.send(Err(RpcError::new(bridge::codes::CANCELLED, "plugin disabled")));
+            let _ = pending.send(Err(RpcError::new(
+                bridge::codes::CANCELLED,
+                "plugin disabled",
+            )));
         }
 
         let _ = encode_and_send(&process.write_tx, &json!({ "type": "shutdown" }));
-        tokio::time::sleep(SHUTDOWN_GRACE).await;
+        tokio::time::sleep(grace).await;
         if let Some(pid) = process.pid {
             kill_process_tree(pid);
         }
@@ -271,6 +289,12 @@ impl Supervisor {
     }
 
     async fn spawn_inner(&self, plugin_id: &str) -> Result<(), RpcError> {
+        if let Some(host) = self.app.try_state::<Arc<PluginHost>>() {
+            if let Some(development) = host.development_plugin(plugin_id) {
+                return self.spawn_development_inner(development).await;
+            }
+        }
+
         let app_state = self
             .app
             .try_state::<AppState>()
@@ -278,10 +302,14 @@ impl Supervisor {
         let row = {
             let conn = app_state.db.lock();
             let _ = ensure_plugin_tables(&conn);
-            get_installed_plugin(&conn, plugin_id).map_err(|e| RpcError::internal("spawn runtime", e))?
+            get_installed_plugin(&conn, plugin_id)
+                .map_err(|e| RpcError::internal("spawn runtime", e))?
         };
         let Some(row) = row else {
-            return Err(RpcError::new(bridge::codes::NOT_FOUND, "plugin is not installed"));
+            return Err(RpcError::new(
+                bridge::codes::NOT_FOUND,
+                "plugin is not installed",
+            ));
         };
         if !row.enabled || !row.trusted {
             return Err(RpcError::new(
@@ -314,16 +342,17 @@ impl Supervisor {
         verify_package_hash(&install_path, &package_hash)
             .map_err(|e| RpcError::new(bridge::codes::FORBIDDEN, e))?;
 
-        let node_path =
-            resolved_node_path(&self.app).map_err(|e| RpcError::new(bridge::codes::RUNTIME_UNAVAILABLE, e))?;
+        let node_path = resolved_node_path(&self.app)
+            .map_err(|e| RpcError::new(bridge::codes::RUNTIME_UNAVAILABLE, e))?;
         let data_dir = super::paths::plugin_data_dir(&self.app, plugin_id)
             .map_err(|e| RpcError::internal("spawn runtime", e))?;
         super::paths::ensure_dir(&data_dir).map_err(|e| RpcError::internal("spawn runtime", e))?;
-        let bootstrap_path =
-            write_bootstrap_script(&self.app).map_err(|e| RpcError::internal("spawn runtime", e))?;
+        let bootstrap_path = write_bootstrap_script(&self.app)
+            .map_err(|e| RpcError::internal("spawn runtime", e))?;
         let main_path = install_path.join(&main_rel);
 
-        let (endpoint_path, token) = create_ipc_endpoint().map_err(|e| RpcError::internal("spawn runtime", e))?;
+        let (endpoint_path, token) =
+            create_ipc_endpoint().map_err(|e| RpcError::internal("spawn runtime", e))?;
 
         let mut command = tokio::process::Command::new(&node_path);
         command
@@ -340,9 +369,12 @@ impl Supervisor {
             command.process_group(0);
         }
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| RpcError::new(bridge::codes::ACTIVATION_FAILED, format!("spawn node failed: {e}")))?;
+        let mut child = command.spawn().map_err(|e| {
+            RpcError::new(
+                bridge::codes::ACTIVATION_FAILED,
+                format!("spawn node failed: {e}"),
+            )
+        })?;
         let pid = child.id();
 
         let handshake = json!({
@@ -354,7 +386,8 @@ impl Supervisor {
             "nodeVersion": super::runtime::OFFICIAL_NODE_VERSION,
         });
         if let Some(mut stdin) = child.stdin.take() {
-            let mut line = serde_json::to_vec(&handshake).map_err(|e| RpcError::internal("spawn runtime", e))?;
+            let mut line = serde_json::to_vec(&handshake)
+                .map_err(|e| RpcError::internal("spawn runtime", e))?;
             line.push(b'\n');
             if let Err(error) = stdin.write_all(&line).await {
                 let _ = child.kill().await;
@@ -406,7 +439,10 @@ impl Supervisor {
             }
             Ok(Err(_)) => {
                 self.processes.lock().remove(plugin_id);
-                Err(RpcError::internal("spawn runtime", "activation channel closed"))
+                Err(RpcError::internal(
+                    "spawn runtime",
+                    "activation channel closed",
+                ))
             }
             Err(_) => {
                 self.processes.lock().remove(plugin_id);
@@ -416,6 +452,142 @@ impl Supervisor {
                 Err(RpcError::new(
                     bridge::codes::ACTIVATION_FAILED,
                     "plugin activate() did not complete within 10s",
+                ))
+            }
+        }
+    }
+
+    async fn spawn_development_inner(
+        &self,
+        development: super::host::DevelopmentPlugin,
+    ) -> Result<(), RpcError> {
+        let plugin_id = development.manifest.id.clone();
+        let main_path = development.runtime_entry.ok_or_else(|| {
+            RpcError::new(
+                bridge::codes::RUNTIME_UNAVAILABLE,
+                "development plugin has no Runtime entry",
+            )
+        })?;
+        if !main_path.is_file() {
+            return Err(RpcError::new(
+                bridge::codes::ACTIVATION_FAILED,
+                format!("Runtime 开发入口不存在: {}", main_path.display()),
+            ));
+        }
+        let work_dir = main_path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| development.root_path.clone());
+        let node_path = resolved_node_path(&self.app)
+            .map_err(|error| RpcError::new(bridge::codes::RUNTIME_UNAVAILABLE, error))?;
+        let data_dir = if development.use_production_data {
+            super::paths::plugin_data_dir(&self.app, &plugin_id)
+        } else {
+            super::paths::plugin_dev_data_dir(&self.app, &development.project_id)
+        }
+        .map_err(|error| RpcError::internal("spawn development runtime", error))?;
+        super::paths::ensure_dir(&data_dir)
+            .map_err(|error| RpcError::internal("spawn development runtime", error))?;
+        let bootstrap_path = write_bootstrap_script(&self.app)
+            .map_err(|error| RpcError::internal("spawn development runtime", error))?;
+        let (endpoint_path, token) = create_ipc_endpoint()
+            .map_err(|error| RpcError::internal("spawn development runtime", error))?;
+
+        let mut command = tokio::process::Command::new(&node_path);
+        command
+            .arg(&bootstrap_path)
+            .current_dir(&work_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        apply_minimal_plugin_runtime_env(&mut command);
+        #[cfg(unix)]
+        command.process_group(0);
+
+        let mut child = command.spawn().map_err(|error| {
+            RpcError::new(
+                bridge::codes::ACTIVATION_FAILED,
+                format!("spawn development node failed: {error}"),
+            )
+        })?;
+        let pid = child.id();
+        if let Some(stdout) = child.stdout.take() {
+            spawn_development_log_reader(self.app.clone(), plugin_id.clone(), "stdout", stdout);
+        }
+        if let Some(stderr) = child.stderr.take() {
+            spawn_development_log_reader(self.app.clone(), plugin_id.clone(), "stderr", stderr);
+        }
+
+        let handshake = json!({
+            "socketPath": endpoint_path,
+            "token": token,
+            "pluginId": plugin_id,
+            "mainPath": main_path.display().to_string(),
+            "dataPath": data_dir.display().to_string(),
+            "nodeVersion": super::runtime::OFFICIAL_NODE_VERSION,
+        });
+        if let Some(mut stdin) = child.stdin.take() {
+            let mut line = serde_json::to_vec(&handshake)
+                .map_err(|error| RpcError::internal("spawn development runtime", error))?;
+            line.push(b'\n');
+            if let Err(error) = stdin.write_all(&line).await {
+                let _ = child.kill().await;
+                return Err(RpcError::internal("spawn development runtime", error));
+            }
+        }
+
+        let mut stream = accept_ipc_connection(&endpoint_path, HANDSHAKE_TIMEOUT)
+            .await
+            .map_err(|error| RpcError::new(bridge::codes::ACTIVATION_FAILED, error))?;
+        verify_handshake_frame(&mut stream, &token, HANDSHAKE_TIMEOUT)
+            .await
+            .map_err(|error| RpcError::new(bridge::codes::ACTIVATION_FAILED, error))?;
+        let (read_half, write_half) = tokio::io::split(stream);
+        let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        spawn_writer(write_half, write_rx);
+
+        let process = Arc::new(RuntimeProcess {
+            plugin_id: plugin_id.clone(),
+            state: SyncMutex::new(RuntimeState::Starting),
+            write_tx,
+            pending: SyncMutex::new(HashMap::new()),
+            pid,
+            crash_history: SyncMutex::new(VecDeque::new()),
+        });
+        self.processes
+            .lock()
+            .insert(plugin_id.clone(), process.clone());
+
+        let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
+        spawn_reader(
+            self.app.clone(),
+            process.clone(),
+            read_half,
+            Some(ready_tx),
+            child,
+        );
+        match tokio::time::timeout(ACTIVATE_TIMEOUT, ready_rx).await {
+            Ok(Ok(Ok(()))) => {
+                *process.state.lock() = RuntimeState::Active;
+                Ok(())
+            }
+            Ok(Ok(Err(message))) => {
+                self.processes.lock().remove(&plugin_id);
+                Err(RpcError::new(bridge::codes::ACTIVATION_FAILED, message))
+            }
+            Ok(Err(_)) => {
+                self.processes.lock().remove(&plugin_id);
+                Err(RpcError::internal(
+                    "spawn development runtime",
+                    "activation channel closed",
+                ))
+            }
+            Err(_) => {
+                self.processes.lock().remove(&plugin_id);
+                Err(RpcError::new(
+                    bridge::codes::ACTIVATION_FAILED,
+                    "development plugin activation timed out",
                 ))
             }
         }
@@ -508,7 +680,9 @@ fn spawn_reader(
         }
 
         if let Some(ready_tx) = ready_tx.take() {
-            let _ = ready_tx.send(Err("plugin runtime disconnected before activation completed".into()));
+            let _ = ready_tx.send(Err(
+                "plugin runtime disconnected before activation completed".into(),
+            ));
         }
 
         for (_, pending) in process.pending.lock().drain() {
@@ -518,7 +692,10 @@ fn spawn_reader(
             )));
         }
 
-        let unexpected = !matches!(*process.state.lock(), RuntimeState::Draining | RuntimeState::Stopped);
+        let unexpected = !matches!(
+            *process.state.lock(),
+            RuntimeState::Draining | RuntimeState::Stopped
+        );
         if unexpected {
             let mut history = process.crash_history.lock();
             prune_crash_history(&mut history);
@@ -573,10 +750,9 @@ async fn handle_frame(
             if ok {
                 let _ = sender.send(Ok(value.get("result").cloned().unwrap_or(Value::Null)));
             } else {
-                let error = value
-                    .get("error")
-                    .cloned()
-                    .unwrap_or_else(|| json!({"code": bridge::codes::COMMAND_FAILED, "message": "unknown error"}));
+                let error = value.get("error").cloned().unwrap_or_else(
+                    || json!({"code": bridge::codes::COMMAND_FAILED, "message": "unknown error"}),
+                );
                 let code = error
                     .get("code")
                     .and_then(Value::as_str)
@@ -594,7 +770,10 @@ async fn handle_frame(
         "request" => {
             let (Some(id), Some(method)) = (
                 value.get("id").and_then(Value::as_str).map(str::to_string),
-                value.get("method").and_then(Value::as_str).map(str::to_string),
+                value
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
             ) else {
                 return;
             };
@@ -604,15 +783,24 @@ async fn handle_frame(
             let write_tx = process.write_tx.clone();
             tokio::spawn(async move {
                 let ctx = ConnectionContext::runtime(plugin_id);
-                let host_arc = app.try_state::<Arc<PluginHost>>().map(|s| s.inner().clone());
+                let host_arc = app
+                    .try_state::<Arc<PluginHost>>()
+                    .map(|s| s.inner().clone());
                 let result = if let Some(host_arc) = host_arc {
                     bridge::dispatch(&app, &host_arc, &ctx, &method, params).await
                 } else {
-                    Err(RpcError::internal("plugin bridge", "host state unavailable"))
+                    Err(RpcError::internal(
+                        "plugin bridge",
+                        "host state unavailable",
+                    ))
                 };
                 let frame = match result {
-                    Ok(result) => json!({"type": "response", "id": id, "ok": true, "result": result}),
-                    Err(error) => json!({"type": "response", "id": id, "ok": false, "error": error}),
+                    Ok(result) => {
+                        json!({"type": "response", "id": id, "ok": true, "result": result})
+                    }
+                    Err(error) => {
+                        json!({"type": "response", "id": id, "ok": false, "error": error})
+                    }
                 };
                 let _ = encode_and_send(&write_tx, &frame);
             });
@@ -636,7 +824,9 @@ async fn handle_frame(
     }
 }
 
-async fn read_frame<R: tokio::io::AsyncRead + Unpin>(reader: &mut R) -> Result<Option<Value>, String> {
+async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<Option<Value>, String> {
     let mut len_buf = [0u8; 4];
     match reader.read_exact(&mut len_buf).await {
         Ok(_) => {}
@@ -672,6 +862,34 @@ fn write_bootstrap_script(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn spawn_development_log_reader<R>(
+    app: AppHandle,
+    plugin_id: String,
+    stream: &'static str,
+    reader: R,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(reader).lines();
+        while let Ok(Some(mut line)) = lines.next_line().await {
+            if line.len() > 16 * 1024 {
+                line.truncate(16 * 1024);
+                line.push_str(" ...[truncated]");
+            }
+            let _ = app.emit(
+                "plugin-dev://log",
+                json!({
+                    "pluginId": plugin_id,
+                    "source": stream,
+                    "message": line,
+                    "at": chrono::Local::now().to_rfc3339(),
+                }),
+            );
+        }
+    });
+}
+
 fn random_token() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 32];
@@ -701,7 +919,8 @@ fn create_ipc_endpoint() -> Result<(String, String), String> {
 #[cfg(unix)]
 async fn accept_ipc_connection(path: &str, timeout: Duration) -> Result<IpcStream, String> {
     use std::os::unix::fs::PermissionsExt;
-    let listener = tokio::net::UnixListener::bind(path).map_err(|e| format!("bind unix socket: {e}"))?;
+    let listener =
+        tokio::net::UnixListener::bind(path).map_err(|e| format!("bind unix socket: {e}"))?;
     let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     let (stream, _addr) = tokio::time::timeout(timeout, listener.accept())
         .await
@@ -731,15 +950,25 @@ async fn accept_ipc_connection(path: &str, timeout: Duration) -> Result<IpcStrea
     Ok(server)
 }
 
-async fn verify_handshake_frame(stream: &mut IpcStream, expected_token: &str, timeout: Duration) -> Result<(), String> {
+async fn verify_handshake_frame(
+    stream: &mut IpcStream,
+    expected_token: &str,
+    timeout: Duration,
+) -> Result<(), String> {
     let frame = tokio::time::timeout(timeout, read_frame(stream))
         .await
         .map_err(|_| "timed out waiting for plugin handshake".to_string())?
         .map_err(|e| format!("read handshake: {e}"))?
         .ok_or_else(|| "plugin closed connection before handshake".to_string())?;
 
-    let kind = frame.get("type").and_then(Value::as_str).unwrap_or_default();
-    let token = frame.get("token").and_then(Value::as_str).unwrap_or_default();
+    let kind = frame
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let token = frame
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if kind != "handshake" || token != expected_token {
         return Err("plugin handshake token mismatch".into());
     }

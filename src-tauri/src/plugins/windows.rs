@@ -88,7 +88,20 @@ pub async fn open_plugin_window(
         return Err(format!("invalid app id: {}", args.app_id));
     }
 
-    let (title, rect) = {
+    let (title, rect) = if let Some(development) = host.development_plugin(&args.plugin_id) {
+        let contribution = development
+            .manifest
+            .contributes
+            .apps
+            .iter()
+            .find(|candidate| candidate.id == args.app_id)
+            .ok_or_else(|| format!("plugin does not contribute app {}", args.app_id))?;
+        if contribution.window_mode != PluginWindowMode::Standalone {
+            return Err("plugin app windowMode is not standalone".into());
+        }
+        contribution.rect.validate()?;
+        (contribution.name.clone(), contribution.rect.clone())
+    } else {
         let conn = state.db.lock();
         ensure_plugin_tables(&conn)?;
         let row = get_installed_plugin(&conn, &args.plugin_id)?

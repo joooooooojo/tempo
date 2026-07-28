@@ -314,9 +314,8 @@ async fn dispatch_host_method(
             let body = params.get("body").and_then(Value::as_str).unwrap_or("");
             // Permission / user-facing failures must keep their message — do not scrub via
             // `RpcError::internal`, or the main panel only shows a generic "操作没有完成".
-            crate::notify::show_notification(app, title, body).map_err(|message| {
-                RpcError::new(codes::FORBIDDEN, message)
-            })?;
+            crate::notify::show_notification(app, title, body)
+                .map_err(|message| RpcError::new(codes::FORBIDDEN, message))?;
             Ok(Value::Null)
         }
         "theme.get" => {
@@ -363,7 +362,8 @@ async fn dispatch_host_method(
             let key = require_str(&params, "key")?;
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            let value = storage::get(&conn, &ctx.plugin_id, key)
+            let namespace = host.plugin_storage_namespace(&ctx.plugin_id);
+            let value = storage::get(&conn, &namespace, key)
                 .map_err(|e| RpcError::internal("storage.plugin.get", e))?;
             Ok(json!({ "value": value }))
         }
@@ -372,7 +372,8 @@ async fn dispatch_host_method(
             let value = params.get("value").cloned().unwrap_or(Value::Null);
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            storage::set(&conn, &ctx.plugin_id, key, &value)
+            let namespace = host.plugin_storage_namespace(&ctx.plugin_id);
+            storage::set(&conn, &namespace, key, &value)
                 .map_err(|e| RpcError::new(codes::RESOURCE_EXHAUSTED, e))?;
             Ok(Value::Null)
         }
@@ -380,14 +381,16 @@ async fn dispatch_host_method(
             let key = require_str(&params, "key")?;
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            storage::delete(&conn, &ctx.plugin_id, key)
+            let namespace = host.plugin_storage_namespace(&ctx.plugin_id);
+            storage::delete(&conn, &namespace, key)
                 .map_err(|e| RpcError::internal("storage.plugin.delete", e))?;
             Ok(Value::Null)
         }
         "storage.plugin.list" => {
             let state = require_app_state(app)?;
             let conn = state.db.lock();
-            let keys = storage::list(&conn, &ctx.plugin_id)
+            let namespace = host.plugin_storage_namespace(&ctx.plugin_id);
+            let keys = storage::list(&conn, &namespace)
                 .map_err(|e| RpcError::internal("storage.plugin.list", e))?;
             Ok(json!({ "keys": keys }))
         }
