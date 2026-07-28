@@ -24,12 +24,20 @@ await updateJson(pluginSdkPackageJsonPath, (json) => {
 });
 
 const pluginSdkLockPath = resolve(root, "packages", "plugin-sdk", "package-lock.json");
-await updateJson(pluginSdkLockPath, (json) => {
-  json.version = version;
-  if (json.packages?.[""]) {
-    json.packages[""].version = version;
+try {
+  await updateJson(pluginSdkLockPath, (json) => {
+    json.version = version;
+    if (json.packages?.[""]) {
+      json.packages[""].version = version;
+    }
+  });
+} catch (error) {
+  if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+    // Optional lockfile (repo may use root pnpm lock only).
+  } else {
+    throw error;
   }
-});
+}
 
 await updateText(cargoTomlPath, (text) =>
   replaceRequired(
