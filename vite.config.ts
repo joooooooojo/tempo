@@ -69,6 +69,7 @@ export default defineConfig(async () => ({
       // (skills lock, .agents writes, IDE metadata) does not restart the app.
       ignored: [
         "**/src-tauri/**",
+        "**/examples/plugins/**",
         "**/node_modules/**",
         "**/dist/**",
         "**/.git/**",

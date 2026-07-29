@@ -14,6 +14,7 @@ use crate::plugins::host::{generate_id, DevelopmentPlugin, DevelopmentUiSource, 
 use crate::plugins::manifest::PluginManifest;
 
 const CONTRIBUTIONS_CHANGED_EVENT: &str = "plugin-contributions-changed";
+const UI_RELOAD_EVENT: &str = "plugin-dev://ui-reload";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,15 +179,73 @@ pub fn ensure_plugin_dev_tables(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY(project_id) REFERENCES plugin_dev_projects(id) ON DELETE CASCADE
         );",
     )
-    .map_err(|error| format!("prepare plugin dev tables: {error}"))
+    .map_err(|error| format!("prepare plugin dev tables: {error}"))?;
+    migrate_plugin_dev_paths(conn)
 }
 
 fn hash_text(raw: &str) -> String {
     hex::encode(Sha256::digest(raw.as_bytes()))
 }
 
+fn path_from_input(path: &str) -> Result<PathBuf, String> {
+    let value = path.trim();
+    if value.to_ascii_lowercase().starts_with("file:") {
+        return reqwest::Url::parse(value)
+            .map_err(|error| format!("无效文件路径: {error}"))?
+            .to_file_path()
+            .map_err(|_| "文件 URL 不是本机路径".to_string());
+    }
+    Ok(PathBuf::from(value))
+}
+
+#[cfg(windows)]
+fn path_to_storage_string(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()
+}
+
+#[cfg(not(windows))]
+fn path_to_storage_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+#[cfg(windows)]
+fn migrate_plugin_dev_paths(conn: &Connection) -> Result<(), String> {
+    let projects = {
+        let mut stmt = conn
+            .prepare("SELECT id, root_path FROM plugin_dev_projects")
+            .map_err(|error| format!("读取开发项目路径失败: {error}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| format!("读取开发项目路径失败: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取开发项目路径失败: {error}"))?
+    };
+    for (id, path) in projects {
+        let normalized = path_to_storage_string(Path::new(&path));
+        if normalized != path {
+            conn.execute(
+                "UPDATE plugin_dev_projects SET root_path = ?1 WHERE id = ?2",
+                params![normalized, id],
+            )
+            .map_err(|error| format!("更新开发项目路径失败: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn migrate_plugin_dev_paths(_conn: &Connection) -> Result<(), String> {
+    Ok(())
+}
+
 fn canonical_directory(path: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(path.trim());
+    let path = path_from_input(path)?;
     if !path.is_dir() {
         return Err(format!("目录不存在: {}", path.display()));
     }
@@ -328,10 +387,11 @@ fn row_to_project(
     connected_projects: &[String],
 ) -> rusqlite::Result<PluginDevProject> {
     let id: String = row.get(0)?;
+    let root_path: String = row.get(1)?;
     Ok(PluginDevProject {
         connected: connected_projects.iter().any(|candidate| candidate == &id),
         id,
-        root_path: row.get(1)?,
+        root_path: path_to_storage_string(Path::new(&root_path)),
         plugin_id: row.get(2)?,
         name: row.get(3)?,
         kind: row.get(4)?,
@@ -495,7 +555,7 @@ pub fn plugin_dev_create_project(
     host: State<'_, Arc<PluginHost>>,
     args: CreateProjectArgs,
 ) -> Result<PluginDevProjectDetail, String> {
-    let root = PathBuf::from(args.root_path.trim());
+    let root = path_from_input(&args.root_path)?;
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("创建项目目录失败 {}: {error}", root.display()))?;
     let root = root
@@ -519,7 +579,7 @@ pub fn plugin_dev_create_project(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             id,
-            root.to_string_lossy(),
+            path_to_storage_string(&root),
             args.plugin_id.trim(),
             args.name.trim(),
             args.kind,
@@ -543,12 +603,13 @@ pub fn plugin_dev_open_project(
     }
     let document = read_manifest_document(&root)?;
     let now = Local::now().to_rfc3339();
+    let root_path = path_to_storage_string(&root);
     let conn = state.db.lock();
     ensure_plugin_dev_tables(&conn)?;
     let existing_id: Option<String> = conn
         .query_row(
             "SELECT id FROM plugin_dev_projects WHERE root_path = ?1",
-            [root.to_string_lossy().as_ref()],
+            [&root_path],
             |row| row.get(0),
         )
         .optional()
@@ -559,7 +620,7 @@ pub fn plugin_dev_open_project(
            (id, root_path, last_opened_at, created_at)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(root_path) DO UPDATE SET last_opened_at = excluded.last_opened_at",
-        params![id, root.to_string_lossy(), now, now],
+        params![id, root_path, now, now],
     )
     .map_err(|error| format!("登记开发项目失败: {error}"))?;
     update_project_manifest_metadata(&conn, &id, &document)?;
@@ -715,7 +776,8 @@ pub async fn plugin_dev_probe_ui_url(args: ProbeUiUrlArgs) -> Result<ProbeUiUrlR
 fn resolve_static_source(root: &Path, configured: Option<&str>) -> Result<PathBuf, String> {
     let candidate = configured
         .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
+        .map(path_from_input)
+        .transpose()?
         .unwrap_or_else(|| root.to_path_buf());
     let candidate = if candidate.is_absolute() {
         candidate
@@ -735,7 +797,8 @@ fn resolve_runtime_entry(
     };
     let candidate = configured
         .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
+        .map(path_from_input)
+        .transpose()?
         .unwrap_or_else(|| root.join(main));
     let candidate = if candidate.is_absolute() {
         candidate
@@ -867,7 +930,6 @@ pub async fn plugin_dev_connect(
     } else {
         None
     };
-
     let runtime_entry =
         resolve_runtime_entry(&root, &manifest, preferences.runtime_dev_entry.as_deref())?;
     let plugin_id = manifest.id.clone();
@@ -943,6 +1005,29 @@ pub async fn plugin_dev_connect(
         status.message = Some(message);
     }
     Ok(status)
+}
+
+#[tauri::command]
+pub fn plugin_dev_reload_ui(
+    app: AppHandle,
+    host: State<'_, Arc<PluginHost>>,
+    plugin_id: String,
+) -> Result<(), String> {
+    let entry = host
+        .development_plugin(&plugin_id)
+        .ok_or_else(|| "插件尚未通过开发助手连接".to_string())?;
+    if !matches!(entry.ui_source, Some(DevelopmentUiSource::Static(_))) {
+        return Err("只有静态目录模式需要手动刷新".into());
+    }
+
+    for view_id in host.views_for_plugin(&plugin_id) {
+        host.release_all_subscriptions_for_view(&view_id);
+    }
+    app.emit(
+        UI_RELOAD_EVENT,
+        json!({ "pluginId": plugin_id, "sessionId": entry.session_id }),
+    )
+    .map_err(|error| format!("刷新插件页面失败: {error}"))
 }
 
 #[tauri::command]
@@ -1096,8 +1181,8 @@ pub async fn plugin_dev_forget_project(
 #[cfg(test)]
 mod tests {
     use super::{
-        manifest_document, minimal_manifest, resolve_runtime_entry, resolve_static_source,
-        validate_loopback_url, CreateProjectArgs,
+        manifest_document, minimal_manifest, path_from_input, path_to_storage_string,
+        resolve_runtime_entry, resolve_static_source, validate_loopback_url, CreateProjectArgs,
     };
     use crate::plugins::manifest::PluginManifest;
 
@@ -1163,5 +1248,31 @@ mod tests {
         assert!(resolve_runtime_entry(&root, &manifest, Some("src/main.ts")).is_err());
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_hide_extended_prefixes_and_decode_file_urls() {
+        assert_eq!(
+            path_to_storage_string(std::path::Path::new(r"\\?\C:\Users\Tempo\plugin")),
+            r"C:\Users\Tempo\plugin"
+        );
+        assert_eq!(
+            path_to_storage_string(std::path::Path::new(r"\\?\UNC\server\plugins\example")),
+            r"\\server\plugins\example"
+        );
+        assert_eq!(
+            path_from_input("file:///C:/Users/Tempo/plugin").unwrap(),
+            std::path::PathBuf::from(r"C:\Users\Tempo\plugin")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_file_urls_decode_to_posix_paths() {
+        assert_eq!(
+            path_from_input("file:///Users/tempo/My%20Plugin").unwrap(),
+            std::path::PathBuf::from("/Users/tempo/My Plugin")
+        );
     }
 }

@@ -21,7 +21,12 @@ function iconFor(iconUrl: string | null | undefined): AppIconDescriptor {
   return { type: "file", path: iconUrl ?? "", url: iconUrl ?? undefined };
 }
 
-function toTempoApp(pluginId: string, contribution: PluginAppContribution): TempoApp {
+function toTempoApp(
+  pluginId: string,
+  development: boolean,
+  developmentUiSource: "url" | "static" | null | undefined,
+  contribution: PluginAppContribution
+): TempoApp {
   return {
     id: contribution.id,
     name: contribution.name,
@@ -29,6 +34,8 @@ function toTempoApp(pluginId: string, contribution: PluginAppContribution): Temp
     icon: iconFor(contribution.iconUrl),
     source: "plugin",
     pluginId,
+    development,
+    developmentUiSource: developmentUiSource ?? undefined,
     windowMode: contribution.windowMode,
     rect: {
       width: contribution.rect.width ?? undefined,
@@ -82,7 +89,10 @@ function applyBundle(bundle: PluginContributionBundle) {
   unregisterAll(bundle.pluginId);
   unregisterAllActions(bundle.pluginId);
   for (const app of bundle.apps) {
-    registerApp(bundle.pluginId, toTempoApp(bundle.pluginId, app));
+    registerApp(
+      bundle.pluginId,
+      toTempoApp(bundle.pluginId, bundle.development, bundle.developmentUiSource, app)
+    );
   }
   for (const action of bundle.actions) {
     registerQuickAction(toQuickAction(bundle.pluginId, action), bundle.pluginId);

@@ -854,6 +854,7 @@ fn prune_crash_history(history: &mut VecDeque<Instant>) {
 }
 
 fn write_bootstrap_script(app: &AppHandle) -> Result<PathBuf, String> {
+    // The embedded loader uses Node's pathToFileURL so canonical Windows paths remain importable.
     const BOOTSTRAP_SOURCE: &str = include_str!("../../../plugin-runtime/bootstrap.mjs");
     let root = super::paths::plugin_runtime_root(app)?;
     super::paths::ensure_dir(&root)?;

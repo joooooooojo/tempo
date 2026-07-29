@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use tauri::http::{
+    header::CACHE_CONTROL,
     header::{CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE},
     Method, Request, Response, StatusCode,
 };
@@ -116,11 +117,19 @@ fn empty_response(status: StatusCode) -> Response<Vec<u8>> {
     Response::builder().status(status).body(Vec::new()).unwrap()
 }
 
-fn ok_bytes(content_type: &str, bytes: Vec<u8>, head_only: bool) -> Response<Vec<u8>> {
+fn ok_bytes(
+    content_type: &str,
+    bytes: Vec<u8>,
+    head_only: bool,
+    no_store: bool,
+) -> Response<Vec<u8>> {
     let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
         .header(CONTENT_SECURITY_POLICY, BASELINE_CSP);
+    if no_store {
+        builder = builder.header(CACHE_CONTROL, "no-store");
+    }
     if !head_only {
         builder = builder.header(CONTENT_LENGTH, bytes.len());
     }
@@ -187,6 +196,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
     let Some(entry) = host.resolve_hash(&plugin_hash) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
+    let development = entry.package_hash.is_empty();
 
     // Host-owned bridge — never read from the plugin package (reserved `__tempo__/` namespace).
     if rel_path == BRIDGE_CLIENT_PATH {
@@ -194,6 +204,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
             "text/javascript; charset=utf-8",
             BRIDGE_CLIENT_SOURCE.as_bytes().to_vec(),
             head_only,
+            development,
         );
     }
     if is_reserved_host_path(&rel_path) {
@@ -214,7 +225,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
     let content_type = content_type_for(&rel_path);
 
     if head_only {
-        return ok_bytes(content_type, Vec::new(), true);
+        return ok_bytes(content_type, Vec::new(), true, development);
     }
 
     match std::fs::read(&canonical_path) {
@@ -224,7 +235,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
             } else {
                 bytes
             };
-            ok_bytes(content_type, body, false)
+            ok_bytes(content_type, body, false, development)
         }
         Err(error) => {
             tracing::debug!(plugin_id = %entry.plugin_id, error = %error, "failed to read plugin asset");
@@ -353,5 +364,11 @@ mod tests {
         assert!(out.contains(BRIDGE_SCRIPT_TAG));
         assert!(out.find("<head>").unwrap() < out.find(BRIDGE_SCRIPT_TAG).unwrap());
         assert_eq!(inject_bridge_script(out.as_bytes()), out.as_bytes());
+    }
+
+    #[test]
+    fn development_resources_disable_browser_cache() {
+        let response = ok_bytes("text/javascript", b"export {};".to_vec(), false, true);
+        assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
     }
 }

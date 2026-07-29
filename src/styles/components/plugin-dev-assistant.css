@@ -84,24 +84,20 @@
   background: hsl(var(--accent));
 }
 
-.plugin-dev-project--active {
-  box-shadow: inset 2px 0 hsl(var(--primary));
-}
-
 .plugin-dev-project__mark {
   display: grid;
   width: 28px;
   height: 28px;
   flex: none;
   place-items: center;
-  border: 1px solid hsl(var(--border));
+  border: 0;
   border-radius: 7px;
-  background: hsl(var(--background));
-}
-
-.plugin-dev-project__mark svg {
-  width: 14px;
-  height: 14px;
+  background: var(--plugin-dev-project-mark);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: lowercase;
 }
 
 .plugin-dev-project strong {
@@ -178,12 +174,14 @@
   gap: 0;
 }
 
-.plugin-dev-tabs {
-  width: 100%;
+.plugin-dev-tabs-bar {
   flex: none;
-  justify-content: flex-start;
-  padding: 7px 20px 6px;
+  padding: 9px 20px;
   border-bottom: 1px solid hsl(var(--border) / 0.5);
+}
+
+.plugin-dev-tabs {
+  justify-content: flex-start;
 }
 
 .plugin-dev-tabs [data-slot="tabs-trigger"] {
@@ -292,7 +290,10 @@
 
 .plugin-dev-connection-track {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) 44px minmax(140px, 1fr) 44px minmax(140px, 1fr);
+  grid-template-columns: minmax(140px, 1fr) 44px minmax(140px, 1fr) 44px minmax(
+      140px,
+      1fr
+    );
   align-items: center;
   width: min(100%, 760px);
 }

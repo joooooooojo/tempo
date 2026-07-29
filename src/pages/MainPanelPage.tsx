@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   Pin,
   PinOff,
+  RefreshCw,
   ArrowLeft,
   Pencil,
 } from "lucide-react";
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { FollowTooltip } from "@/components/ui/follow-tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import {
   listVisibleQuickActions,
   quickActionUsageId,
@@ -167,6 +169,8 @@ export function MainPanelPage() {
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
+  const [devWindowPinned, setDevWindowPinned] = useState(false);
+  const [devUiReloading, setDevUiReloading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const inputMeasureRef = useRef<HTMLSpanElement>(null);
   const inputWrapperRef = useRef<HTMLDivElement>(null);
@@ -181,9 +185,15 @@ export function MainPanelPage() {
   const pendingRef = useRef<string | null>(null);
   const modeRef = useRef<MainPanelMode>("search");
   const activeAppIdRef = useRef<string | null>(null);
+  const devWindowPinnedRef = useRef(false);
   /** After leaving a plugin, size once to measured search content (skip placeholder 370). */
   const needsSearchSizeRef = useRef(false);
   const isTauri = isTauriRuntime();
+
+  const updateDevWindowPinned = useCallback((pinned: boolean) => {
+    devWindowPinnedRef.current = pinned;
+    setDevWindowPinned(pinned);
+  }, []);
 
   const focusSearchInputAtEnd = useCallback(() => {
     const input = inputRef.current;
@@ -384,7 +394,8 @@ export function MainPanelPage() {
     setActiveAppParams({});
     setOpenCreateSnippet(false);
     setInitialTranslateText(undefined);
-  }, [resetSearchState]);
+    updateDevWindowPinned(false);
+  }, [resetSearchState, updateDevWindowPinned]);
 
   const dismissClipboardSeed = useCallback(() => {
     if (!isTauri) return;
@@ -540,6 +551,7 @@ export function MainPanelPage() {
     setInitialTranslateText(undefined);
     setError(null);
     setSelectedKey(null);
+    updateDevWindowPinned(false);
     if (isTauri) {
       // Defer size until search DOM is laid out so we jump once to measured
       // height instead of 370 -> ResizeObserver correction (height jitter).
@@ -547,12 +559,15 @@ export function MainPanelPage() {
       void api.getLauncherUsage().then(setUsageItems).catch(console.error);
     }
     window.requestAnimationFrame(focusSearchInputAtEnd);
-  }, [focusSearchInputAtEnd, isTauri]);
+  }, [focusSearchInputAtEnd, isTauri, updateDevWindowPinned]);
 
   const openBuiltinApp = useCallback(
     (appId: string, options?: OpenBuiltinAppOptions) => {
       const app = getBuiltinApp(appId);
       if (!app) return;
+      if (activeAppIdRef.current !== appId) {
+        updateDevWindowPinned(false);
+      }
       const params = resolveOpenAppParams(options);
 
       if (isTauri && !options?.restore) {
@@ -608,7 +623,7 @@ export function MainPanelPage() {
       writeMainPanelSession(appId);
       if (isTauri) needsSearchSizeRef.current = true;
     },
-    [hideAndResetMainPanel, isTauri]
+    [hideAndResetMainPanel, isTauri, updateDevWindowPinned]
   );
 
   useEffect(() => {
@@ -833,7 +848,13 @@ export function MainPanelPage() {
     void appWindow
       .onFocusChanged(({ payload: focused }) => {
         // Native file sheets steal focus; suppress blur?hide while they are open (ZTools pattern).
-        if (!focused && armed && !pendingRef.current && !isBlurHideSuppressed()) {
+        if (
+          !focused &&
+          armed &&
+          !pendingRef.current &&
+          !devWindowPinnedRef.current &&
+          !isBlurHideSuppressed()
+        ) {
           void hidePreservingSession();
           return;
         }
@@ -1097,6 +1118,28 @@ export function MainPanelPage() {
   selectionRowsRef.current = selectionRows;
   const selectedSelection = selections.find((selection) => selection.key === selectedKey);
   const activeApp = activeAppId ? getBuiltinApp(activeAppId) : undefined;
+  const activeDevelopmentPlugin = mode === "app" && activeApp?.development === true;
+
+  useEffect(() => {
+    if (!activeDevelopmentPlugin && devWindowPinnedRef.current) {
+      updateDevWindowPinned(false);
+    }
+  }, [activeDevelopmentPlugin, updateDevWindowPinned]);
+
+  const reloadActiveDevelopmentUi = useCallback(async () => {
+    const pluginId = activeApp?.pluginId;
+    if (!pluginId || activeApp.developmentUiSource !== "static" || devUiReloading) return;
+
+    setDevUiReloading(true);
+    setError(null);
+    try {
+      await api.reloadPluginDevUi(pluginId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setDevUiReloading(false);
+    }
+  }, [activeApp, devUiReloading]);
 
   // Include the first result because Rust matches arrive after synchronous quick actions.
   // When an app/plugin becomes the leading result, selection must move to it automatically.
@@ -1455,6 +1498,34 @@ export function MainPanelPage() {
                 </Button>
                 <div className="main-panel-app-bar-title">{activeApp.name}</div>
                 <div className="main-panel-search-spacer" aria-hidden="true" />
+                {activeApp.development ? (
+                  <>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-lg"
+                        data-no-drag
+                        disabled={devUiReloading}
+                        aria-label="刷新插件页面"
+                        title="刷新页面"
+                        onClick={() => void reloadActiveDevelopmentUi()}
+                    >
+                      {devUiReloading ? <Spinner /> : <RefreshCw />}
+                    </Button>
+                    <Button
+                        type="button"
+                        variant={devWindowPinned ? "secondary" : "ghost"}
+                        size="icon-lg"
+                        data-no-drag
+                        aria-label={devWindowPinned ? "取消钉住窗口" : "钉住窗口"}
+                        aria-pressed={devWindowPinned}
+                        title={devWindowPinned ? "取消钉住" : "钉住窗口"}
+                        onClick={() => updateDevWindowPinned(!devWindowPinned)}
+                    >
+                      {devWindowPinned ? <PinOff /> : <Pin />}
+                    </Button>
+                  </>
+                ) : null}
                 <div className="main-panel-app-bar-icon" aria-hidden="true">
                   <AppIconView icon={activeApp.icon} className="main-panel-app-bar-icon-glyph" />
                 </div>

@@ -14,6 +14,7 @@
 
 import net from "node:net";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -327,7 +328,7 @@ async function main() {
   const ctx = buildContext(descriptor);
 
   try {
-    pluginModule = await import(pathToFileUrl(descriptor.mainPath));
+    pluginModule = await import(pathToFileURL(descriptor.mainPath).href);
     const entry =
       pluginModule &&
       typeof pluginModule.default === "object" &&
@@ -350,12 +351,6 @@ async function main() {
     // Give the host a moment to read the frame before we exit.
     setTimeout(() => process.exit(1), 100);
   }
-}
-
-function pathToFileUrl(path) {
-  const normalized = path.replace(/\\/g, "/");
-  const prefixed = normalized.startsWith("/") ? normalized : `/${normalized}`;
-  return `file://${prefixed}`;
 }
 
 process.on("uncaughtException", (error) => {

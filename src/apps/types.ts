@@ -39,6 +39,10 @@ export interface TempoApp {
   icon: AppIconDescriptor;
   source: AppSource;
   pluginId?: string;
+  /** True when the active provider comes from the built-in development assistant. */
+  development?: boolean;
+  /** UI source selected for a plugin connected through the development assistant. */
+  developmentUiSource?: "url" | "static";
   windowMode?: AppWindowMode;
   rect?: AppRect;
   ui: TempoAppUi;

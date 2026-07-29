@@ -425,6 +425,8 @@ export interface PluginContributionBundle {
   pluginId: string;
   version: string;
   packageHash: string;
+  development: boolean;
+  developmentUiSource?: "url" | "static" | null;
   name: string;
   description?: string | null;
   requiresNodeRuntime: boolean;

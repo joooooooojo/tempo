@@ -319,6 +319,12 @@ impl PluginHost {
             .retain(|_, sub| sub.plugin_id != plugin_id);
     }
 
+    pub fn release_all_subscriptions_for_view(&self, view_instance_id: &str) {
+        self.subscriptions
+            .lock()
+            .retain(|_, sub| sub.view_instance_id.as_deref() != Some(view_instance_id));
+    }
+
     pub fn subscriptions_by_kind(&self, kind: &str) -> Vec<(String, String, Option<String>)> {
         self.subscriptions
             .lock()

@@ -418,6 +418,7 @@ pub fn run() {
             commands::plugin_dev::plugin_dev_update_preferences,
             commands::plugin_dev::plugin_dev_probe_ui_url,
             commands::plugin_dev::plugin_dev_connect,
+            commands::plugin_dev::plugin_dev_reload_ui,
             commands::plugin_dev::plugin_dev_disconnect,
             commands::plugin_dev::plugin_dev_reconnect_runtime,
             commands::plugin_dev::plugin_dev_simulate_hook,

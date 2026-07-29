@@ -348,6 +348,8 @@ export const api = {
     invoke<PluginDevConnectionStatus>("plugin_dev_connect", {
       args: { projectId },
     }),
+  reloadPluginDevUi: (pluginId: string) =>
+    invoke<void>("plugin_dev_reload_ui", { pluginId }),
   disconnectPluginDevProject: (projectId: string) =>
     invoke<PluginDevConnectionStatus>("plugin_dev_disconnect", {
       args: { projectId },

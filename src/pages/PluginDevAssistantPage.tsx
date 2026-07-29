@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Braces,
   Cable,
   Check,
-  CircleDot,
   Code2,
   FileJson2,
   Folder,
@@ -115,6 +120,44 @@ const SETTING_TYPE_ITEMS = [
   { value: "select", label: "单选" },
   { value: "multiselect", label: "多选" },
 ] as const;
+
+const PROJECT_MARK_COLORS = [
+  "#2563eb",
+  "#0f766e",
+  "#7c3aed",
+  "#be123c",
+  "#0369a1",
+  "#4338ca",
+  "#a21caf",
+  "#047857",
+] as const;
+
+function projectFolderName(rootPath: string): string {
+  const normalized = rootPath.replace(/[\\/]+$/, "");
+  const segments = normalized.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] ?? normalized;
+}
+
+function projectMonogram(rootPath: string): string {
+  const folderName = projectFolderName(rootPath);
+  const parts = folderName.split("-").filter(Boolean);
+  const first = Array.from(parts[0] ?? folderName)[0] ?? "?";
+  const lastPart = parts[parts.length - 1] ?? folderName;
+  const lastCharacters = Array.from(lastPart);
+  const last =
+    parts.length > 1
+      ? (lastCharacters[0] ?? first)
+      : (lastCharacters[lastCharacters.length - 1] ?? first);
+  return `${first}${last}`.toLocaleLowerCase();
+}
+
+function projectMarkColor(rootPath: string): string {
+  let hash = 0;
+  for (const character of rootPath.toLocaleLowerCase()) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return PROJECT_MARK_COLORS[hash % PROJECT_MARK_COLORS.length];
+}
 
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -482,8 +525,18 @@ export function PluginDevAssistantPage() {
               )}
               onClick={() => void loadProject(project.id)}
             >
-              <span className="plugin-dev-project__mark" aria-hidden="true">
-                {project.connected ? <CircleDot /> : <Folder />}
+              <span
+                className="plugin-dev-project__mark"
+                aria-hidden="true"
+                style={
+                  {
+                    "--plugin-dev-project-mark": projectMarkColor(
+                      project.rootPath,
+                    ),
+                  } as CSSProperties
+                }
+              >
+                {projectMonogram(project.rootPath)}
               </span>
               <span className="min-w-0 flex-1">
                 <strong>
@@ -549,20 +602,22 @@ export function PluginDevAssistantPage() {
               onValueChange={(value) => setWorkspaceTab(value as WorkspaceTab)}
               className="plugin-dev-workspace"
             >
-              <TabsList variant="line" className="plugin-dev-tabs">
-                <TabsTrigger value="manifest">
-                  <FileJson2 data-icon="inline-start" />
-                  Manifest
-                </TabsTrigger>
-                <TabsTrigger value="connection">
-                  <Link2 data-icon="inline-start" />
-                  开发连接
-                </TabsTrigger>
-                <TabsTrigger value="test" disabled={commands.length === 0}>
-                  <TerminalSquare data-icon="inline-start" />
-                  测试
-                </TabsTrigger>
-              </TabsList>
+              <div className="plugin-dev-tabs-bar">
+                <TabsList className="plugin-dev-tabs">
+                  <TabsTrigger value="manifest">
+                    <FileJson2 data-icon="inline-start" />
+                    Manifest
+                  </TabsTrigger>
+                  <TabsTrigger value="connection">
+                    <Link2 data-icon="inline-start" />
+                    开发连接
+                  </TabsTrigger>
+                  <TabsTrigger value="test" disabled={commands.length === 0}>
+                    <TerminalSquare data-icon="inline-start" />
+                    测试
+                  </TabsTrigger>
+                </TabsList>
+              </div>
 
               <TabsContent value="manifest" className="plugin-dev-content">
                 <ManifestWorkspace

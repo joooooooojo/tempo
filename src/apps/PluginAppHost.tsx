@@ -231,6 +231,26 @@ export function PluginAppHost({
     };
   }, [prepared, pluginId, goBack, postToPlugin]);
 
+  useEffect(() => {
+    if (!prepared || !pluginId) return;
+    const unlistenReload = listen<{ pluginId: string }>("plugin-dev://ui-reload", (event) => {
+      if (event.payload.pluginId !== pluginId) return;
+      const iframe = iframeRef.current;
+      if (!iframe) return;
+      try {
+        const nextUrl = new URL(prepared.entryUrl);
+        nextUrl.searchParams.set("__tempo_dev_reload", Date.now().toString());
+        iframe.src = nextUrl.toString();
+      } catch {
+        iframe.src = prepared.entryUrl;
+      }
+    });
+
+    return () => {
+      void unlistenReload.then((unlisten) => unlisten());
+    };
+  }, [prepared, pluginId]);
+
   const handleIframeLoad = useCallback(() => {
     if (!prepared) return;
     postToPlugin({
