@@ -89,11 +89,13 @@
   position: relative;
 }
 
-.settings-main__body {
+.settings-main__scroll {
   flex: 1;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+}
+
+.settings-main__body {
+  box-sizing: border-box;
   overscroll-behavior: contain;
   padding: 16px 20px 28px;
   animation: settings-panel-in 180ms cubic-bezier(0.22, 1, 0.36, 1);

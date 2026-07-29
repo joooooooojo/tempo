@@ -33,9 +33,17 @@ import {
 } from "@/apps/actions/registry";
 import { AppIconView } from "@/apps/icon";
 import { BuiltinAppNavigationProvider } from "@/apps/navigation";
+import {
+  MainPanelAppBarChromeProvider,
+  useMainPanelAppBarChrome,
+} from "@/apps/appBarChrome";
 import { PluginAppHost } from "@/apps/PluginAppHost";
 import { startPluginContributionSync } from "@/apps/plugins/syncContributions";
-import { getApp as getBuiltinApp, listApps as listBuiltinApps, subscribeApps } from "@/apps/registry";
+import {
+  getApp as getBuiltinApp,
+  listApps as listBuiltinApps,
+  subscribeApps,
+} from "@/apps";
 import {
   clearMainPanelSession,
   resolveRestorableMainPanelSession,
@@ -1460,6 +1468,7 @@ export function MainPanelPage() {
 
   return (
     <BuiltinAppNavigationProvider value={navigationValue}>
+      <MainPanelAppBarChromeProvider>
       <main className={cn("main-panel-page", showApp && "main-panel-page--app")}>
         <div
           ref={contentRef}
@@ -1496,7 +1505,10 @@ export function MainPanelPage() {
                 >
                   <ArrowLeft />
                 </Button>
-                <div className="main-panel-app-bar-title">{activeApp.name}</div>
+                <MainPanelAppBarLeading
+                  appName={activeApp.name}
+                  fallbackTitle={activeApp.id !== "plugin-dev-assistant"}
+                />
                 <div className="main-panel-search-spacer" aria-hidden="true" />
                 {activeApp.development ? (
                   <>
@@ -1526,6 +1538,7 @@ export function MainPanelPage() {
                     </Button>
                   </>
                 ) : null}
+                <MainPanelAppBarTrailing />
                 <div className="main-panel-app-bar-icon" aria-hidden="true">
                   <AppIconView icon={activeApp.icon} className="main-panel-app-bar-icon-glyph" />
                 </div>
@@ -1697,7 +1710,37 @@ export function MainPanelPage() {
       </main>
       <ReminderDialog event={reminder} onDismiss={() => setReminder(null)} />
       <Toaster position="top-center" richColors toastOptions={appToastOptions} />
+      </MainPanelAppBarChromeProvider>
     </BuiltinAppNavigationProvider>
+  );
+}
+
+function MainPanelAppBarLeading({
+  appName,
+  fallbackTitle,
+}: {
+  appName: string;
+  fallbackTitle: boolean;
+}) {
+  const { chrome } = useMainPanelAppBarChrome();
+  if (chrome.leading) {
+    return (
+      <div className="main-panel-app-bar-leading" data-no-drag>
+        {chrome.leading}
+      </div>
+    );
+  }
+  if (!fallbackTitle) return null;
+  return <div className="main-panel-app-bar-title">{appName}</div>;
+}
+
+function MainPanelAppBarTrailing() {
+  const { chrome } = useMainPanelAppBarChrome();
+  if (!chrome.trailing) return null;
+  return (
+    <div className="main-panel-app-bar-trailing" data-no-drag>
+      {chrome.trailing}
+    </div>
   );
 }
 

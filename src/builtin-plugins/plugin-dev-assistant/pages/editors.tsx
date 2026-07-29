@@ -1,7 +1,6 @@
-import type { ReactNode } from "react";
+import { Children, type ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -11,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import type {
   EditablePluginAction,
   EditablePluginApp,
@@ -30,13 +30,19 @@ export function ContributionSection({
   title,
   description,
   onAdd,
+  columns,
+  columnsClassName,
   children,
 }: {
   title: string;
   description: string;
   onAdd: () => void;
+  columns: string[];
+  columnsClassName: string;
   children: ReactNode;
 }) {
+  const isEmpty = Children.count(children) === 0;
+
   return (
     <section className="plugin-dev-contribution">
       <div className="plugin-dev-section-heading">
@@ -44,12 +50,29 @@ export function ContributionSection({
           <h2>{title}</h2>
           <p>{description}</p>
         </div>
-        <Button size="sm" variant="outline" onClick={onAdd}>
+        <Button size="lg" variant="outline" onClick={onAdd}>
           <Plus data-icon="inline-start" />
           添加
         </Button>
       </div>
-      <div className="flex flex-col gap-3">{children}</div>
+      {isEmpty ? (
+        <p className="plugin-dev-contribution-empty">暂无数据</p>
+      ) : (
+        <div className="plugin-dev-contribution-table">
+          <div
+            className={cn(
+              "plugin-dev-contribution-header",
+              columnsClassName,
+            )}
+          >
+            {columns.map((column) => (
+              <span key={column}>{column}</span>
+            ))}
+            <span className="sr-only">操作</span>
+          </div>
+          <div className="plugin-dev-contribution-body">{children}</div>
+        </div>
+      )}
     </section>
   );
 }
@@ -64,60 +87,57 @@ export function AppEditor({
   onUpdate: (mutate: (next: EditablePluginManifest) => void) => void;
 }) {
   return (
-    <div className="plugin-dev-contribution-row">
-      <div className="grid flex-1 grid-cols-[1fr_1.4fr_1fr] gap-3">
-        <Field>
-          <FieldLabel>App ID</FieldLabel>
-          <Input
-            value={app.id}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.apps[index].id = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>名称</FieldLabel>
-          <Input
-            value={app.name}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.apps[index].name = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>窗口</FieldLabel>
-          <Select
-            items={WINDOW_MODE_ITEMS}
-            value={app.windowMode ?? "normal"}
-            onValueChange={(value) =>
-              value &&
-              onUpdate((next) => {
-                next.contributes.apps[index].windowMode = value as
-                  "normal" | "standalone";
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {WINDOW_MODE_ITEMS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
+    <div
+      className={cn(
+        "plugin-dev-contribution-row",
+        "grid-cols-[1fr_1.4fr_1fr_auto]",
+      )}
+    >
+      <Input
+        aria-label="App ID"
+        value={app.id}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.apps[index].id = event.target.value;
+          })
+        }
+      />
+      <Input
+        aria-label="名称"
+        value={app.name}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.apps[index].name = event.target.value;
+          })
+        }
+      />
+      <Select
+        items={WINDOW_MODE_ITEMS}
+        value={app.windowMode ?? "normal"}
+        onValueChange={(value) =>
+          value &&
+          onUpdate((next) => {
+            next.contributes.apps[index].windowMode = value as
+              | "normal"
+              | "standalone";
+          })
+        }
+      >
+        <SelectTrigger className="w-full" aria-label="窗口">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {WINDOW_MODE_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
       <Button
-        size="icon"
+        size="icon-lg"
         variant="ghost"
         aria-label="删除 App"
         onClick={() =>
@@ -142,33 +162,32 @@ export function CommandEditor({
   onUpdate: (mutate: (next: EditablePluginManifest) => void) => void;
 }) {
   return (
-    <div className="plugin-dev-contribution-row">
-      <div className="grid flex-1 grid-cols-2 gap-3">
-        <Field>
-          <FieldLabel>Command ID</FieldLabel>
-          <Input
-            value={command.id}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.commands[index].id = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>标题</FieldLabel>
-          <Input
-            value={command.title}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.commands[index].title = event.target.value;
-              })
-            }
-          />
-        </Field>
-      </div>
+    <div
+      className={cn(
+        "plugin-dev-contribution-row",
+        "grid-cols-[1fr_1.4fr_auto]",
+      )}
+    >
+      <Input
+        aria-label="Command ID"
+        value={command.id}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.commands[index].id = event.target.value;
+          })
+        }
+      />
+      <Input
+        aria-label="标题"
+        value={command.title}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.commands[index].title = event.target.value;
+          })
+        }
+      />
       <Button
-        size="icon"
+        size="icon-lg"
         variant="ghost"
         aria-label="删除 Command"
         onClick={() =>
@@ -206,92 +225,85 @@ export function ActionEditor({
           label: item.name || item.id,
         }));
   return (
-    <div className="plugin-dev-contribution-row">
-      <div className="grid flex-1 grid-cols-[1fr_1.2fr_0.8fr_1.2fr] gap-3">
-        <Field>
-          <FieldLabel>Action ID</FieldLabel>
-          <Input
-            value={action.id}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.actions[index].id = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>名称</FieldLabel>
-          <Input
-            value={action.name}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.actions[index].name = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>类型</FieldLabel>
-          <Select
-            items={TARGET_ITEMS}
-            value={targetKind}
-            onValueChange={(value) =>
-              value &&
-              onUpdate((next) => {
-                const target = next.contributes.actions[index];
-                delete target.app;
-                delete target.command;
-                if (value === "command")
-                  target.command = next.contributes.commands[0]?.id ?? "";
-                else target.app = next.contributes.apps[0]?.id ?? "";
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {TARGET_ITEMS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel>目标</FieldLabel>
-          <Select
-            items={targetItems}
-            value={action.command ?? action.app ?? null}
-            onValueChange={(value) =>
-              value &&
-              onUpdate((next) => {
-                const target = next.contributes.actions[index];
-                if (targetKind === "command") target.command = value;
-                else target.app = value;
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {targetItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
+    <div
+      className={cn(
+        "plugin-dev-contribution-row",
+        "grid-cols-[1fr_1.2fr_0.8fr_1.2fr_auto]",
+      )}
+    >
+      <Input
+        aria-label="Action ID"
+        value={action.id}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.actions[index].id = event.target.value;
+          })
+        }
+      />
+      <Input
+        aria-label="名称"
+        value={action.name}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.actions[index].name = event.target.value;
+          })
+        }
+      />
+      <Select
+        items={TARGET_ITEMS}
+        value={targetKind}
+        onValueChange={(value) =>
+          value &&
+          onUpdate((next) => {
+            const target = next.contributes.actions[index];
+            delete target.app;
+            delete target.command;
+            if (value === "command")
+              target.command = next.contributes.commands[0]?.id ?? "";
+            else target.app = next.contributes.apps[0]?.id ?? "";
+          })
+        }
+      >
+        <SelectTrigger className="w-full" aria-label="类型">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {TARGET_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <Select
+        items={targetItems}
+        value={action.command ?? action.app ?? null}
+        onValueChange={(value) =>
+          value &&
+          onUpdate((next) => {
+            const target = next.contributes.actions[index];
+            if (targetKind === "command") target.command = value;
+            else target.app = value;
+          })
+        }
+      >
+        <SelectTrigger className="w-full" aria-label="目标">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {targetItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
       <Button
-        size="icon"
+        size="icon-lg"
         variant="ghost"
         aria-label="删除 Action"
         onClick={() =>
@@ -322,48 +334,43 @@ export function HookEditor({
     label: command.title || command.id,
   }));
   return (
-    <div className="plugin-dev-contribution-row">
-      <div className="grid flex-1 grid-cols-2 gap-3">
-        <Field>
-          <FieldLabel>事件</FieldLabel>
-          <Input
-            value={hook.event}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.hooks[index].event = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>Command</FieldLabel>
-          <Select
-            items={commandItems}
-            value={hook.command}
-            onValueChange={(value) =>
-              value &&
-              onUpdate((next) => {
-                next.contributes.hooks[index].command = value;
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {commandItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
+    <div
+      className={cn("plugin-dev-contribution-row", "grid-cols-[1fr_1fr_auto]")}
+    >
+      <Input
+        aria-label="事件"
+        value={hook.event}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.hooks[index].event = event.target.value;
+          })
+        }
+      />
+      <Select
+        items={commandItems}
+        value={hook.command}
+        onValueChange={(value) =>
+          value &&
+          onUpdate((next) => {
+            next.contributes.hooks[index].command = value;
+          })
+        }
+      >
+        <SelectTrigger className="w-full" aria-label="Command">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {commandItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
       <Button
-        size="icon"
+        size="icon-lg"
         variant="ghost"
         aria-label="删除 Hook"
         onClick={() =>
@@ -394,60 +401,55 @@ export function McpToolEditor({
     label: command.title || command.id,
   }));
   return (
-    <div className="plugin-dev-contribution-row">
-      <div className="grid flex-1 grid-cols-[1fr_1fr_1.5fr] gap-3">
-        <Field>
-          <FieldLabel>Tool 名称</FieldLabel>
-          <Input
-            value={tool.name}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.mcpTools[index].name = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>Command</FieldLabel>
-          <Select
-            items={commandItems}
-            value={tool.command}
-            onValueChange={(value) =>
-              value &&
-              onUpdate((next) => {
-                next.contributes.mcpTools[index].command = value;
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {commandItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel>描述</FieldLabel>
-          <Input
-            value={tool.description}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.mcpTools[index].description =
-                  event.target.value;
-              })
-            }
-          />
-        </Field>
-      </div>
+    <div
+      className={cn(
+        "plugin-dev-contribution-row",
+        "grid-cols-[1fr_1fr_1.5fr_auto]",
+      )}
+    >
+      <Input
+        aria-label="Tool 名称"
+        value={tool.name}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.mcpTools[index].name = event.target.value;
+          })
+        }
+      />
+      <Select
+        items={commandItems}
+        value={tool.command}
+        onValueChange={(value) =>
+          value &&
+          onUpdate((next) => {
+            next.contributes.mcpTools[index].command = value;
+          })
+        }
+      >
+        <SelectTrigger className="w-full" aria-label="Command">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {commandItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <Input
+        aria-label="描述"
+        value={tool.description}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.mcpTools[index].description = event.target.value;
+          })
+        }
+      />
       <Button
-        size="icon"
+        size="icon-lg"
         variant="ghost"
         aria-label="删除 MCP Tool"
         onClick={() =>
@@ -472,93 +474,87 @@ export function SettingEditor({
   onUpdate: (mutate: (next: EditablePluginManifest) => void) => void;
 }) {
   return (
-    <div className="plugin-dev-contribution-row">
-      <div className="grid flex-1 grid-cols-[1fr_0.8fr_1.2fr_1fr] gap-3">
-        <Field>
-          <FieldLabel>Setting ID</FieldLabel>
-          <Input
-            value={setting.id}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.settings[index].id = event.target.value;
-              })
+    <div
+      className={cn(
+        "plugin-dev-contribution-row",
+        "grid-cols-[1fr_0.8fr_1.2fr_1fr_auto]",
+      )}
+    >
+      <Input
+        aria-label="Setting ID"
+        value={setting.id}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.settings[index].id = event.target.value;
+          })
+        }
+      />
+      <Select
+        items={SETTING_TYPE_ITEMS}
+        value={setting.type}
+        onValueChange={(value) =>
+          value &&
+          onUpdate((next) => {
+            const target = next.contributes.settings[index];
+            target.type = value as EditablePluginSetting["type"];
+            target.default =
+              value === "switch"
+                ? false
+                : value === "multiselect"
+                  ? []
+                  : "";
+            if (value === "select" || value === "multiselect")
+              target.options = target.options?.length
+                ? target.options
+                : [{ value: "default", label: "Default" }];
+            else delete target.options;
+          })
+        }
+      >
+        <SelectTrigger className="w-full" aria-label="控件">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {SETTING_TYPE_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <Input
+        aria-label="标题"
+        value={setting.title}
+        onChange={(event) =>
+          onUpdate((next) => {
+            next.contributes.settings[index].title = event.target.value;
+          })
+        }
+      />
+      <Input
+        aria-label="默认值"
+        value={
+          typeof setting.default === "string"
+            ? setting.default
+            : JSON.stringify(setting.default)
+        }
+        onChange={(event) =>
+          onUpdate((next) => {
+            const raw = event.target.value;
+            try {
+              next.contributes.settings[index].default = JSON.parse(
+                raw,
+              ) as unknown;
+            } catch {
+              next.contributes.settings[index].default = raw;
             }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>控件</FieldLabel>
-          <Select
-            items={SETTING_TYPE_ITEMS}
-            value={setting.type}
-            onValueChange={(value) =>
-              value &&
-              onUpdate((next) => {
-                const target = next.contributes.settings[index];
-                target.type = value as EditablePluginSetting["type"];
-                target.default =
-                  value === "switch"
-                    ? false
-                    : value === "multiselect"
-                      ? []
-                      : "";
-                if (value === "select" || value === "multiselect")
-                  target.options = target.options?.length
-                    ? target.options
-                    : [{ value: "default", label: "Default" }];
-                else delete target.options;
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {SETTING_TYPE_ITEMS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel>标题</FieldLabel>
-          <Input
-            value={setting.title}
-            onChange={(event) =>
-              onUpdate((next) => {
-                next.contributes.settings[index].title = event.target.value;
-              })
-            }
-          />
-        </Field>
-        <Field>
-          <FieldLabel>默认值</FieldLabel>
-          <Input
-            value={
-              typeof setting.default === "string"
-                ? setting.default
-                : JSON.stringify(setting.default)
-            }
-            onChange={(event) =>
-              onUpdate((next) => {
-                const raw = event.target.value;
-                try {
-                  next.contributes.settings[index].default = JSON.parse(
-                    raw,
-                  ) as unknown;
-                } catch {
-                  next.contributes.settings[index].default = raw;
-                }
-              })
-            }
-          />
-        </Field>
-      </div>
+          })
+        }
+      />
       <Button
-        size="icon"
+        size="icon-lg"
         variant="ghost"
         aria-label="删除 Setting"
         onClick={() =>
@@ -572,4 +568,3 @@ export function SettingEditor({
     </div>
   );
 }
-

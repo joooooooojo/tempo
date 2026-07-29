@@ -1,7 +1,6 @@
-import { Badge } from "@/components/ui/badge";
-import type { PluginDevConnectionStatus, PluginDevPreferences } from "@/types";
+import type { PluginDevPreferences } from "@/types";
 
-export type WorkspaceTab = "manifest" | "connection" | "test";
+export type WorkspaceTab = "manifest" | "runtime";
 export type ManifestMode = "visual" | "json";
 
 export const KIND_ITEMS = [
@@ -68,15 +67,6 @@ export function projectMarkColor(rootPath: string): string {
 
 export function messageOf(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-export function connectionBadge(status: PluginDevConnectionStatus) {
-  if (!status.connected) return <Badge variant="outline">未连接</Badge>;
-  if (status.state === "failed")
-    return <Badge variant="destructive">连接失败</Badge>;
-  if (status.state === "partial")
-    return <Badge variant="secondary">部分连接</Badge>;
-  return <Badge>已连接</Badge>;
 }
 
 export function projectKindLabel(kind?: string | null) {

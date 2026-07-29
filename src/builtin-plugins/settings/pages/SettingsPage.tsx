@@ -16,6 +16,7 @@ import {
   type SettingsSectionId,
 } from "@/builtin-plugins/settings/pages/shared";
 import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const SECTION_ICONS = {
   general: SlidersHorizontal,
@@ -184,7 +185,12 @@ export function SettingsPage() {
       </aside>
 
       <div className="settings-main">
-        <div className="settings-main__body" key={section}>
+        <ScrollArea
+          key={section}
+          className="settings-main__scroll"
+          viewportClassName="settings-main__body"
+          aria-label="设置内容"
+        >
           {section === "general" ? (
             <GeneralSettingsPanel
               settings={settings}
@@ -210,7 +216,7 @@ export function SettingsPage() {
               onChangeStorageDir={changeStorageDir}
             />
           ) : null}
-        </div>
+        </ScrollArea>
       </div>
     </div>
   );

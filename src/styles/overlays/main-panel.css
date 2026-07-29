@@ -185,6 +185,21 @@ html.main-panel-window #root {
   line-height: 1.3;
 }
 
+.main-panel-app-bar-leading {
+  display: flex;
+  min-width: 0;
+  max-width: min(720px, 78vw);
+  align-items: center;
+  gap: 8px;
+}
+
+.main-panel-app-bar-trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
 .main-panel-app-bar-icon {
   display: inline-flex;
   width: 38px;

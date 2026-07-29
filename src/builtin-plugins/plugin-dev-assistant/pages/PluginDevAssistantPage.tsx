@@ -3,22 +3,16 @@ import {
   useEffect,
   useMemo,
   useState,
-  type CSSProperties,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Braces,
-  Cable,
-  FileJson2,
   FolderOpen,
-  Link2,
   Plus,
-  TerminalSquare,
-  Unplug,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useOptionalMainPanelAppBarChrome } from "@/apps/appBarChrome";
 import { useOptionalAppNavigation } from "@/apps/navigation";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -52,10 +46,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
-import { cn } from "@/lib/utils";
 import {
   cloneManifest,
   parseEditableManifest,
@@ -64,20 +56,17 @@ import {
   type EditablePluginManifest,
   type PluginKind,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
-import { ConnectionWorkspace } from "@/builtin-plugins/plugin-dev-assistant/pages/connection-workspace";
+import { RuntimeWorkspace } from "@/builtin-plugins/plugin-dev-assistant/pages/runtime-workspace";
 import { ManifestWorkspace } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest-workspace";
+import { ProjectSwitcher } from "@/builtin-plugins/plugin-dev-assistant/components/ProjectSwitcher.tsx";
 import {
   KIND_ITEMS,
-  connectionBadge,
   messageOf,
   normalizePreferences,
-  projectKindLabel,
-  projectMarkColor,
-  projectMonogram,
   type ManifestMode,
   type WorkspaceTab,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
-import { TestWorkspace } from "@/builtin-plugins/plugin-dev-assistant/pages/test-workspace";
+import { WorkspaceTabs } from "@/builtin-plugins/plugin-dev-assistant/components/WorkspaceTabs.tsx";
 import type {
   PluginDevLogEvent,
   PluginDevPreferences,
@@ -87,6 +76,8 @@ import type {
 
 export function PluginDevAssistantPage() {
   const navigation = useOptionalAppNavigation();
+  const appBarChrome = useOptionalMainPanelAppBarChrome();
+  const setAppBarChrome = appBarChrome?.setChrome;
   const [projects, setProjects] = useState<PluginDevProject[]>([]);
   const [detail, setDetail] = useState<PluginDevProjectDetail | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -326,7 +317,7 @@ export function PluginDevAssistantPage() {
       await api.disconnectPluginDevProject(detail.project.id);
       const next = await api.getPluginDevProject(detail.project.id);
       applyDetail(next);
-      toast.success("开发连接已断开");
+      toast.success("已断开运行连接");
     } catch (error) {
       toast.error(messageOf(error));
     } finally {
@@ -376,77 +367,44 @@ export function PluginDevAssistantPage() {
     navigation?.openApp(`${detail.project.pluginId}/${firstApp.id}`);
   };
 
+  useEffect(() => {
+    if (!setAppBarChrome) return;
+    setAppBarChrome({
+      leading: (
+        <>
+          <ProjectSwitcher
+            projects={projects}
+            activeProjectId={activeProjectId}
+            disabled={busy}
+            onSelect={(projectId) => void loadProject(projectId)}
+            onCreate={() => setCreateOpen(true)}
+            onOpen={() => void openProject()}
+          />
+          {detail ? (
+            <WorkspaceTabs
+              value={workspaceTab}
+              onChange={setWorkspaceTab}
+              manifestMode={manifestMode}
+              onManifestModeChange={setManifestMode}
+            />
+          ) : null}
+        </>
+      ),
+    });
+    return () => setAppBarChrome({});
+  }, [
+    activeProjectId,
+    busy,
+    detail,
+    loadProject,
+    projects,
+    setAppBarChrome,
+    workspaceTab,
+    manifestMode,
+  ]);
+
   return (
     <div className="plugin-dev-shell">
-      <aside className="plugin-dev-sidebar" aria-label="插件开发项目">
-        <div className="plugin-dev-sidebar__header">
-          <div className="plugin-dev-brand">
-            <Braces aria-hidden="true" />
-            <div>
-              <strong>插件开发助手</strong>
-              <span>开发连接器</span>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              className="flex-1"
-              onClick={() => setCreateOpen(true)}
-            >
-              <Plus data-icon="inline-start" />
-              创建
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex-1"
-              onClick={() => void openProject()}
-            >
-              <FolderOpen data-icon="inline-start" />
-              打开
-            </Button>
-          </div>
-        </div>
-        <div className="plugin-dev-projects">
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              className={cn(
-                "plugin-dev-project",
-                activeProjectId === project.id && "plugin-dev-project--active",
-              )}
-              onClick={() => void loadProject(project.id)}
-            >
-              <span
-                className="plugin-dev-project__mark"
-                aria-hidden="true"
-                style={
-                  {
-                    "--plugin-dev-project-mark": projectMarkColor(
-                      project.rootPath,
-                    ),
-                  } as CSSProperties
-                }
-              >
-                {projectMonogram(project.rootPath)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <strong>
-                  {project.name || project.pluginId || "未命名项目"}
-                </strong>
-                <small>{projectKindLabel(project.kind)}</small>
-              </span>
-            </button>
-          ))}
-        </div>
-        {projects.length === 0 && !loading ? (
-          <p className="plugin-dev-sidebar__empty">
-            创建或打开包含根 Manifest 的目录
-          </p>
-        ) : null}
-      </aside>
-
       <main className="plugin-dev-main">
         {loading && !detail ? (
           <div className="plugin-dev-loading">
@@ -454,133 +412,70 @@ export function PluginDevAssistantPage() {
             正在读取项目
           </div>
         ) : detail ? (
-          <>
-            <header className="plugin-dev-header">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h1>{detail.project.name || detail.project.pluginId}</h1>
-                  {connectionBadge(detail.connection)}
-                  <Badge variant="outline">{projectKindLabel(kind)}</Badge>
-                </div>
-                <p title={detail.project.rootPath}>{detail.project.rootPath}</p>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                {detail.connection.connected ? (
-                  <Button
-                    variant="outline"
-                    onClick={() => void disconnect()}
-                    disabled={busy}
-                  >
-                    <Unplug data-icon="inline-start" />
-                    断开
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => void connect()}
-                    disabled={busy || !detail.manifest.valid}
-                  >
-                    {busy ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <Cable data-icon="inline-start" />
-                    )}
-                    连接到 Tempo
-                  </Button>
-                )}
-              </div>
-            </header>
-
-            <Tabs
-              value={workspaceTab}
-              onValueChange={(value) => setWorkspaceTab(value as WorkspaceTab)}
-              className="plugin-dev-workspace"
-            >
-              <div className="plugin-dev-tabs-bar">
-                <TabsList className="plugin-dev-tabs">
-                  <TabsTrigger value="manifest">
-                    <FileJson2 data-icon="inline-start" />
-                    Manifest
-                  </TabsTrigger>
-                  <TabsTrigger value="connection">
-                    <Link2 data-icon="inline-start" />
-                    开发连接
-                  </TabsTrigger>
-                  <TabsTrigger value="test" disabled={commands.length === 0}>
-                    <TerminalSquare data-icon="inline-start" />
-                    测试
-                  </TabsTrigger>
-                </TabsList>
-              </div>
-
-              <TabsContent value="manifest" className="plugin-dev-content">
+          <div className="plugin-dev-workspace">
+            {workspaceTab === "manifest" ? (
+              <div className="plugin-dev-content">
                 <ManifestWorkspace
                   detail={detail}
                   manifest={manifest}
                   raw={manifestRaw}
                   mode={manifestMode}
                   busy={busy}
-                  onModeChange={setManifestMode}
                   onRawChange={setManifestRaw}
                   onUpdate={updateManifest}
                   onSave={() => void saveManifest()}
                   onForget={() => void forgetProject()}
                 />
-              </TabsContent>
-              <TabsContent value="connection" className="plugin-dev-content">
-                {preferences ? (
-                  <ConnectionWorkspace
-                    detail={detail}
-                    kind={kind}
-                    preferences={preferences}
-                    logs={logs}
-                    busy={busy}
-                    onPreferencesChange={setPreferences}
-                    onChooseDirectory={chooseDirectory}
-                    onSave={() => void savePreferences()}
-                    onConnect={() => void connect()}
-                    onDisconnect={() => void disconnect()}
-                    onReconnectRuntime={async () => {
-                      setBusy(true);
-                      try {
-                        await api.reconnectPluginDevRuntime(detail.project.id);
-                        applyDetail(
-                          await api.getPluginDevProject(detail.project.id),
-                        );
-                        toast.success("Runtime 已重新连接");
-                      } catch (error) {
-                        toast.error(messageOf(error));
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                    onProbe={async () => {
-                      const result = await api.probePluginDevUiUrl(
-                        preferences.uiServiceUrl ?? "",
-                      );
-                      result.reachable
-                        ? toast.success(result.message)
-                        : toast.error(result.message);
-                    }}
-                    onOpenApp={openConnectedApp}
-                  />
-                ) : null}
-              </TabsContent>
-              <TabsContent value="test" className="plugin-dev-content">
-                <TestWorkspace
+              </div>
+            ) : null}
+            {workspaceTab === "runtime" && preferences ? (
+              <div className="plugin-dev-content">
+                <RuntimeWorkspace
                   detail={detail}
+                  kind={kind}
+                  preferences={preferences}
+                  logs={logs}
                   manifest={manifest}
                   commands={commands}
                   commandId={commandId}
                   params={commandParams}
                   result={commandResult}
                   busy={busy}
+                  onPreferencesChange={setPreferences}
+                  onChooseDirectory={chooseDirectory}
+                  onSave={() => void savePreferences()}
+                  onConnect={() => void connect()}
+                  onDisconnect={() => void disconnect()}
+                  onReconnectRuntime={async () => {
+                    setBusy(true);
+                    try {
+                      await api.reconnectPluginDevRuntime(detail.project.id);
+                      applyDetail(
+                        await api.getPluginDevProject(detail.project.id),
+                      );
+                      toast.success("Runtime 已重新连接");
+                    } catch (error) {
+                      toast.error(messageOf(error));
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  onProbe={async () => {
+                    const result = await api.probePluginDevUiUrl(
+                      preferences.uiServiceUrl ?? "",
+                    );
+                    result.reachable
+                      ? toast.success(result.message)
+                      : toast.error(result.message);
+                  }}
+                  onOpenApp={openConnectedApp}
                   onCommandChange={setCommandId}
                   onParamsChange={setCommandParams}
-                  onRun={() => void runCommand()}
+                  onRunCommand={() => void runCommand()}
                 />
-              </TabsContent>
-            </Tabs>
-          </>
+              </div>
+            ) : null}
+          </div>
         ) : (
           <Empty className="h-full rounded-none border-0">
             <EmptyHeader>
@@ -589,7 +484,7 @@ export function PluginDevAssistantPage() {
               </EmptyMedia>
               <EmptyTitle>选择一个插件项目</EmptyTitle>
               <EmptyDescription>
-                {loadError ?? "项目根目录中的 manifest.json 是开发连接的入口。"}
+                {loadError ?? "项目根目录中的 manifest.json 是运行连接的入口。"}
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
@@ -629,7 +524,7 @@ export function PluginDevAssistantPage() {
                   />
                   <Button
                     variant="outline"
-                    size="icon"
+                    size="icon-lg"
                     aria-label="选择目录"
                     onClick={async () => {
                       const path = await chooseDirectory("选择插件项目根目录");
