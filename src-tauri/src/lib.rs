@@ -460,6 +460,11 @@ pub fn run() {
 
             app.run(|app_handle, event| {
                 if let tauri::RunEvent::Ready = &event {
+                    // Ask for notification permission before the main panel is key,
+                    // so the system sheet cannot trigger blur→hide on the overlay.
+                    #[cfg(target_os = "macos")]
+                    notify::prime_macos_authorization(app_handle);
+
                     logging::warn_if_err(
                         auxiliary_windows::show_main_panel(app_handle),
                         "show main panel on startup",

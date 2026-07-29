@@ -432,7 +432,7 @@ impl Supervisor {
             .stderr(Stdio::null())
             .kill_on_drop(true);
         apply_minimal_plugin_runtime_env(&mut command);
-        hide_plugin_runtime_console(&mut command);
+        prevent_plugin_runtime_console_window(&mut command);
         #[cfg(unix)]
         {
             command.process_group(0);
@@ -571,7 +571,7 @@ impl Supervisor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         apply_minimal_plugin_runtime_env(&mut command);
-        hide_plugin_runtime_console(&mut command);
+        prevent_plugin_runtime_console_window(&mut command);
         #[cfg(unix)]
         command.process_group(0);
 
@@ -699,10 +699,14 @@ fn apply_minimal_plugin_runtime_env(command: &mut tokio::process::Command) {
     }
 }
 
-/// Packaged Tempo is a GUI app without a console. Spawning `node.exe` without this flag on
-/// Windows allocates a visible console window (seen when connecting a plugin Runtime).
-/// `tauri dev` often already has a console attached, so the window is less noticeable.
-fn hide_plugin_runtime_console(command: &mut tokio::process::Command) {
+/// Prevent Windows from allocating a console for the plugin Node process.
+///
+/// Packaged Tempo is a GUI subsystem app. Spawning `node.exe` (console subsystem)
+/// without `CREATE_NO_WINDOW` makes Windows allocate a visible black console.
+/// `CREATE_NO_WINDOW` means "never create a console" — it does not create-then-hide.
+/// Do not combine with `DETACHED_PROCESS` / `CREATE_NEW_CONSOLE` (those ignore this
+/// flag or force a new visible console).
+fn prevent_plugin_runtime_console_window(command: &mut tokio::process::Command) {
     #[cfg(windows)]
     {
         use windows::Win32::System::Threading::CREATE_NO_WINDOW;
