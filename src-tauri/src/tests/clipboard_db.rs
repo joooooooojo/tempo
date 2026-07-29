@@ -1,9 +1,9 @@
-use crate::clipboard_db::{
+use crate::builtin_plugins::clipboard::db::{
     add_snippet, add_snippet_group, count_clipboard_entries, delete_snippet_group, encode_rgba_png,
     get_clipboard_entry, get_snippet, insert_clipboard_files, insert_clipboard_text,
     set_clipboard_entry_pinned,
 };
-use crate::clipboard_files::{
+use crate::builtin_plugins::clipboard::files::{
     ensure_clipboard_paths_exist, parse_clipboard_paths, serialize_clipboard_paths,
 };
 use crate::db::init_db;

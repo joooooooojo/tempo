@@ -1,26 +1,18 @@
-pub mod builtins;
-pub mod clipboard;
-pub mod hosts;
 pub mod launcher;
 pub mod markdown;
 pub mod plugins;
-pub mod plugin_dev;
-pub mod port_manager;
-pub mod reports;
-pub mod settings;
-pub mod snippets;
-pub mod todos;
 pub(crate) mod tracker;
-pub mod translate;
 pub mod window;
 
 use serde::{Deserialize, Serialize};
 
 pub use markdown::markdown_image_protocol_response;
-pub use settings::do_reset_today;
-pub use todos::check_pending_recurrences;
 pub use tracker::start_tracker;
 pub use window::quit_app;
+
+// Re-export builtin plugin commands through historical paths during migration consumers.
+pub use crate::builtin_plugins::settings::do_reset_today;
+pub use crate::builtin_plugins::todo::check_pending_recurrences;
 
 pub const MARKDOWN_IMAGE_PROTOCOL: &str = "tempo-image";
 
@@ -37,7 +29,7 @@ pub struct TodoImageInput {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct TodoBackupFile {
-    format: String,
-    exported_at: String,
-    todos: Vec<crate::db::TodoItem>,
+    pub(crate) format: String,
+    pub(crate) exported_at: String,
+    pub(crate) todos: Vec<crate::db::TodoItem>,
 }

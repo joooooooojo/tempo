@@ -224,8 +224,6 @@ pub struct RecentClipboardForMainPanel {
     pub kind: String,
     pub text: Option<String>,
     pub entry_id: Option<i64>,
-    pub image_width: Option<u32>,
-    pub image_height: Option<u32>,
 }
 
 pub const MAIN_PANEL_CLIPBOARD_SEED_MAX_AGE_MS: i64 = 30_000;

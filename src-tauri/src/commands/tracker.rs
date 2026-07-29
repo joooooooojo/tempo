@@ -7,8 +7,8 @@ use serde_json::json;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
-use super::reports::format_duration;
-use super::todos::{check_pending_recurrences, mark_due_reminder_sent};
+use crate::builtin_plugins::reports::format_duration;
+use crate::builtin_plugins::todo::{check_pending_recurrences, mark_due_reminder_sent};
 
 pub fn start_tracker(app: AppHandle, state: AppState) {
     crate::logging::spawn_named("tempo-tracker", move || {

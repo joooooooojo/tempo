@@ -632,7 +632,7 @@ fn enrich_action_command_input(
         })?;
     let entry = {
         let conn = state.db.lock();
-        crate::clipboard_db::get_clipboard_entry(&conn, entry_id)
+        crate::builtin_plugins::clipboard::db::get_clipboard_entry(&conn, entry_id)
     }
     .ok_or_else(|| RpcError::new(bridge::codes::NOT_FOUND, "clipboard image not found"))?;
     if entry.kind != "image" {
@@ -641,7 +641,7 @@ fn enrich_action_command_input(
             "clipboard entry is not an image",
         ));
     }
-    let path = crate::clipboard_images::clipboard_image_path(app, &entry.content)
+    let path = crate::builtin_plugins::clipboard::images::clipboard_image_path(app, &entry.content)
         .map_err(|message| RpcError::new(bridge::codes::NOT_FOUND, message))?;
     input.insert(
         "filePath".into(),

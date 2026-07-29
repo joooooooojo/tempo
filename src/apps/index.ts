@@ -18,7 +18,6 @@ export { lucideIcon, resolveOpenAppParams } from "@/apps/types";
 export { BUILTIN_OWNER } from "@/apps/constants";
 
 export {
-  BUILTIN_APPS,
   getApp,
   getBuiltinApp,
   listApps,
@@ -27,6 +26,9 @@ export {
   subscribeApps,
   unregisterAll,
 } from "@/apps/registry";
+
+import "@/builtin-plugins";
+export { BUILTIN_APPS } from "@/builtin-plugins";
 
 export { AppIconView } from "@/apps/icon";
 
@@ -62,4 +64,4 @@ export {
   useOptionalBuiltinAppNavigation,
 } from "@/apps/navigation";
 
-export { TODO_TITLE_LIMIT } from "@/apps/actions/builtin";
+export { TODO_TITLE_LIMIT } from "@/builtin-plugins/actions";

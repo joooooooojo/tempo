@@ -1,4 +1,4 @@
-use crate::commands::settings::apply_shortcut_updates;
+use crate::builtin_plugins::settings::commands::apply_shortcut_updates;
 use crate::db::Settings;
 use crate::validate_shortcut_bindings;
 use serde_json::json;

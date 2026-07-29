@@ -1,4 +1,4 @@
-import { BUILTIN_QUICK_ACTIONS } from "@/apps/actions/builtin";
+import { BUILTIN_QUICK_ACTIONS } from "@/builtin-plugins/actions";
 import { BUILTIN_OWNER } from "@/apps/constants";
 import type { QuickAction, QuickActionInput, Registration } from "@/apps/types";
 

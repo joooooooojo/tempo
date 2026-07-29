@@ -1,0 +1,596 @@
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+} from "react";
+import { emit, listen } from "@tauri-apps/api/event";
+import { ClipboardList, MoreHorizontal, Plus, Search, TextQuote } from "lucide-react";
+import { toast } from "sonner";
+import {
+  clipboardHeaderTone,
+  clipboardKindLabel,
+  clipboardSourceLabel,
+  ShelfCard,
+  shelfCharCount,
+  shelfImageSize,
+  shelfTimeLabel,
+} from "@/builtin-plugins/clipboard/components/ShelfCard";
+import { ClipboardFileGlyph } from "@/builtin-plugins/clipboard/components/ClipboardFileGlyph";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useAuxiliaryWindowShell } from "@/hooks/useAuxiliaryWindow";
+import { api } from "@/lib/api";
+import {
+  formatClipboardFilesFooter,
+  parseClipboardFilePaths,
+} from "@/builtin-plugins/clipboard/lib/clipboardFiles";
+import { isWindowsTarget } from "@/lib/utils";
+import type { ClipboardEntry, Snippet } from "@/types";
+
+const CLIPBOARD_LIMIT = 200;
+
+type ShelfTab = "clipboard" | "snippets";
+
+function isShelfTab(value: unknown): value is ShelfTab {
+  return value === "clipboard" || value === "snippets";
+}
+
+function initialShelfTab(): ShelfTab {
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get("tab");
+  if (isShelfTab(tab)) return tab;
+
+  return params.get("view") === "snippet-picker" ? "snippets" : "clipboard";
+}
+
+function initiallyReady() {
+  const params = new URLSearchParams(window.location.search);
+  return (
+    params.has("tab") ||
+    params.get("view") === "clipboard-picker" ||
+    params.get("view") === "snippet-picker"
+  );
+}
+
+function filterClipboard(entries: ClipboardEntry[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return entries;
+  return entries.filter(
+    (entry) => entry.kind === "text" && entry.content.toLowerCase().includes(needle)
+  );
+}
+
+function filterSnippets(items: Snippet[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return items;
+  return items.filter(
+    (snippet) =>
+      snippet.title.toLowerCase().includes(needle) ||
+      snippet.content.toLowerCase().includes(needle) ||
+      (snippet.shortcut ?? "").toLowerCase().includes(needle) ||
+      (snippet.group_name ?? "").toLowerCase().includes(needle) ||
+      snippet.tags.some((tag) => tag.toLowerCase().includes(needle))
+  );
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function debugShelf(message: string, details?: Record<string, unknown>) {
+  if (!import.meta.env.DEV) return;
+
+  let rendered = message;
+  if (details) {
+    try {
+      rendered = `${message} ${JSON.stringify(details)}`;
+    } catch {
+      rendered = message;
+    }
+  }
+
+  console.debug("[shelf-picker]", message, details ?? "");
+  void api.debugLog("shelf-picker", rendered).catch(() => undefined);
+}
+
+const MemoShelfCard = memo(ShelfCard);
+
+type ShelfTrackViewportProps = {
+  active: boolean;
+  children: ReactNode;
+  scrollerRef: RefObject<HTMLDivElement | null>;
+  label: string;
+};
+
+function ShelfTrackViewport({ active, children, label, scrollerRef }: ShelfTrackViewportProps) {
+  if (isWindowsTarget) {
+    return (
+      <ScrollArea
+        className="shelf-picker-scroll-area"
+        scrollbars="horizontal"
+        scrollbarClassName="shelf-picker-scrollbar"
+        thumbClassName="shelf-picker-scrollbar__thumb"
+        hidden={!active}
+        aria-hidden={!active}
+        aria-label={label}
+        viewportClassName="shelf-picker-scroll-viewport"
+        viewportRef={scrollerRef}
+      >
+        <div className="shelf-picker-track shelf-picker-track--scroll-area">{children}</div>
+      </ScrollArea>
+    );
+  }
+
+  return (
+    <div
+      className="shelf-picker-track"
+      ref={scrollerRef}
+      hidden={!active}
+      aria-hidden={!active}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function ShelfPickerPage() {
+  const [tab, setTab] = useState<ShelfTab>(() => initialShelfTab());
+  const [contentReady, setContentReady] = useState(() => initiallyReady());
+  const [clipboardCache, setClipboardCache] = useState<ClipboardEntry[]>([]);
+  const [snippetsCache, setSnippetsCache] = useState<Snippet[]>([]);
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [clipboardIndex, setClipboardIndex] = useState(0);
+  const [snippetsIndex, setSnippetsIndex] = useState(0);
+  const clipboardScrollerRef = useRef<HTMLDivElement>(null);
+  const snippetsScrollerRef = useRef<HTMLDivElement>(null);
+  const searchInlineRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const tabRef = useRef(tab);
+
+  const entries = useMemo(
+    () => filterClipboard(clipboardCache, query),
+    [clipboardCache, query]
+  );
+  const snippets = useMemo(() => filterSnippets(snippetsCache, query), [snippetsCache, query]);
+
+  useAuxiliaryWindowShell("shelf-picker-window");
+
+  const hideShelf = useCallback(() => {
+    void api.hideShelfPicker();
+  }, []);
+
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+
+  useEffect(() => {
+    setClipboardIndex(0);
+    setSnippetsIndex(0);
+  }, [query]);
+
+  useEffect(() => {
+    setClipboardIndex((index) => Math.min(index, Math.max(entries.length - 1, 0)));
+  }, [entries.length]);
+
+  useEffect(() => {
+    setSnippetsIndex((index) => Math.min(index, Math.max(snippets.length - 1, 0)));
+  }, [snippets.length]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const timer = window.setTimeout(() => searchInputRef.current?.focus(), 60);
+    return () => window.clearTimeout(timer);
+  }, [searchOpen]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery("");
+  }, []);
+
+  const toggleSearch = useCallback(() => {
+    setSearchOpen((open) => {
+      if (open) {
+        setQuery("");
+      }
+      return !open;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (searchInlineRef.current?.contains(target)) return;
+      closeSearch();
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [closeSearch, searchOpen]);
+
+  const loadClipboard = useCallback(async (resetIndex = false) => {
+    const page = await api.getClipboardHistory(undefined, CLIPBOARD_LIMIT);
+    setClipboardCache(page.entries);
+    if (resetIndex) {
+      setClipboardIndex(0);
+    } else {
+      setClipboardIndex((index) => Math.min(index, Math.max(page.entries.length - 1, 0)));
+    }
+  }, []);
+
+  const loadSnippets = useCallback(async (resetIndex = false) => {
+    const next = await api.getSnippets();
+    setSnippetsCache(next);
+    if (resetIndex) {
+      setSnippetsIndex(0);
+    } else {
+      setSnippetsIndex((index) => Math.min(index, Math.max(next.length - 1, 0)));
+    }
+  }, []);
+
+  const prepareOpen = useCallback((nextTab: ShelfTab) => {
+    setTab(nextTab);
+    setQuery("");
+    setSearchOpen(true);
+    setClipboardIndex(0);
+    setSnippetsIndex(0);
+    setContentReady(true);
+  }, []);
+
+  const resetAndOpen = useCallback(
+    (nextTab: ShelfTab) => {
+      prepareOpen(nextTab);
+      void loadClipboard(true);
+      void loadSnippets(true);
+    },
+    [loadClipboard, loadSnippets, prepareOpen]
+  );
+
+  useEffect(() => {
+    void loadClipboard(true);
+    void loadSnippets(true);
+
+    const unlistenClipboard = listen("clipboard-update", () => {
+      void loadClipboard();
+    });
+    const unlistenSnippets = listen("snippets-update", () => {
+      void loadSnippets();
+    });
+    const unlistenPrepare = listen<{ tab?: string }>("shelf-picker:prepare", (event) => {
+      const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
+      prepareOpen(nextTab);
+    });
+    const unlistenOpen = listen<{ tab?: string }>("shelf-picker:open", (event) => {
+      const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
+      resetAndOpen(nextTab);
+    });
+    const unlistenActivate = listen<{ tab?: string }>("shelf-picker:activate", (event) => {
+      const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
+      if (nextTab === tabRef.current) {
+        hideShelf();
+        return;
+      }
+      setTab(nextTab);
+      setContentReady(true);
+    });
+    const unlistenHide = listen("shelf-picker:hide", () => {
+      setContentReady(false);
+    });
+
+    return () => {
+      void unlistenClipboard.then((fn) => fn());
+      void unlistenSnippets.then((fn) => fn());
+      void unlistenPrepare.then((fn) => fn());
+      void unlistenOpen.then((fn) => fn());
+      void unlistenActivate.then((fn) => fn());
+      void unlistenHide.then((fn) => fn());
+    };
+  }, [hideShelf, loadClipboard, loadSnippets, prepareOpen, resetAndOpen]);
+
+  const copyEntry = useCallback(async (entry: ClipboardEntry) => {
+    debugShelf("copy clipboard entry requested", {
+      id: entry.id,
+      kind: entry.kind,
+      contentPrefix: entry.content.slice(0, 96),
+      imageWidth: entry.image_width,
+      imageHeight: entry.image_height,
+    });
+    try {
+      await api.copyClipboardEntry(entry.id);
+      debugShelf("copy clipboard entry succeeded", {
+        id: entry.id,
+        kind: entry.kind,
+      });
+      setClipboardCache((current) => {
+        const nextEntry = { ...entry, created_at: new Date().toISOString() };
+        return [nextEntry, ...current.filter((item) => item.id !== entry.id)];
+      });
+      setClipboardIndex(0);
+      await api.hideShelfPicker();
+    } catch (error) {
+      debugShelf("copy clipboard entry failed", {
+        id: entry.id,
+        kind: entry.kind,
+        error: errorMessage(error),
+      });
+      console.error("[shelf-picker] copy clipboard entry failed", error, entry);
+      toast.error(error instanceof Error ? error.message : "复制失败");
+    }
+  }, []);
+
+
+  const copySnippet = useCallback(async (snippet: Snippet) => {
+    try {
+      const updated = await api.copySnippetToClipboard(snippet.id);
+      setSnippetsCache((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item))
+      );
+      toast.success("已使用短语");
+      await api.hideShelfPicker();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "复制失败");
+    }
+  }, []);
+
+  const openSnippetsPage = useCallback(async (create = false) => {
+    await api.hideShelfPicker();
+    await api.showMainPanel();
+    await emit("main-panel:open-app", {
+      appId: "snippets",
+      createSnippet: create,
+    });
+  }, []);
+
+  const itemCount = tab === "clipboard" ? entries.length : snippets.length;
+
+  const scrollSelectedCardIntoView = useCallback(
+    (container: HTMLDivElement | null, index: number) => {
+      const node = container?.querySelectorAll<HTMLElement>(".shelf-card")[index];
+      node?.scrollIntoView({ behavior: "auto", inline: "nearest", block: "nearest" });
+    },
+    []
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (itemCount === 0) return;
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        if (tab === "clipboard") {
+          const next = Math.min(clipboardIndex + 1, entries.length - 1);
+          setClipboardIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(clipboardScrollerRef.current, next)
+          );
+        } else {
+          const next = Math.min(snippetsIndex + 1, snippets.length - 1);
+          setSnippetsIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(snippetsScrollerRef.current, next)
+          );
+        }
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        if (tab === "clipboard") {
+          const next = Math.max(clipboardIndex - 1, 0);
+          setClipboardIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(clipboardScrollerRef.current, next)
+          );
+        } else {
+          const next = Math.max(snippetsIndex - 1, 0);
+          setSnippetsIndex(next);
+          requestAnimationFrame(() =>
+            scrollSelectedCardIntoView(snippetsScrollerRef.current, next)
+          );
+        }
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (tab === "clipboard") {
+          const entry = entries[clipboardIndex];
+          if (entry) void copyEntry(entry);
+        } else {
+          const snippet = snippets[snippetsIndex];
+          if (snippet) void copySnippet(snippet);
+        }
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        if (searchOpen) {
+          closeSearch();
+          return;
+        }
+        hideShelf();
+      } else if (event.key === "Tab" && !event.shiftKey && !searchOpen) {
+        event.preventDefault();
+        setTab((current) => (current === "clipboard" ? "snippets" : "clipboard"));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    clipboardIndex,
+    closeSearch,
+    copyEntry,
+    copySnippet,
+    entries,
+    hideShelf,
+    itemCount,
+    searchOpen,
+    snippets,
+    snippetsIndex,
+    scrollSelectedCardIntoView,
+    tab,
+  ]);
+
+  return (
+    <div
+      className="shelf-picker-page shelf-picker-page--full"
+      data-ready={contentReady ? "true" : "false"}
+    >
+      <div className="shelf-picker-panel">
+        <div className="shelf-picker-toolbar">
+          <div
+            ref={searchInlineRef}
+            className={`shelf-picker-search-inline${searchOpen ? " shelf-picker-search-inline--open" : ""}`}
+          >
+            <button
+              type="button"
+              className="shelf-picker-search-inline__trigger"
+              title="搜索"
+              aria-label="搜索"
+              aria-expanded={searchOpen}
+              onClick={toggleSearch}
+            >
+              <Search className="h-4 w-4" />
+            </button>
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索"
+              className="shelf-picker-search-inline__input"
+              tabIndex={searchOpen ? 0 : -1}
+            />
+          </div>
+
+          <div className="shelf-picker-tabs" role="tablist" aria-label="内容切换">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "clipboard"}
+              className={`shelf-picker-tab${tab === "clipboard" ? " shelf-picker-tab--active" : ""}`}
+              onClick={() => setTab("clipboard")}
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              <span>剪贴板</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "snippets"}
+              className={`shelf-picker-tab${tab === "snippets" ? " shelf-picker-tab--active" : ""}`}
+              onClick={() => setTab("snippets")}
+            >
+              <TextQuote className="h-3.5 w-3.5" />
+              <span>快捷短语</span>
+            </button>
+          </div>
+
+          <div className="shelf-picker-toolbar-actions">
+            {tab === "snippets" && (
+              <button
+                type="button"
+                className="shelf-picker-icon-btn"
+                title="新建短语"
+                onClick={() => void openSnippetsPage(true)}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              className="shelf-picker-icon-btn"
+              title={tab === "snippets" ? "管理短语" : "更多"}
+              disabled={tab !== "snippets"}
+              onClick={() => void openSnippetsPage(false)}
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="shelf-picker-track-host">
+          <ShelfTrackViewport
+            active={tab === "clipboard"}
+            label="剪贴板水平滚动区域"
+            scrollerRef={clipboardScrollerRef}
+          >
+            {entries.length === 0 ? (
+              <div className="shelf-picker-empty">暂无剪贴记录</div>
+            ) : (
+              entries.map((entry, index) => {
+                const isImage = entry.kind === "image";
+                const isFile = entry.kind === "file";
+                const filePaths = isFile ? parseClipboardFilePaths(entry.content) : [];
+                return (
+                <MemoShelfCard
+                  key={entry.id}
+                  selected={index === clipboardIndex}
+                  headerLabel={clipboardKindLabel(entry.kind)}
+                  headerTone={clipboardHeaderTone(entry.kind)}
+                  timeLabel={shelfTimeLabel(entry.created_at)}
+                  sourceApp={isFile ? null : clipboardSourceLabel(entry)}
+                  sourceAppIcon={isFile ? null : entry.source_icon_data_url}
+                  content={isImage || isFile ? "" : entry.content}
+                  imageSrc={isImage ? entry.content : null}
+                  body={
+                    isFile ? <ClipboardFileGlyph paths={filePaths} size="card" /> : undefined
+                  }
+                  footer={
+                    isImage
+                      ? shelfImageSize(entry.image_width, entry.image_height)
+                      : isFile
+                        ? formatClipboardFilesFooter(filePaths)
+                        : shelfCharCount(entry.content)
+                  }
+                  onClick={() => setClipboardIndex(index)}
+                  onDoubleClick={() => {
+                    debugShelf("clipboard card double click", {
+                      id: entry.id,
+                      kind: entry.kind,
+                      index,
+                    });
+                    void copyEntry(entry);
+                  }}
+                  title="双击复制到剪贴板并置顶"
+                />
+              );
+              })
+            )}
+          </ShelfTrackViewport>
+
+          <ShelfTrackViewport
+            active={tab === "snippets"}
+            label="快捷短语水平滚动区域"
+            scrollerRef={snippetsScrollerRef}
+          >
+            {snippets.length === 0 ? (
+              <div className="shelf-picker-empty">还没有快捷短语</div>
+            ) : (
+              snippets.map((snippet, index) => (
+                <MemoShelfCard
+                  key={snippet.id}
+                  selected={index === snippetsIndex}
+                  headerLabel="短语"
+                  headerTone="snippet"
+                  timeLabel={shelfTimeLabel(snippet.last_used_at ?? snippet.updated_at)}
+                  sourceApp={snippet.title}
+                  content={snippet.content}
+                  language={snippet.language}
+                  footer={
+                    snippet.shortcut
+                      ? `${snippet.shortcut} · ${snippet.use_count} 次`
+                      : snippet.tags.length > 0
+                        ? snippet.tags.join(" · ")
+                        : shelfCharCount(snippet.content)
+                  }
+                  onClick={() => setSnippetsIndex(index)}
+                  onDoubleClick={() => void copySnippet(snippet)}
+                  title="双击使用短语"
+                />
+              ))
+            )}
+          </ShelfTrackViewport>
+        </div>
+      </div>
+    </div>
+  );
+}

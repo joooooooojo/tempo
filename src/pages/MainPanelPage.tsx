@@ -20,8 +20,8 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { AppIcon } from "@/components/AppIcon";
-import { ClipboardFileGlyph } from "@/components/clipboard/ClipboardFileGlyph";
-import { ReminderDialog } from "@/components/ReminderDialog";
+import { ClipboardFileGlyph } from "@/builtin-plugins/clipboard/components/ClipboardFileGlyph";
+import { ReminderDialog } from "@/builtin-plugins/todo/components/ReminderDialog";
 import { Button } from "@/components/ui/button";
 import { FollowTooltip } from "@/components/ui/follow-tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -59,13 +59,13 @@ import {
 } from "@/lib/theme";
 import { appToastOptions } from "@/lib/toastOptions";
 import {
+  formatClipboardFilesPreview,
   resolveQuickActionInput,
   resolveQuickActionQuery,
   seedToMainPanelChip,
   shouldInlineClipboardText,
   type MainPanelClipboardChip,
-} from "@/lib/mainPanelClipboardSeed";
-import { formatClipboardFilesPreview } from "@/lib/clipboardFiles";
+} from "@/builtin-plugins/clipboard";
 import { cn } from "@/lib/utils";
 import type {
   MainPanelClipboardSeed,

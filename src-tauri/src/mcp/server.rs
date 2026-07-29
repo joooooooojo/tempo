@@ -282,7 +282,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::get_todos(self.app.clone(), state) {
+        match crate::builtin_plugins::todo::commands::get_todos(self.app.clone(), state) {
             Ok(todos) => json_result(todos),
             Err(e) => Ok(tool_err(e)),
         }
@@ -296,7 +296,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::get_todo(state, args.id) {
+        match crate::builtin_plugins::todo::commands::get_todo(state, args.id) {
             Ok(todo) => json_result(todo),
             Err(e) => Ok(tool_err(e)),
         }
@@ -313,7 +313,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::add_todo(
+        match crate::builtin_plugins::todo::commands::add_todo(
             self.app.clone(),
             state,
             args.title,
@@ -343,7 +343,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::update_todo_details(
+        match crate::builtin_plugins::todo::commands::update_todo_details(
             self.app.clone(),
             state,
             args.id,
@@ -372,7 +372,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::set_todo_completed(
+        match crate::builtin_plugins::todo::commands::set_todo_completed(
             self.app.clone(),
             state,
             args.id,
@@ -394,7 +394,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::set_todo_pinned(self.app.clone(), state, args.id, args.pinned)
+        match crate::builtin_plugins::todo::commands::set_todo_pinned(self.app.clone(), state, args.id, args.pinned)
         {
             Ok(todo) => json_result(todo),
             Err(e) => Ok(tool_err(e)),
@@ -412,7 +412,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::delete_todo(self.app.clone(), state, args.id) {
+        match crate::builtin_plugins::todo::commands::delete_todo(self.app.clone(), state, args.id) {
             Ok(()) => json_result(json!({ "deleted": true, "id": args.id })),
             Err(e) => Ok(tool_err(e)),
         }
@@ -429,7 +429,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::add_todo_subtask(
+        match crate::builtin_plugins::todo::commands::add_todo_subtask(
             self.app.clone(),
             state,
             args.todo_id,
@@ -451,7 +451,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::todos::add_todo_note(
+        match crate::builtin_plugins::todo::commands::add_todo_note(
             self.app.clone(),
             state,
             args.todo_id,
@@ -475,7 +475,7 @@ impl TempoMcpServer {
             Err(e) => return Ok(e),
         };
         let snippets =
-            crate::commands::snippets::get_snippets(state, args.query, args.group_id, args.sort);
+            crate::builtin_plugins::snippets::commands::get_snippets(state, args.query, args.group_id, args.sort);
         json_result(snippets)
     }
 
@@ -487,7 +487,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        json_result(crate::commands::snippets::get_snippet_groups(state))
+        json_result(crate::builtin_plugins::snippets::commands::get_snippet_groups(state))
     }
 
     #[tool(
@@ -501,7 +501,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::snippets::create_snippet(
+        match crate::builtin_plugins::snippets::commands::create_snippet(
             self.app.clone(),
             state,
             args.title,
@@ -527,7 +527,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::snippets::update_snippet_command(
+        match crate::builtin_plugins::snippets::commands::update_snippet_command(
             self.app.clone(),
             state,
             args.id,
@@ -554,7 +554,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::snippets::delete_snippet_command(self.app.clone(), state, args.id) {
+        match crate::builtin_plugins::snippets::commands::delete_snippet_command(self.app.clone(), state, args.id) {
             Ok(()) => json_result(json!({ "deleted": true, "id": args.id })),
             Err(e) => Ok(tool_err(e)),
         }
@@ -571,7 +571,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::snippets::create_snippet_group(
+        match crate::builtin_plugins::snippets::commands::create_snippet_group(
             self.app.clone(),
             state,
             args.name,
@@ -593,7 +593,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        match crate::commands::snippets::copy_snippet_to_clipboard(self.app.clone(), state, args.id)
+        match crate::builtin_plugins::snippets::commands::copy_snippet_to_clipboard(self.app.clone(), state, args.id)
         {
             Ok(snippet) => json_result(snippet),
             Err(e) => Ok(tool_err(e)),
@@ -611,7 +611,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        let page = crate::commands::clipboard::get_clipboard_history(
+        let page = crate::builtin_plugins::clipboard::commands::get_clipboard_history(
             self.app.clone(),
             state,
             args.query,
@@ -648,7 +648,7 @@ impl TempoMcpServer {
             Ok(s) => s,
             Err(e) => return Ok(e),
         };
-        let report = crate::commands::reports::get_daily_report(state, args.date);
+        let report = crate::builtin_plugins::reports::commands::get_daily_report(state, args.date);
         json_result(report)
     }
 

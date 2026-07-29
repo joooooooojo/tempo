@@ -165,10 +165,12 @@ Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，
 ```
 ├── src/
 │   ├── apps/                 # 应用/插件注册、快捷操作、面板宿主
-│   ├── pages/                # 官方内置扩展 UI
+│   ├── builtin-plugins/      # 官方内置扩展（前端）
+│   ├── pages/                # 宿主壳（主面板 / 插件窗口）
 │   └── lib/
 ├── src-tauri/src/
-│   ├── commands/             # IPC 模块
+│   ├── builtin_plugins/      # 官方内置扩展（后端命令与支持模块）
+│   ├── commands/             # 宿主 IPC（launcher / window / plugins / tracker…）
 │   ├── plugins/              # 清单解析、Runtime、Bridge、信任与安装
 │   └── mcp/                  # MCP HTTP 服务
 ├── packages/plugin-sdk/

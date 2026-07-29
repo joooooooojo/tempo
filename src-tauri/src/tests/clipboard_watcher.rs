@@ -1,5 +1,5 @@
-use crate::clipboard_db::ClipboardEntry;
-use crate::clipboard_watcher::{clipboard_entry_content_summary, resolve_clipboard_source};
+use crate::builtin_plugins::clipboard::db::ClipboardEntry;
+use crate::builtin_plugins::clipboard::watcher::{clipboard_entry_content_summary, resolve_clipboard_source};
 use crate::platform::ForegroundApp;
 
 fn app(name: &str, process_name: &str) -> ForegroundApp {

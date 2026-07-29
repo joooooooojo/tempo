@@ -1,0 +1,84 @@
+use serde::{Deserialize, Serialize};
+
+
+pub(super) const MAX_BACKUPS: usize = 20;
+pub(super) const PROFILES_META: &str = "profiles.json";
+pub(super) const STATE_FILE: &str = "state.json";
+pub(super) const PUBLIC_FILE: &str = "public.hosts";
+
+pub(super) const MARK_PUBLIC_BEGIN: &str = "# >>> TEMPO:PUBLIC:BEGIN";
+pub(super) const MARK_PUBLIC_END: &str = "# <<< TEMPO:PUBLIC:END";
+pub(super) const MARK_PROFILE_BEGIN_PREFIX: &str = "# >>> TEMPO:PROFILE:BEGIN";
+pub(super) const MARK_PROFILE_END: &str = "# <<< TEMPO:PROFILE:END";
+
+/// Built-in custom environments seeded on first use.
+pub(super) const DEFAULT_PROFILES: &[(&str, &str)] = &[
+    ("env-dev", "开发环境"),
+    ("env-test", "测试环境"),
+    ("env-prod", "生产环境"),
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostsWorkspace {
+    pub path: String,
+    pub writable: bool,
+    pub authorized: bool,
+    /// Whether the on-disk system hosts contains Tempo section markers.
+    pub managed: bool,
+    pub public_content: String,
+    pub active_profile_id: Option<String>,
+    pub profiles: Vec<HostsProfile>,
+    /// Exact content currently on the system hosts file.
+    pub system_content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostsProfile {
+    pub id: String,
+    pub name: String,
+    pub updated_at: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostsBackup {
+    pub id: String,
+    pub source: String,
+    pub created_at: String,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(super) struct HostsState {
+    #[serde(default, alias = "activeProfileId")]
+    pub(super) active_profile_id: Option<String>,
+    /// True after we have bootstrapped public.hosts at least once.
+    #[serde(default)]
+    pub(super) initialized: bool,
+    /// True after the three default environments were seeded once (or skipped for existing installs).
+    #[serde(default)]
+    pub(super) defaults_seeded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ProfilesFile {
+    pub(super) profiles: Vec<ProfileMeta>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ProfileMeta {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) updated_at: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct ParsedSystemHosts {
+    pub(super) managed: bool,
+    pub(super) public: String,
+    pub(super) profile_id: Option<String>,
+    pub(super) profile_content: String,
+}

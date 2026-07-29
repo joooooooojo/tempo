@@ -1,3 +1,4 @@
+mod builtin_plugins;
 mod commands;
 mod db;
 mod notify;
@@ -7,10 +8,6 @@ mod plugins;
 mod app_icons;
 mod asset_protocol;
 mod auxiliary_windows;
-mod clipboard_db;
-mod clipboard_files;
-mod clipboard_images;
-mod clipboard_watcher;
 mod logging;
 mod launcher_search;
 #[cfg(target_os = "macos")]
@@ -18,7 +15,6 @@ mod macos_dock;
 #[cfg(target_os = "macos")]
 mod macos_overlay_panel;
 mod mcp;
-mod todo_images;
 mod tray_menu;
 
 #[cfg(test)]
@@ -79,13 +75,13 @@ pub fn run() {
             commands::markdown_image_protocol_response(ctx.app_handle(), request)
         })
         .register_uri_scheme_protocol(
-            clipboard_images::CLIPBOARD_IMAGE_PROTOCOL,
+            builtin_plugins::clipboard::CLIPBOARD_IMAGE_PROTOCOL,
             |ctx, request| {
-                clipboard_images::clipboard_image_protocol_response(ctx.app_handle(), request)
+                builtin_plugins::clipboard::clipboard_image_protocol_response(ctx.app_handle(), request)
             },
         )
-        .register_uri_scheme_protocol(todo_images::TODO_IMAGE_PROTOCOL, |ctx, request| {
-            todo_images::todo_image_protocol_response(ctx.app_handle(), request)
+        .register_uri_scheme_protocol(builtin_plugins::todo::TODO_IMAGE_PROTOCOL, |ctx, request| {
+            builtin_plugins::todo::todo_image_protocol_response(ctx.app_handle(), request)
         })
         .register_asynchronous_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |_ctx, request, responder| {
             // Extraction (especially macOS `sips`) must not run on the sync protocol
@@ -201,7 +197,7 @@ pub fn run() {
             })?;
             {
                 let settings = db::load_settings(&conn);
-                clipboard_db::purge_clipboard_history_by_retention(
+                builtin_plugins::clipboard::db::purge_clipboard_history_by_retention(
                     &conn,
                     &settings.clipboard_history_retention,
                 );
@@ -212,7 +208,7 @@ pub fn run() {
             };
             commands::launcher::restore_launcher_index_snapshot(&state);
             commands::start_tracker(app.handle().clone(), state.clone());
-            clipboard_watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
+            builtin_plugins::clipboard::watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
             app.manage(state.clone());
             app.manage(Mutex::new(ShortcutActionMap::default()));
             let mcp_controller = mcp::McpController::new();
@@ -316,15 +312,15 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::reports::get_daily_report,
-            commands::reports::get_weekly_report,
-            commands::settings::get_settings,
-            commands::settings::update_settings,
-            commands::settings::regenerate_mcp_token,
-            commands::settings::set_storage_dir,
-            commands::settings::reset_today,
-            commands::settings::reset_all,
-            commands::reports::get_known_apps,
+            builtin_plugins::reports::get_daily_report,
+            builtin_plugins::reports::get_weekly_report,
+            builtin_plugins::settings::get_settings,
+            builtin_plugins::settings::update_settings,
+            builtin_plugins::settings::regenerate_mcp_token,
+            builtin_plugins::settings::set_storage_dir,
+            builtin_plugins::settings::reset_today,
+            builtin_plugins::settings::reset_all,
+            builtin_plugins::reports::get_known_apps,
             commands::launcher::get_launcher_apps,
             commands::launcher::refresh_launcher_apps,
             commands::launcher::sync_main_panel_search_contributions,
@@ -343,50 +339,50 @@ pub fn run() {
             auxiliary_windows::prepare_native_file_dialog,
             auxiliary_windows::restore_after_native_file_dialog,
             auxiliary_windows::sync_main_panel_appearance,
-            commands::todos::get_todos,
-            commands::todos::get_todo,
-            commands::todos::add_todo,
-            commands::todos::update_todo_details,
-            commands::todos::set_todo_completed,
-            commands::todos::set_todo_pinned,
-            commands::todos::add_todo_subtask,
-            commands::todos::set_todo_subtask_completed,
-            commands::todos::update_todo_subtask,
-            commands::todos::delete_todo_subtask,
-            commands::todos::delete_todo_image,
-            commands::todos::add_todo_note,
-            commands::todos::delete_todo_note,
-            commands::todos::restore_todo_note,
-            commands::todos::delete_todo,
-            commands::todos::restore_todo,
-            commands::todos::export_todos_backup,
-            commands::todos::import_todos_backup,
+            builtin_plugins::todo::get_todos,
+            builtin_plugins::todo::get_todo,
+            builtin_plugins::todo::add_todo,
+            builtin_plugins::todo::update_todo_details,
+            builtin_plugins::todo::set_todo_completed,
+            builtin_plugins::todo::set_todo_pinned,
+            builtin_plugins::todo::add_todo_subtask,
+            builtin_plugins::todo::set_todo_subtask_completed,
+            builtin_plugins::todo::update_todo_subtask,
+            builtin_plugins::todo::delete_todo_subtask,
+            builtin_plugins::todo::delete_todo_image,
+            builtin_plugins::todo::add_todo_note,
+            builtin_plugins::todo::delete_todo_note,
+            builtin_plugins::todo::restore_todo_note,
+            builtin_plugins::todo::delete_todo,
+            builtin_plugins::todo::restore_todo,
+            builtin_plugins::todo::export_todos_backup,
+            builtin_plugins::todo::import_todos_backup,
             commands::markdown::save_markdown_image,
             commands::window::quit_app,
             commands::window::debug_log,
             notify::show_user_notification,
-            commands::port_manager::get_port_records,
-            commands::port_manager::terminate_port_process,
-            commands::clipboard::get_clipboard_history,
-            commands::clipboard::delete_clipboard_history_entry,
-            commands::clipboard::clear_clipboard_history_command,
-            commands::clipboard::pin_clipboard_history_entry,
-            commands::clipboard::copy_text_to_clipboard,
-            commands::clipboard::copy_clipboard_entry,
-            commands::clipboard::get_main_panel_clipboard_seed,
-            commands::clipboard::seed_main_panel_from_system_clipboard,
-            commands::clipboard::clear_main_panel_clipboard_seed,
-            commands::snippets::get_snippets,
-            commands::snippets::get_snippet_groups,
-            commands::snippets::create_snippet_group,
-            commands::snippets::update_snippet_group_command,
-            commands::snippets::delete_snippet_group_command,
-            commands::snippets::create_snippet,
-            commands::snippets::update_snippet_command,
-            commands::snippets::duplicate_snippet_command,
-            commands::snippets::pin_snippet_command,
-            commands::snippets::delete_snippet_command,
-            commands::snippets::copy_snippet_to_clipboard,
+            builtin_plugins::port_manager::get_port_records,
+            builtin_plugins::port_manager::terminate_port_process,
+            builtin_plugins::clipboard::get_clipboard_history,
+            builtin_plugins::clipboard::delete_clipboard_history_entry,
+            builtin_plugins::clipboard::clear_clipboard_history_command,
+            builtin_plugins::clipboard::pin_clipboard_history_entry,
+            builtin_plugins::clipboard::copy_text_to_clipboard,
+            builtin_plugins::clipboard::copy_clipboard_entry,
+            builtin_plugins::clipboard::get_main_panel_clipboard_seed,
+            builtin_plugins::clipboard::seed_main_panel_from_system_clipboard,
+            builtin_plugins::clipboard::clear_main_panel_clipboard_seed,
+            builtin_plugins::snippets::get_snippets,
+            builtin_plugins::snippets::get_snippet_groups,
+            builtin_plugins::snippets::create_snippet_group,
+            builtin_plugins::snippets::update_snippet_group_command,
+            builtin_plugins::snippets::delete_snippet_group_command,
+            builtin_plugins::snippets::create_snippet,
+            builtin_plugins::snippets::update_snippet_command,
+            builtin_plugins::snippets::duplicate_snippet_command,
+            builtin_plugins::snippets::pin_snippet_command,
+            builtin_plugins::snippets::delete_snippet_command,
+            builtin_plugins::snippets::copy_snippet_to_clipboard,
             commands::plugins::plugin_runtime_status,
             commands::plugins::plugin_runtime_install,
             commands::plugins::plugin_runtime_uninstall,
@@ -410,41 +406,41 @@ pub fn run() {
             commands::plugins::list_plugin_mcp_tools,
             commands::plugins::get_plugin_settings_bundle,
             commands::plugins::set_plugin_settings_values,
-            commands::plugin_dev::plugin_dev_list_projects,
-            commands::plugin_dev::plugin_dev_create_project,
-            commands::plugin_dev::plugin_dev_open_project,
-            commands::plugin_dev::plugin_dev_get_project,
-            commands::plugin_dev::plugin_dev_write_manifest,
-            commands::plugin_dev::plugin_dev_update_preferences,
-            commands::plugin_dev::plugin_dev_probe_ui_url,
-            commands::plugin_dev::plugin_dev_connect,
-            commands::plugin_dev::plugin_dev_reload_ui,
-            commands::plugin_dev::plugin_dev_disconnect,
-            commands::plugin_dev::plugin_dev_reconnect_runtime,
-            commands::plugin_dev::plugin_dev_simulate_hook,
-            commands::plugin_dev::plugin_dev_run_mcp_tool,
-            commands::plugin_dev::plugin_dev_forget_project,
-            commands::builtins::list_builtin_mcp_tools,
-            commands::builtins::get_builtin_mcp_status,
-            commands::builtins::set_builtin_mcp_exposed,
-            commands::builtins::set_builtin_mcp_tool_enabled,
-            commands::builtins::builtin_open_data_dir,
-            commands::hosts::get_hosts_workspace,
-            commands::hosts::authorize_hosts_write,
-            commands::hosts::save_hosts_public,
-            commands::hosts::save_hosts_profile,
-            commands::hosts::delete_hosts_profile,
-            commands::hosts::activate_hosts_profile,
-            commands::hosts::get_hosts_profile_content,
-            commands::hosts::apply_hosts,
-            commands::hosts::flush_dns,
-            commands::hosts::list_hosts_backups,
-            commands::hosts::restore_hosts_backup,
-            commands::translate::get_translate_config,
-            commands::translate::update_translate_config,
-            commands::translate::translate_text,
-            commands::translate::translate_compare,
-            commands::translate::test_translate_provider,
+            builtin_plugins::plugin_dev::plugin_dev_list_projects,
+            builtin_plugins::plugin_dev::plugin_dev_create_project,
+            builtin_plugins::plugin_dev::plugin_dev_open_project,
+            builtin_plugins::plugin_dev::plugin_dev_get_project,
+            builtin_plugins::plugin_dev::plugin_dev_write_manifest,
+            builtin_plugins::plugin_dev::plugin_dev_update_preferences,
+            builtin_plugins::plugin_dev::plugin_dev_probe_ui_url,
+            builtin_plugins::plugin_dev::plugin_dev_connect,
+            builtin_plugins::plugin_dev::plugin_dev_reload_ui,
+            builtin_plugins::plugin_dev::plugin_dev_disconnect,
+            builtin_plugins::plugin_dev::plugin_dev_reconnect_runtime,
+            builtin_plugins::plugin_dev::plugin_dev_simulate_hook,
+            builtin_plugins::plugin_dev::plugin_dev_run_mcp_tool,
+            builtin_plugins::plugin_dev::plugin_dev_forget_project,
+            builtin_plugins::settings::list_builtin_mcp_tools,
+            builtin_plugins::settings::get_builtin_mcp_status,
+            builtin_plugins::settings::set_builtin_mcp_exposed,
+            builtin_plugins::settings::set_builtin_mcp_tool_enabled,
+            builtin_plugins::settings::builtin_open_data_dir,
+            builtin_plugins::hosts::get_hosts_workspace,
+            builtin_plugins::hosts::authorize_hosts_write,
+            builtin_plugins::hosts::save_hosts_public,
+            builtin_plugins::hosts::save_hosts_profile,
+            builtin_plugins::hosts::delete_hosts_profile,
+            builtin_plugins::hosts::activate_hosts_profile,
+            builtin_plugins::hosts::get_hosts_profile_content,
+            builtin_plugins::hosts::apply_hosts,
+            builtin_plugins::hosts::flush_dns,
+            builtin_plugins::hosts::list_hosts_backups,
+            builtin_plugins::hosts::restore_hosts_backup,
+            builtin_plugins::translate::get_translate_config,
+            builtin_plugins::translate::update_translate_config,
+            builtin_plugins::translate::translate_text,
+            builtin_plugins::translate::translate_compare,
+            builtin_plugins::translate::test_translate_provider,
             auxiliary_windows::show_clipboard_picker,
             auxiliary_windows::show_snippet_picker,
             auxiliary_windows::hide_shelf_picker,

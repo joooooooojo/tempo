@@ -1,4 +1,4 @@
-import { ShelfPickerPage } from "@/pages/ShelfPickerPage";
+import { ShelfPickerPage } from "@/builtin-plugins/clipboard";
 import { MainPanelPage } from "@/pages/MainPanelPage";
 import { PluginWindowPage } from "@/pages/PluginWindowPage";
 
