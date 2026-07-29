@@ -48,6 +48,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
+import { mirrorPluginDevLogToConsole } from "@/lib/pluginDevLog";
 import {
   cloneManifest,
   parseEditableManifest,
@@ -67,6 +68,7 @@ import {
   type WorkspaceTab,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
 import { WorkspaceTabs } from "@/builtin-plugins/plugin-dev-assistant/components/WorkspaceTabs.tsx";
+import { WorkspaceKeepAlive } from "@/builtin-plugins/plugin-dev-assistant/components/WorkspaceKeepAlive";
 import type {
   PluginDevLogEvent,
   PluginDevPreferences,
@@ -96,15 +98,13 @@ export function PluginDevAssistantPage() {
   const [createName, setCreateName] = useState("Tempo Plugin");
   const [createKind, setCreateKind] = useState<PluginKind>("ui");
   const [logs, setLogs] = useState<PluginDevLogEvent[]>([]);
-  const [commandId, setCommandId] = useState<string | null>(null);
-  const [commandParams, setCommandParams] = useState("{}");
-  const [commandResult, setCommandResult] = useState<string | null>(null);
 
   const applyDetail = useCallback((next: PluginDevProjectDetail) => {
     setDetail(next);
     setActiveProjectId(next.project.id);
     setManifestRaw(next.manifest.raw);
     setPreferences(normalizePreferences(next.preferences));
+    setLogs([]);
     setProjects((current) => {
       const without = current.filter(
         (project) => project.id !== next.project.id,
@@ -151,13 +151,24 @@ export function PluginDevAssistantPage() {
     void loadProjects();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const manifest = useMemo(
+    () => parseEditableManifest(manifestRaw),
+    [manifestRaw],
+  );
+  const kind = resolvedManifestKind(manifest);
+
   useEffect(() => {
     const unlisten = listen<PluginDevLogEvent>("plugin-dev://log", (event) => {
       if (event.payload.pluginId !== detail?.project.pluginId) return;
-      setLogs((current) => [...current.slice(-199), event.payload]);
+      if (kind === "headless") {
+        setLogs((current) => [...current.slice(-199), event.payload]);
+      }
+      if (kind !== "headless") {
+        mirrorPluginDevLogToConsole(event.payload);
+      }
     });
     return () => void unlisten.then((dispose) => dispose());
-  }, [detail?.project.pluginId]);
+  }, [detail?.project.pluginId, kind]);
 
   useEffect(() => {
     const unlisten = listen<{
@@ -170,41 +181,26 @@ export function PluginDevAssistantPage() {
         !activeProjectId
       )
         return;
-      setLogs((current) => [
-        ...current.slice(-199),
-        {
-          pluginId: event.payload.pluginId,
-          source: "host",
-          message: event.payload.message
-            ? `${event.payload.state}: ${event.payload.message}`
-            : event.payload.state,
-          at: new Date().toISOString(),
-        },
-      ]);
+      const entry: PluginDevLogEvent = {
+        pluginId: event.payload.pluginId,
+        source: "host",
+        message: event.payload.message
+          ? `${event.payload.state}: ${event.payload.message}`
+          : event.payload.state,
+        at: new Date().toISOString(),
+      };
+      if (kind === "headless") {
+        setLogs((current) => [...current.slice(-199), entry]);
+      } else {
+        mirrorPluginDevLogToConsole(entry);
+      }
       if (event.payload.state === "ready" || event.payload.state === "failed") {
         void loadProject(activeProjectId);
       }
     });
     return () => void unlisten.then((dispose) => dispose());
-  }, [activeProjectId, detail?.project.pluginId, loadProject]);
-
-  const manifest = useMemo(
-    () => parseEditableManifest(manifestRaw),
-    [manifestRaw],
-  );
-  const kind = resolvedManifestKind(manifest);
-  const commands = manifest?.contributes.commands ?? [];
+  }, [activeProjectId, detail?.project.pluginId, kind, loadProject]);
   const firstApp = manifest?.contributes.apps[0];
-
-  useEffect(() => {
-    if (!commands.length) {
-      setCommandId(null);
-      return;
-    }
-    if (!commandId || !commands.some((command) => command.id === commandId)) {
-      setCommandId(commands[0].id);
-    }
-  }, [commandId, commands]);
 
   const chooseDirectory = async (title: string) => {
     const path = await openNativeFileDialog({
@@ -341,26 +337,6 @@ export function PluginDevAssistantPage() {
     }
   };
 
-  const runCommand = async () => {
-    if (!detail?.connection.connected || !detail.project.pluginId || !commandId)
-      return;
-    setBusy(true);
-    setCommandResult(null);
-    try {
-      const params = JSON.parse(commandParams) as unknown;
-      const result = await api.pluginCallCommand(
-        detail.project.pluginId,
-        commandId,
-        params,
-      );
-      setCommandResult(JSON.stringify(result, null, 2));
-    } catch (error) {
-      setCommandResult(JSON.stringify({ error: messageOf(error) }, null, 2));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const openConnectedApp = () => {
     if (!detail?.connection.connected || !detail.project.pluginId || !firstApp)
       return;
@@ -413,68 +389,65 @@ export function PluginDevAssistantPage() {
           </div>
         ) : detail ? (
           <div className="plugin-dev-workspace">
-            {workspaceTab === "manifest" ? (
-              <div className="plugin-dev-content">
+            <div className="plugin-dev-workspace-keepalive">
+              <WorkspaceKeepAlive active={workspaceTab === "manifest"}>
                 <ManifestWorkspace
                   detail={detail}
                   manifest={manifest}
                   raw={manifestRaw}
                   mode={manifestMode}
                   busy={busy}
+                  verifyContext={{
+                    projectId: detail.project.id,
+                    pluginId: detail.project.pluginId ?? null,
+                    connected: detail.connection.connected,
+                  }}
                   onRawChange={setManifestRaw}
                   onUpdate={updateManifest}
                   onSave={() => void saveManifest()}
                   onForget={() => void forgetProject()}
                 />
-              </div>
-            ) : null}
-            {workspaceTab === "runtime" && preferences ? (
-              <div className="plugin-dev-content">
-                <RuntimeWorkspace
-                  detail={detail}
-                  kind={kind}
-                  preferences={preferences}
-                  logs={logs}
-                  manifest={manifest}
-                  commands={commands}
-                  commandId={commandId}
-                  params={commandParams}
-                  result={commandResult}
-                  busy={busy}
-                  onPreferencesChange={setPreferences}
-                  onChooseDirectory={chooseDirectory}
-                  onSave={() => void savePreferences()}
-                  onConnect={() => void connect()}
-                  onDisconnect={() => void disconnect()}
-                  onReconnectRuntime={async () => {
-                    setBusy(true);
-                    try {
-                      await api.reconnectPluginDevRuntime(detail.project.id);
-                      applyDetail(
-                        await api.getPluginDevProject(detail.project.id),
+              </WorkspaceKeepAlive>
+              {preferences ? (
+                <WorkspaceKeepAlive active={workspaceTab === "runtime"}>
+                  <RuntimeWorkspace
+                    detail={detail}
+                    kind={kind}
+                    preferences={preferences}
+                    logs={logs}
+                    busy={busy}
+                    onPreferencesChange={setPreferences}
+                    onChooseDirectory={chooseDirectory}
+                    onSave={() => void savePreferences()}
+                    onConnect={() => void connect()}
+                    onDisconnect={() => void disconnect()}
+                    onReconnectRuntime={async () => {
+                      setBusy(true);
+                      try {
+                        await api.reconnectPluginDevRuntime(detail.project.id);
+                        applyDetail(
+                          await api.getPluginDevProject(detail.project.id),
+                        );
+                        toast.success("Runtime 已重新连接");
+                      } catch (error) {
+                        toast.error(messageOf(error));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    onProbe={async () => {
+                      const result = await api.probePluginDevUiUrl(
+                        preferences.uiServiceUrl ?? "",
                       );
-                      toast.success("Runtime 已重新连接");
-                    } catch (error) {
-                      toast.error(messageOf(error));
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                  onProbe={async () => {
-                    const result = await api.probePluginDevUiUrl(
-                      preferences.uiServiceUrl ?? "",
-                    );
-                    result.reachable
-                      ? toast.success(result.message)
-                      : toast.error(result.message);
-                  }}
-                  onOpenApp={openConnectedApp}
-                  onCommandChange={setCommandId}
-                  onParamsChange={setCommandParams}
-                  onRunCommand={() => void runCommand()}
-                />
-              </div>
-            ) : null}
+                      result.reachable
+                        ? toast.success(result.message)
+                        : toast.error(result.message);
+                    }}
+                    onOpenApp={openConnectedApp}
+                  />
+                </WorkspaceKeepAlive>
+              ) : null}
+            </div>
           </div>
         ) : (
           <Empty className="h-full rounded-none border-0">
@@ -488,11 +461,11 @@ export function PluginDevAssistantPage() {
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              <Button onClick={() => setCreateOpen(true)}>
+              <Button size="lg" onClick={() => setCreateOpen(true)}>
                 <Plus data-icon="inline-start" />
                 创建项目
               </Button>
-              <Button variant="outline" onClick={() => void openProject()}>
+              <Button size="lg" variant="outline" onClick={() => void openProject()}>
                 <FolderOpen data-icon="inline-start" />
                 打开项目
               </Button>
@@ -581,10 +554,11 @@ export function PluginDevAssistantPage() {
             </FieldGroup>
           </DialogContent>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+            <Button size="lg" variant="outline" onClick={() => setCreateOpen(false)}>
               取消
             </Button>
             <Button
+              size="lg"
               onClick={() => void createProject()}
               disabled={
                 busy ||

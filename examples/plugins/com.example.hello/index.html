@@ -76,7 +76,13 @@
     <div class="row">
       <input id="who" type="text" placeholder="你的名字" value="Tempo" />
       <button id="go">打招呼（Runtime）</button>
+      <button id="sca" type="button" title="测试 Date/Map/Set/TypedArray/循环引用 经 ipc.invoke 与 ipc.send">
+        测试 SCA
+      </button>
     </div>
+    <p style="font-size: 11px; opacity: 0.65">
+      「测试 SCA」会走 ipc.invoke / ipc.send / ipc.on，校验 Date · Map · Set · Uint8Array · 循环引用。
+    </p>
     <div id="log"></div>
     <script type="module" src="./index.js"></script>
   </body>

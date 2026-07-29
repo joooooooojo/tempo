@@ -1,7 +1,7 @@
 import { createAppApi, createExternalApi, createNotifyApi, createThemeApi } from "../host.js";
 import { createSettingsApi, type PluginSettingsApi } from "../settings.js";
 import { createStorageApi, type PluginStorageApi } from "../storage.js";
-import type { CommandHandler, Unsubscribe } from "../types.js";
+import type { CommandHandler, Unsubscribe, IpcEvent, IpcListener } from "../types.js";
 import type {
   AppApi,
   ExternalApi,
@@ -9,6 +9,13 @@ import type {
   NotifyApi,
   ThemeApi,
 } from "../host.js";
+
+export type { IpcEvent, IpcListener };
+
+export type IpcInvokeHandler = (
+  event: IpcEvent,
+  ...args: unknown[]
+) => unknown | Promise<unknown>;
 
 /** Raw ExtensionContext injected by Tempo's Runtime bootstrap. */
 export interface RawExtensionContext {
@@ -32,10 +39,14 @@ export interface RawExtensionContext {
       };
     };
   };
+  ipc?: {
+    handle(channel: string, handler: IpcInvokeHandler): void;
+    on(channel: string, listener: IpcListener): Unsubscribe;
+    send(channel: string, ...args: unknown[]): void;
+  };
   ui: { emit(event: string, payload?: unknown): void };
   paths: { data: string };
   runtime: { nodeVersion: string };
-  /** Present after SDK-aware bootstrap; falls back to no-op listeners. */
   on?(event: string, handler: (payload: unknown) => void): Unsubscribe;
 }
 
@@ -46,11 +57,18 @@ export interface RuntimeCommandsApi {
   ): void;
 }
 
+export interface RuntimeIpcApi {
+  handle(channel: string, handler: IpcInvokeHandler): void;
+  on(channel: string, listener: IpcListener): Unsubscribe;
+  send(channel: string, ...args: unknown[]): void;
+}
+
 export interface RuntimeTempo {
   readonly pluginId: string;
   readonly paths: { data: string };
   readonly runtime: { nodeVersion: string };
   readonly commands: RuntimeCommandsApi;
+  readonly ipc: RuntimeIpcApi;
   readonly storage: PluginStorageApi;
   readonly settings: PluginSettingsApi;
   readonly notify: NotifyApi;
@@ -58,17 +76,16 @@ export interface RuntimeTempo {
   readonly mainPanel: Pick<MainPanelApi, "hide">;
   readonly app: AppApi;
   readonly external: ExternalApi;
+  /** @deprecated Prefer `tempo.ipc.send` */
   readonly ui: { emit(event: string, payload?: unknown): void };
   /** Low-level host event subscription (e.g. `settings.changed`). */
   on(event: string, handler: (payload: unknown) => void): Unsubscribe;
-  /** Escape hatch to the raw bootstrap context. */
   readonly raw: RawExtensionContext;
 }
 
 export interface PluginDefinition {
   activate?(tempo: RuntimeTempo): void | Promise<void>;
   deactivate?(): void | Promise<void>;
-  /** Convenience: register commands before `activate`. */
   commands?: Record<string, CommandHandler>;
 }
 
@@ -134,6 +151,29 @@ export function wrapRuntimeContext(raw: RawExtensionContext): RuntimeTempo {
     }
   };
 
+  const ipcSend = (channel: string, ...args: unknown[]) => {
+    if (raw.ipc?.send) raw.ipc.send(channel, ...args);
+    else raw.ui.emit(channel, args.length <= 1 ? args[0] : args);
+  };
+
+  const ipc: RuntimeIpcApi = {
+    handle(channel, handler) {
+      if (raw.ipc?.handle) raw.ipc.handle(channel, handler);
+      else {
+        throw new Error(
+          "@tempo/plugin-sdk: Runtime ipc.handle requires Host API >= 1.5.0 (bootstrap ctx.ipc)",
+        );
+      }
+    },
+    on(channel, listener) {
+      if (raw.ipc?.on) return raw.ipc.on(channel, listener);
+      throw new Error(
+        "@tempo/plugin-sdk: Runtime ipc.on requires Host API >= 1.5.0 (bootstrap ctx.ipc)",
+      );
+    },
+    send: ipcSend,
+  };
+
   return {
     pluginId: raw.pluginId,
     paths: raw.paths,
@@ -144,6 +184,7 @@ export function wrapRuntimeContext(raw: RawExtensionContext): RuntimeTempo {
         raw.registerCommand(id, handler);
       },
     },
+    ipc,
     storage,
     settings: createSettingsApi(storage, on),
     notify: createNotifyApi(call),
@@ -151,7 +192,9 @@ export function wrapRuntimeContext(raw: RawExtensionContext): RuntimeTempo {
     mainPanel: { hide: () => raw.host.mainPanel.hide() },
     app: createAppApi(call),
     external: createExternalApi(call),
-    ui: raw.ui,
+    ui: {
+      emit: (event, payload) => ipcSend(event, payload),
+    },
     on,
   };
 }

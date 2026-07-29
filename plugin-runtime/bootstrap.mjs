@@ -1,20 +1,23 @@
 #!/usr/bin/env node
-// Tempo plugin Runtime bootstrap (design §6.3, §7).
+// Tempo plugin Runtime bootstrap.
 //
 // Started by the Rust Supervisor as: `node bootstrap.mjs`, cwd = the plugin's read-only
 // install directory. The first stdin line is a JSON handshake descriptor (never argv/env):
 //
 //   { socketPath, token, pluginId, mainPath, dataPath, nodeVersion }
 //
-// This process then connects to `socketPath` (Unix domain socket / Windows named pipe — the
-// `node:net` module handles both transparently via a path string), sends
-// `{ type: "handshake", token }`, and speaks the same `u32 BE length + UTF-8 JSON` framed
-// protocol as the host for the rest of its life. It loads exactly one plugin `main` bundle
-// and never proxies to another plugin.
+// Speaks `u32 BE length + UTF-8 JSON` framed protocol. Private UI↔Runtime uses Electron-style
+// ipc (invoke/handle, send/on); external Action/Hook/MCP use commands.register.
 
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import {
+  scaDecodeArgs,
+  scaEncode,
+  scaEncodeArgs,
+  isScaEnvelope,
+} from "./structured-clone.mjs";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -40,9 +43,8 @@ function send(value) {
   if (!socket || socket.destroyed) return;
   try {
     socket.write(encodeFrame(value));
-  } catch (error) {
-    // The host connection is gone; nothing useful to do but let the process exit naturally
-    // once the host kills the process tree.
+  } catch {
+    // Host connection gone.
   }
 }
 
@@ -82,9 +84,11 @@ function callHost(method, params) {
   });
 }
 
-// -- Runtime -> host: registered commands ------------------------------------------------
+// -- External commands + Electron-style IPC ---------------------------------------------
 
 const commands = new Map();
+const ipcHandlers = new Map();
+const ipcSendListeners = new Map();
 const activeInvocations = new Map();
 
 function registerCommand(id, handler) {
@@ -97,7 +101,47 @@ function registerCommand(id, handler) {
   commands.set(id, handler);
 }
 
-async function handleInvoke(message) {
+function ipcHandle(channel, handler) {
+  if (typeof channel !== "string" || !channel) {
+    throw new TypeError("ipc.handle requires a non-empty string channel");
+  }
+  if (typeof handler !== "function") {
+    throw new TypeError("ipc.handle requires a handler function");
+  }
+  ipcHandlers.set(channel, handler);
+}
+
+function ipcOn(channel, listener) {
+  if (typeof channel !== "string" || !channel) {
+    throw new TypeError("ipc.on requires a non-empty string channel");
+  }
+  if (typeof listener !== "function") {
+    throw new TypeError("ipc.on requires a listener function");
+  }
+  if (!ipcSendListeners.has(channel)) ipcSendListeners.set(channel, new Set());
+  ipcSendListeners.get(channel).add(listener);
+  return () => ipcSendListeners.get(channel)?.delete(listener);
+}
+
+function ipcSendToUi(channel, ...args) {
+  let payload;
+  try {
+    payload = scaEncodeArgs(args);
+  } catch (error) {
+    log(
+      "warn",
+      `ipc.send failed to serialize args for ${channel}: ${error && error.message ? error.message : error}`,
+    );
+    return;
+  }
+  send({
+    type: "event",
+    event: String(channel),
+    payload,
+  });
+}
+
+async function runCommandHandler(message) {
   const { id, commandId, params } = message;
   const handler = commands.get(commandId);
   if (!handler) {
@@ -114,7 +158,6 @@ async function handleInvoke(message) {
   activeInvocations.set(id, controller);
   const timer = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
   const graceTimer = setTimeout(() => {
-    // Best-effort notice only; the host Supervisor is the real enforcer of process death.
     log("warn", `command ${commandId} exceeded grace period after abort`);
   }, COMMAND_TIMEOUT_MS + COMMAND_GRACE_MS);
 
@@ -123,7 +166,12 @@ async function handleInvoke(message) {
     send({ type: "response", id, ok: true, result: result === undefined ? null : result });
   } catch (error) {
     if (controller.signal.aborted) {
-      send({ type: "response", id, ok: false, error: { code: "TIMEOUT", message: "command timed out" } });
+      send({
+        type: "response",
+        id,
+        ok: false,
+        error: { code: "TIMEOUT", message: "command timed out" },
+      });
     } else {
       send({
         type: "response",
@@ -140,6 +188,116 @@ async function handleInvoke(message) {
     clearTimeout(timer);
     clearTimeout(graceTimer);
     activeInvocations.delete(id);
+  }
+}
+
+async function handleIpcInvoke(message) {
+  const { id, channel, args } = message;
+  const handler = ipcHandlers.get(channel);
+  if (!handler) {
+    send({
+      type: "response",
+      id,
+      ok: false,
+      error: { code: "NOT_FOUND", message: `unknown ipc channel: ${channel}` },
+    });
+    return;
+  }
+
+  let decodedArgs;
+  try {
+    decodedArgs = isScaEnvelope(args) ? scaDecodeArgs(args) : Array.isArray(args) ? args : [args];
+  } catch (error) {
+    send({
+      type: "response",
+      id,
+      ok: false,
+      error: {
+        code: "INVALID_REQUEST",
+        message: error && error.message ? String(error.message) : "failed to deserialize ipc args",
+      },
+    });
+    return;
+  }
+
+  const controller = new AbortController();
+  activeInvocations.set(id, controller);
+  const timer = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
+  const graceTimer = setTimeout(() => {
+    log("warn", `ipc ${channel} exceeded grace period after abort`);
+  }, COMMAND_TIMEOUT_MS + COMMAND_GRACE_MS);
+
+  try {
+    const event = { sender: "ui" };
+    const result = await handler(event, ...decodedArgs);
+    let encodedResult;
+    try {
+      encodedResult = scaEncode(result === undefined ? null : result);
+    } catch (error) {
+      send({
+        type: "response",
+        id,
+        ok: false,
+        error: {
+          code: "COMMAND_FAILED",
+          message: error && error.message ? String(error.message) : "failed to serialize ipc result",
+        },
+      });
+      return;
+    }
+    send({ type: "response", id, ok: true, result: encodedResult });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      send({
+        type: "response",
+        id,
+        ok: false,
+        error: { code: "TIMEOUT", message: "ipc timed out" },
+      });
+    } else {
+      send({
+        type: "response",
+        id,
+        ok: false,
+        error: {
+          code: "COMMAND_FAILED",
+          message: error && error.message ? String(error.message) : String(error),
+          data: error && error.data !== undefined ? error.data : undefined,
+        },
+      });
+    }
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(graceTimer);
+    activeInvocations.delete(id);
+  }
+}
+
+function handleIpcSend(message) {
+  const channel = String(message.channel ?? "");
+  let args;
+  try {
+    args = isScaEnvelope(message.args)
+      ? scaDecodeArgs(message.args)
+      : Array.isArray(message.args)
+        ? message.args
+        : message.args === undefined
+          ? []
+          : [message.args];
+  } catch (error) {
+    log(
+      "warn",
+      `ipc-send failed to deserialize args for ${channel}: ${error && error.message ? error.message : error}`,
+    );
+    return;
+  }
+  const event = { sender: "ui" };
+  for (const listener of ipcSendListeners.get(channel) ?? []) {
+    try {
+      listener(event, ...args);
+    } catch (error) {
+      log("warn", `ipc.on handler failed for ${channel}: ${error}`);
+    }
   }
 }
 
@@ -174,7 +332,13 @@ function handleHostFrame(message) {
       return;
     }
     case "invoke":
-      void handleInvoke(message);
+      void runCommandHandler(message);
+      return;
+    case "ipc-invoke":
+      void handleIpcInvoke(message);
+      return;
+    case "ipc-send":
+      handleIpcSend(message);
       return;
     case "cancel":
       handleCancel(message);
@@ -211,7 +375,7 @@ function dispatchRuntimeEvent(event, payload) {
   }
 }
 
-// -- ExtensionContext (design §6.3, §7) --------------------------------------------------
+// -- ExtensionContext -------------------------------------------------------------------
 
 function buildHostProxy() {
   return {
@@ -248,14 +412,19 @@ function buildHostProxy() {
 }
 
 function buildContext(descriptor) {
+  const ipc = {
+    handle: ipcHandle,
+    on: ipcOn,
+    send: ipcSendToUi,
+  };
   return {
     pluginId: descriptor.pluginId,
     registerCommand,
     host: buildHostProxy(),
+    ipc,
     ui: {
-      emit(event, payload) {
-        send({ type: "event", event: String(event), payload: payload ?? null });
-      },
+      /** @deprecated Prefer ctx.ipc.send */
+      emit: (event, payload) => ipcSendToUi(event, payload),
     },
     paths: {
       data: descriptor.dataPath,
@@ -315,9 +484,6 @@ async function main() {
   socket.on("close", () => process.exit(0));
 
   send({ type: "handshake", token: descriptor.token });
-  // The host replies with a synthetic `{type:"response", id:"handshake"}` ack; we don't need
-  // to block on it before loading the plugin, but we do wait for the socket to flush it so a
-  // token mismatch (host destroys the connection) is observed before running plugin code.
   await new Promise((resolve) => setTimeout(resolve, 50));
   if (socket.destroyed) {
     console.error("handshake rejected by host");
@@ -348,7 +514,6 @@ async function main() {
       ok: false,
       error: { code: "ACTIVATION_FAILED", message: error && error.message ? String(error.message) : String(error) },
     });
-    // Give the host a moment to read the frame before we exit.
     setTimeout(() => process.exit(1), 100);
   }
 }

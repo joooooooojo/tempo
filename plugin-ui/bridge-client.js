@@ -2,17 +2,27 @@
  * Host-injected Tempo plugin UI bridge (`__tempo__/client.js`).
  * Auto-mounted on every plugin HTML page as `window.plugin` — no SDK required.
  *
- * Namespaces are separate so Runtime command ids never collide with host methods:
+ * Electron-style private UI ↔ Runtime IPC (Host API >= 1.5.0):
  *
- *   await window.plugin.invoke("hello", { who: "Tempo" })      // Runtime only
- *   await window.plugin.host("notify.show", { title: "Hi" })   // Host only
- *   window.plugin.on("greeted", (payload) => { … })
+ *   await window.plugin.ipc.invoke("greet", { who: "Tempo" })
+ *   window.plugin.ipc.send("ping", { n: 1 })
+ *   window.plugin.ipc.on("greeted", (event, payload) => { … })
+ *
+ * Host APIs only:
+ *   await window.plugin.host("notify.show", { title: "Hi" })
  *   const ctx = await window.plugin.ready()
+ *
+ * UI cannot invoke Runtime commands (Action / Hook / MCP only).
  */
 (() => {
   "use strict";
 
   if (window.plugin) return;
+
+  const sca = globalThis.__tempoSca;
+  if (!sca) {
+    console.error("[plugin] structured-clone helper missing; inject __tempo__/structured-clone.js first");
+  }
 
   const pending = new Map();
   const eventListeners = new Map();
@@ -55,23 +65,65 @@
     });
   }
 
-  /** Runtime command — always `runtime.<api>`, never a host method. */
-  function invoke(api, params) {
-    if (typeof api !== "string" || !api.trim()) {
-      return Promise.reject(new Error("plugin.invoke(api, params): api must be a non-empty string"));
+  function decodeResult(result) {
+    if (sca && sca.isScaEnvelope(result)) {
+      return sca.scaDecode(result);
     }
-    const name = api.trim();
-    if (name.startsWith("runtime.")) {
-      return call(name, params);
+    return result;
+  }
+
+  /** Electron-style ipcRenderer.invoke → Runtime ipc.handle (SCA args/result). */
+  function ipcInvoke(channel, ...args) {
+    if (typeof channel !== "string" || !channel.trim()) {
+      return Promise.reject(new Error("plugin.ipc.invoke(channel, ...args): channel must be a non-empty string"));
     }
-    if (name.startsWith("host.") || HOST_METHODS.has(name)) {
-      return Promise.reject(
-        new Error(
-          `plugin.invoke("${name}"): that name is a host API — use plugin.host("${name.replace(/^host\./, "")}", params)`
-        )
-      );
+    const name = channel.trim();
+    if (name.startsWith("ipc.") || name.startsWith("runtime.") || name.startsWith("host.") || HOST_METHODS.has(name)) {
+      return Promise.reject(new Error(`plugin.ipc.invoke("${name}"): invalid channel name`));
     }
-    return call(`runtime.${name}`, params);
+    let envelope;
+    try {
+      envelope = sca ? sca.scaEncodeArgs(args) : { $sca: "" };
+      if (!sca) throw new Error("structured clone codec unavailable");
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return call(`ipc.invoke.${name}`, envelope).then(decodeResult);
+  }
+
+  /** Electron-style ipcRenderer.send → Runtime ipc.on (SCA args, fire-and-forget). */
+  function ipcSend(channel, ...args) {
+    if (typeof channel !== "string" || !channel.trim()) {
+      throw new Error("plugin.ipc.send(channel, ...args): channel must be a non-empty string");
+    }
+    const name = channel.trim();
+    if (!sca) throw new Error("structured clone codec unavailable");
+    const envelope = sca.scaEncodeArgs(args);
+    void call(`ipc.send.${name}`, envelope);
+  }
+
+  /** Receive Runtime ipc.send (SCA) and unwrap into Electron-style listener(event, ...args). */
+  function ipcOn(channel, listener) {
+    if (typeof channel !== "string" || !channel.trim()) {
+      throw new Error("plugin.ipc.on(channel, listener): channel must be a non-empty string");
+    }
+    if (typeof listener !== "function") {
+      throw new Error("plugin.ipc.on(channel, listener): listener must be a function");
+    }
+    return on(channel.trim(), (payload) => {
+      const event = { sender: "runtime" };
+      try {
+        if (sca && sca.isScaEnvelope(payload)) {
+          listener(event, ...sca.scaDecodeArgs(payload));
+        } else if (payload && typeof payload === "object" && Array.isArray(payload.$ipcArgs)) {
+          listener(event, ...payload.$ipcArgs);
+        } else {
+          listener(event, payload);
+        }
+      } catch (error) {
+        console.error("[plugin] ipc.on failed to deserialize", error);
+      }
+    });
   }
 
   /** Host Bridge method — never routed to Runtime. */
@@ -80,9 +132,13 @@
       return Promise.reject(new Error("plugin.host(api, params): api must be a non-empty string"));
     }
     const name = api.trim().replace(/^host\./, "");
-    if (name.startsWith("runtime.")) {
+    if (
+      name.startsWith("runtime.") ||
+      name.startsWith("rpc.") ||
+      name.startsWith("ipc.")
+    ) {
       return Promise.reject(
-        new Error(`plugin.host("${api}"): Runtime commands go through plugin.invoke(...)`)
+        new Error(`plugin.host("${api}"): use plugin.ipc for UI↔Runtime; host methods only here`)
       );
     }
     if (!HOST_METHODS.has(name) && !name.startsWith("storage.plugin.")) {
@@ -123,6 +179,13 @@
           console.error("[plugin] event handler failed", error);
         }
       }
+      return;
+    }
+
+    if (data.type === "tempo-plugin-dev-log") {
+      const label = `[runtime:${data.source}]`;
+      if (data.source === "stderr") console.error(label, data.message);
+      else console.log(label, data.message);
     }
   });
 
@@ -144,7 +207,11 @@
   );
 
   window.plugin = {
-    invoke,
+    ipc: {
+      invoke: ipcInvoke,
+      send: ipcSend,
+      on: ipcOn,
+    },
     host,
     on,
     get context() {

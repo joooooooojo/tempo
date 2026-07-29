@@ -12,5 +12,22 @@ export * from "./types.js";
 export * from "./storage.js";
 export * from "./settings.js";
 export * from "./host.js";
-export * from "./runtime/index.js";
-export * from "./ui/index.js";
+export * from "./ipc/structured-clone.js";
+export {
+  definePlugin,
+  wrapRuntimeContext,
+  type RawExtensionContext,
+  type RuntimeCommandsApi,
+  type RuntimeIpcApi,
+  type RuntimeTempo,
+  type PluginDefinition,
+  type PluginModule,
+  type IpcInvokeHandler,
+} from "./runtime/index.js";
+export {
+  createPluginClient,
+  createPluginClientSync,
+  type TempoPluginUiBridge,
+  type UiIpcApi,
+  type UiTempo,
+} from "./ui/index.js";

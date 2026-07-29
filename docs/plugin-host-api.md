@@ -1,6 +1,6 @@
 # Tempo Plugin Host API
 
-本文描述 Host API `1.3.0` 已实现的调用方式。接口实现以 `src-tauri/src/plugins/bridge.rs`、`plugin-ui/bridge-client.js` 和 `plugin-runtime/bootstrap.mjs` 为准。
+本文描述 Host API `1.5.0` 已实现的调用方式。接口实现以 `src-tauri/src/plugins/bridge.rs`、`plugin-ui/bridge-client.js` 和 `plugin-runtime/bootstrap.mjs` 为准。
 
 - [插件开发指南](./plugin-development.md)
 - [Manifest Schema](./schemas/plugin-manifest.schema.json)
@@ -8,6 +8,14 @@
 - 每插件并发请求上限：32
 - 普通调用超时：30 秒
 - 窗口和面板交互调用超时：5 秒
+
+插件与宿主之间有三条互不混用的通道：
+
+| 通道 | 用途 | 注册 / 声明 |
+|---|---|---|
+| Host API | UI/Runtime 调用宿主能力（`notify`、`storage`、面板等） | 固定方法表 |
+| 对外 Command | Action / Hook / MCP | `contributes.commands` + `commands.register` |
+| 对内 IPC | 仅本插件 UI ↔ Runtime（Electron 风格） | **不进 manifest**；`ipc.handle` / `ipc.invoke` |
 
 ## 1. UI 入口
 
@@ -17,7 +25,11 @@ Tempo 在每个插件 UI 中注入：
 interface TempoPluginUiApi {
   ready(): Promise<PluginContext>;
   readonly context: PluginContext | null;
-  invoke<TResult = unknown>(command: string, params?: unknown): Promise<TResult>;
+  readonly ipc: {
+    invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+    send(channel: string, ...args: unknown[]): void;
+    on(channel: string, listener: (event: { sender: string }, ...args: unknown[]) => void): () => void;
+  };
   host<TResult = unknown>(method: string, params?: unknown): Promise<TResult>;
   on(event: string, handler: (payload: unknown) => void): () => void;
 }
@@ -62,11 +74,15 @@ declare global {
 通过 `actions[].app` 打开 UI 时，`PluginContext.params` 是 `ActionInvocation`；通过
 `actions[].command` 执行 Runtime 时，注册的 command handler 收到同样的结构。
 
-调用 Runtime command：
+UI ↔ Runtime 私有 IPC（Electron 风格；不进 `contributes.commands`）：
 
 ```js
-const result = await window.plugin.invoke("hello", { who: "Tempo" });
+const result = await window.plugin.ipc.invoke("greet", { who: "Tempo" });
+window.plugin.ipc.on("greeted", (_event, payload) => console.log(payload));
+window.plugin.ipc.send("ping", { n: 1 });
 ```
+
+`ipc.invoke` / `ipc.send` / `ipc.on` 的参数与返回值（及事件 args）均使用 HTML Structured Clone 语义（Date / Map / Set / TypedArray / 循环引用等；Function / Promise / DOM 会抛错）。UI **不能**调用对外 command。
 
 调用 Host API：
 
@@ -77,7 +93,7 @@ await window.plugin.host("notify.show", {
 });
 ```
 
-`invoke` 只接受当前插件的 Runtime command，不能调用 Host API。`host` 只接受下表中的 Host 方法，不能调用 Runtime command。
+`host` 只接受下表中的 Host 方法。经 UI bridge 调用 `runtime.*` 会被拒绝。
 
 ## 2. Runtime 入口
 
@@ -122,6 +138,28 @@ interface RuntimeHostApi {
 ```
 
 UI 专用的 `mainPanel.back`、`mainPanel.setSize`、`window.*`、`session.push` 和主题订阅不会暴露到 Runtime 便捷接口。
+
+Bootstrap 还提供与 Host 方法表分离的 Runtime 注册面：
+
+```js
+export async function activate(ctx) {
+  // 对内：仅 UI 通过 window.plugin.ipc / tempo.ipc 调用
+  ctx.ipc.handle("greet", async (event, params) => {
+    return { who: params?.who ?? "world" };
+  });
+  ctx.ipc.on("ping", (event, payload) => {
+    console.log("ui ping", payload);
+  });
+
+  // 对外：应与 contributes.commands 对齐；Action / Hook / MCP
+  ctx.registerCommand("hello", async (params, signal) => {
+    return { who: params?.who ?? "world" };
+  });
+
+  ctx.ipc.send("ready", {});
+  // ctx.ui.emit 为 ipc.send 的薄别名（deprecated）
+}
+```
 
 ## 3. 方法总览
 
@@ -338,21 +376,23 @@ await window.plugin.host("session.push", {
 
 Session 不用于敏感数据或大型文档。长期数据使用 `storage.plugin.*` 或 Runtime 的 `ctx.paths.data`。
 
-## 10. Runtime 事件
+## 10. Runtime ↔ UI 事件（`ipc.send`）
 
 Runtime 可向当前打开的同插件 UI 广播事件：
 
 ```js
 // main.mjs
+ctx.ipc.send("sync.completed", { count: 3 });
+// deprecated alias:
 ctx.ui.emit("sync.completed", { count: 3 });
 
 // index.js
-const off = window.plugin.on("sync.completed", ({ count }) => {
-  console.log(`synced ${count}`);
+window.plugin.ipc.on("sync.completed", (_event, payload) => {
+  console.log(`synced ${payload.count}`);
 });
 ```
 
-事件不持久化、不重放。页面未打开时发送的事件会丢失。
+事件 args 与 `ipc.invoke` 一样使用 Structured Clone 序列化。页面未打开时发送的事件会丢失。宿主推送（如 `settings.changed`）仍走 `plugin.on`（JSON）；SDK 优先用 `settings.subscribe` / `theme.subscribe`。
 
 ## 11. 错误处理
 
@@ -379,7 +419,7 @@ interface RpcError {
 
 ```js
 try {
-  await window.plugin.invoke("save", { value });
+  await window.plugin.ipc.invoke("save", { value });
 } catch (error) {
   if (error.code === "RESOURCE_EXHAUSTED") {
     // 提示用户清理插件数据。

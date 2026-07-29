@@ -1,5 +1,11 @@
 import type { PluginUiContext, Unsubscribe } from "../types.js";
-import type { TempoPluginUiBridge } from "./index.js";
+import {
+  isScaEnvelope,
+  scaDecode,
+  scaDecodeArgs,
+  scaEncodeArgs,
+} from "../ipc/structured-clone.js";
+import type { IpcListener, TempoPluginUiBridge, UiIpcApi } from "./index.js";
 
 type PendingCall = {
   resolve: (value: unknown) => void;
@@ -15,7 +21,8 @@ type HostMessage =
       result?: unknown;
       error?: { message?: string };
     }
-  | { type: "tempo-plugin-event"; event: string; payload: unknown };
+  | { type: "tempo-plugin-event"; event: string; payload: unknown }
+  | { type: "tempo-plugin-dev-log"; source: string; message: string };
 
 const HOST_METHODS = new Set([
   "mainPanel.hide",
@@ -82,8 +89,64 @@ export function installPluginDevBridge(): TempoPluginUiBridge | undefined {
     if (data.type === "tempo-plugin-event") {
       for (const handler of listeners.get(data.event) ?? [])
         handler(data.payload);
+      return;
+    }
+    if (data.type === "tempo-plugin-dev-log") {
+      const label = `[runtime:${data.source}]`;
+      if (data.source === "stderr") console.error(label, data.message);
+      else console.log(label, data.message);
     }
   });
+
+  const decodeResult = (result: unknown) =>
+    isScaEnvelope(result) ? scaDecode(result) : result;
+
+  const onRaw = (event: string, handler: (payload: unknown) => void): Unsubscribe => {
+    if (!listeners.has(event)) listeners.set(event, new Set());
+    listeners.get(event)?.add(handler);
+    return () => listeners.get(event)?.delete(handler);
+  };
+
+  const ipc: UiIpcApi = {
+    invoke(channel, ...args) {
+      const name = String(channel ?? "").trim();
+      if (!name) return Promise.reject(new Error("ipc channel is required"));
+      try {
+        const envelope = scaEncodeArgs(args);
+        return call(`ipc.invoke.${name}`, envelope).then(decodeResult);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    },
+    send(channel, ...args) {
+      const name = String(channel ?? "").trim();
+      if (!name) throw new Error("ipc channel is required");
+      const envelope = scaEncodeArgs(args);
+      void call(`ipc.send.${name}`, envelope);
+    },
+    on(channel, listener: IpcListener) {
+      const name = String(channel ?? "").trim();
+      if (!name) throw new Error("ipc channel is required");
+      return onRaw(name, (payload) => {
+        const event = { sender: "runtime" };
+        try {
+          if (isScaEnvelope(payload)) {
+            listener(event, ...scaDecodeArgs(payload));
+          } else if (
+            payload &&
+            typeof payload === "object" &&
+            Array.isArray((payload as { $ipcArgs?: unknown }).$ipcArgs)
+          ) {
+            listener(event, ...((payload as { $ipcArgs: unknown[] }).$ipcArgs));
+          } else {
+            listener(event, payload);
+          }
+        } catch (error) {
+          console.error("[plugin-dev] ipc.on failed to deserialize", error);
+        }
+      });
+    },
+  };
 
   const bridge: TempoPluginUiBridge = {
     ready: () =>
@@ -93,17 +156,7 @@ export function installPluginDevBridge(): TempoPluginUiBridge | undefined {
     get context() {
       return context;
     },
-    invoke<TResult = unknown>(
-      command: string,
-      params?: unknown,
-    ): Promise<TResult> {
-      const name = command.trim();
-      if (!name) return Promise.reject(new Error("command is required"));
-      return call(
-        name.startsWith("runtime.") ? name : `runtime.${name}`,
-        params,
-      ) as Promise<TResult>;
-    },
+    ipc,
     host<TResult = unknown>(
       method: string,
       params?: unknown,
@@ -114,11 +167,7 @@ export function installPluginDevBridge(): TempoPluginUiBridge | undefined {
       }
       return call(name, params) as Promise<TResult>;
     },
-    on(event, handler): Unsubscribe {
-      if (!listeners.has(event)) listeners.set(event, new Set());
-      listeners.get(event)?.add(handler);
-      return () => listeners.get(event)?.delete(handler);
-    },
+    on: onRaw,
   };
   window.plugin = bridge;
   window.parent.postMessage({ type: "tempo-plugin-ready" }, "*");

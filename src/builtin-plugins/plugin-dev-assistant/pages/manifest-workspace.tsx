@@ -12,31 +12,10 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  resolvedManifestKind,
-  type EditablePluginManifest,
-  type PluginKind,
-} from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
+import type { EditablePluginManifest } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
 import {
   ActionEditor,
   AppEditor,
@@ -46,10 +25,10 @@ import {
   McpToolEditor,
   SettingEditor,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/editors";
-import {
-  KIND_ITEMS,
-  type ManifestMode,
-} from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
+import type { ManifestMode } from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
+import { ManifestRootEditor } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest-root-editor";
+import { PluginDevSection } from "@/builtin-plugins/plugin-dev-assistant/components/PluginDevSection";
+import type { ContributionVerifyContext } from "@/builtin-plugins/plugin-dev-assistant/components/ContributionVerifyDialog";
 import type { PluginDevProjectDetail } from "@/types";
 
 export function ManifestWorkspace({
@@ -58,6 +37,7 @@ export function ManifestWorkspace({
   raw,
   mode,
   busy,
+  verifyContext,
   onRawChange,
   onUpdate,
   onSave,
@@ -68,6 +48,7 @@ export function ManifestWorkspace({
   raw: string;
   mode: ManifestMode;
   busy: boolean;
+  verifyContext: ContributionVerifyContext;
   onRawChange: (raw: string) => void;
   onUpdate: (mutate: (next: EditablePluginManifest) => void) => void;
   onSave: () => void;
@@ -79,167 +60,20 @@ export function ManifestWorkspace({
       <ScrollArea className="plugin-dev-panel__scroll" aria-label="Manifest">
         <div className="plugin-dev-panel__body">
           {mode === "json" ? (
-            <Textarea
-              className="plugin-dev-json-editor"
-              value={raw}
-              onChange={(event) => onRawChange(event.target.value)}
-              spellCheck={false}
-              aria-label="manifest.json"
-            />
+            <div className="plugin-dev-form">
+              <PluginDevSection title="manifest.json">
+                <Textarea
+                  className="plugin-dev-json-editor"
+                  value={raw}
+                  onChange={(event) => onRawChange(event.target.value)}
+                  spellCheck={false}
+                  aria-label="manifest.json"
+                />
+              </PluginDevSection>
+            </div>
           ) : manifest ? (
             <div className="plugin-dev-form">
-        <FieldSet>
-          <FieldLegend>基础信息</FieldLegend>
-          <FieldGroup>
-            <div className="grid grid-cols-3 gap-4">
-              <Field>
-                <FieldLabel htmlFor="manifest-id">插件 ID</FieldLabel>
-                <Input
-                  id="manifest-id"
-                  value={manifest.id ?? ""}
-                  onChange={(event) =>
-                    onUpdate((next) => {
-                      next.id = event.target.value;
-                    })
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="manifest-name">名称</FieldLabel>
-                <Input
-                  id="manifest-name"
-                  value={manifest.name ?? ""}
-                  onChange={(event) =>
-                    onUpdate((next) => {
-                      next.name = event.target.value;
-                    })
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel>插件类型</FieldLabel>
-                <Select
-                    items={KIND_ITEMS}
-                    value={resolvedManifestKind(manifest)}
-                    onValueChange={(value) =>
-                        value &&
-                        onUpdate((next) => {
-                          const nextKind = value as PluginKind;
-                          next.kind = nextKind;
-                          if (nextKind === "ui") {
-                            delete next.main;
-                            if (next.contributes.apps.length === 0) {
-                              next.contributes.apps.push({
-                                id: "main",
-                                name: next.name || "Main",
-                                entry: "index.html",
-                                keywords: [],
-                                windowMode: "normal",
-                              });
-                            }
-                          } else if (nextKind === "headless") {
-                            next.main = next.main || "main.mjs";
-                            next.contributes.apps = [];
-                          } else {
-                            next.main = next.main || "main.mjs";
-                            if (next.contributes.apps.length === 0) {
-                              next.contributes.apps.push({
-                                id: "main",
-                                name: next.name || "Main",
-                                entry: "index.html",
-                                keywords: [],
-                                windowMode: "normal",
-                              });
-                            }
-                          }
-                        })
-                    }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {KIND_ITEMS.map((item) => (
-                          <SelectItem key={item.value} value={item.value}>
-                            {item.label}
-                          </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <Field>
-                <FieldLabel htmlFor="manifest-version">版本</FieldLabel>
-                <Input
-                  id="manifest-version"
-                  value={manifest.version ?? ""}
-                  onChange={(event) =>
-                    onUpdate((next) => {
-                      next.version = event.target.value;
-                    })
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="manifest-tempo">Tempo</FieldLabel>
-                <Input
-                  id="manifest-tempo"
-                  value={manifest.engines.tempo ?? ""}
-                  onChange={(event) =>
-                    onUpdate((next) => {
-                      next.engines.tempo = event.target.value;
-                    })
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="manifest-api">Plugin API</FieldLabel>
-                <Input
-                  id="manifest-api"
-                  value={manifest.engines.pluginApi ?? ""}
-                  onChange={(event) =>
-                    onUpdate((next) => {
-                      next.engines.pluginApi = event.target.value;
-                    })
-                  }
-                />
-              </Field>
-            </div>
-            <Field>
-              <FieldLabel htmlFor="manifest-description">描述</FieldLabel>
-              <Textarea
-                id="manifest-description"
-                rows={3}
-                value={manifest.description ?? ""}
-                onChange={(event) =>
-                  onUpdate((next) => {
-                    next.description = event.target.value;
-                  })
-                }
-              />
-            </Field>
-            {manifest.main !== undefined ? (
-              <Field>
-                <FieldLabel htmlFor="manifest-main">
-                  Runtime 入口
-                </FieldLabel>
-                <Input
-                  id="manifest-main"
-                  value={manifest.main}
-                  onChange={(event) =>
-                    onUpdate((next) => {
-                      next.main = event.target.value;
-                    })
-                  }
-                />
-              </Field>
-            ) : null}
-          </FieldGroup>
-        </FieldSet>
-        <Separator />
+        <ManifestRootEditor manifest={manifest} onUpdate={onUpdate} />
         <ContributionSection
           title="Apps"
           description="平台中可打开的插件页面"
@@ -259,19 +93,18 @@ export function ManifestWorkspace({
         >
           {manifest.contributes.apps.map((app, index) => (
             <AppEditor
-              key={`${app.id}-${index}`}
+              key={index}
               app={app}
               index={index}
               onUpdate={onUpdate}
             />
           ))}
         </ContributionSection>
-        <Separator />
         <ContributionSection
           title="Commands"
-          description="由 Runtime 注册并通过真实 RPC 调用"
-          columns={["Command ID", "标题"]}
-          columnsClassName="grid-cols-[1fr_1.4fr_auto]"
+          description="对外能力：仅 Action / Hook / MCP；对内 UI 通信请用 tempo.ipc，勿占用此表"
+          columns={["Command ID", "标题", "可见性"]}
+          columnsClassName="grid-cols-[1fr_1.4fr_0.9fr_auto]"
           onAdd={() =>
             onUpdate((next) =>
               next.contributes.commands.push({
@@ -284,19 +117,19 @@ export function ManifestWorkspace({
         >
           {manifest.contributes.commands.map((command, index) => (
             <CommandEditor
-              key={`${command.id}-${index}`}
+              key={index}
               command={command}
               index={index}
+              verifyContext={verifyContext}
               onUpdate={onUpdate}
             />
           ))}
         </ContributionSection>
-        <Separator />
         <ContributionSection
           title="Actions"
           description="将主面板输入路由到 App 或 Command"
           columns={["Action ID", "名称", "类型", "目标"]}
-          columnsClassName="grid-cols-[1fr_1.2fr_0.8fr_1.2fr_auto]"
+          columnsClassName="grid-cols-[minmax(0,1fr)_10rem_8.5rem_minmax(0,1fr)_auto]"
           onAdd={() =>
             onUpdate((next) =>
               next.contributes.actions.push({
@@ -310,7 +143,7 @@ export function ManifestWorkspace({
         >
           {manifest.contributes.actions.map((action, index) => (
             <ActionEditor
-              key={`${action.id}-${index}`}
+              key={index}
               action={action}
               index={index}
               manifest={manifest}
@@ -318,7 +151,6 @@ export function ManifestWorkspace({
             />
           ))}
         </ContributionSection>
-        <Separator />
         <ContributionSection
           title="Hooks"
           description="将平台事件路由到 Runtime Command"
@@ -335,15 +167,15 @@ export function ManifestWorkspace({
         >
           {manifest.contributes.hooks.map((hook, index) => (
             <HookEditor
-              key={`${hook.event}-${index}`}
+              key={index}
               hook={hook}
               index={index}
               commands={manifest.contributes.commands}
+              verifyContext={verifyContext}
               onUpdate={onUpdate}
             />
           ))}
         </ContributionSection>
-        <Separator />
         <ContributionSection
           title="MCP Tools"
           description="在助手内测试，开发态默认不向外暴露"
@@ -362,15 +194,15 @@ export function ManifestWorkspace({
         >
           {manifest.contributes.mcpTools.map((tool, index) => (
             <McpToolEditor
-              key={`${tool.name}-${index}`}
+              key={index}
               tool={tool}
               index={index}
               commands={manifest.contributes.commands}
+              verifyContext={verifyContext}
               onUpdate={onUpdate}
             />
           ))}
         </ContributionSection>
-        <Separator />
         <ContributionSection
           title="Settings"
           description="由 Tempo 使用内置控件渲染的插件设置"
@@ -389,7 +221,7 @@ export function ManifestWorkspace({
         >
           {manifest.contributes.settings.map((setting, index) => (
             <SettingEditor
-              key={`${setting.id}-${index}`}
+              key={index}
               setting={setting}
               index={index}
               onUpdate={onUpdate}

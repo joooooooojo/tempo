@@ -1,6 +1,6 @@
 {
   "name": "@tempo/plugin-sdk",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Official Tempo plugin SDK for UI and Runtime entries.",
   "license": "MIT",
   "type": "module",

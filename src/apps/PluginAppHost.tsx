@@ -8,29 +8,31 @@ import type { PluginRpcError, PluginUiPrepareResult } from "@/types";
 /**
  * Message protocol between the plugin UI document (loaded from `tempo-plugin://`) and this
  * host component, carried over `postMessage` — the plugin never gets a Tauri IPC channel of
- * its own (design §5.3 "UI Bridge is a host data boundary"). Every `host.*`/`runtime.*` call
+ * its own (design §5.3 "UI Bridge is a host data boundary"). Every `host.*` / `ipc.*` call
  * is relayed through the `plugin_bridge_invoke` command, which re-checks `viewInstanceId`
  * ownership on the Rust side; nothing here is trusted at face value from the iframe.
  *
- * The host injects `__tempo__/client.js` into every plugin HTML page and mounts `window.plugin`
- * so plugin authors do not need an SDK. Runtime and host are separate entry points (no name clash):
+ * The host injects `__tempo__/structured-clone.js` + `__tempo__/client.js` and mounts
+ * `window.plugin` so plugin authors do not need an SDK:
  *
- *   await window.plugin.invoke("hello", { who: "Tempo" })       // Runtime
- *   await window.plugin.host("notify.show", { title: "Hi" })    // Host
+ *   await window.plugin.ipc.invoke("greet", { who: "Tempo" })  // private UI ↔ Runtime
+ *   await window.plugin.host("notify.show", { title: "Hi" })   // Host only
  *
  * Host -> plugin:
  *   { type: "tempo-plugin-context", apiVersion, theme, params, session }
  *   { type: "tempo-plugin-rpc-response", id, ok, result | error }
  *   { type: "tempo-plugin-event", subscriptionId?, event, payload }
+ *   { type: "tempo-plugin-dev-log", source, message }  (dev Runtime stdout/stderr)
  *
- * Plugin -> host (via window.plugin.invoke / plugin.host → postMessage):
+ * Plugin -> host (via window.plugin.ipc / plugin.host → postMessage):
  *   { type: "tempo-plugin-rpc", id, method, params }
  */
 type HostToPluginMessage =
   | { type: "tempo-plugin-context"; apiVersion: string; theme: string; params: unknown; session: unknown }
   | { type: "tempo-plugin-rpc-response"; id: string; ok: true; result: unknown }
   | { type: "tempo-plugin-rpc-response"; id: string; ok: false; error: PluginRpcError }
-  | { type: "tempo-plugin-event"; subscriptionId?: string; event: string; payload: unknown };
+  | { type: "tempo-plugin-event"; subscriptionId?: string; event: string; payload: unknown }
+  | { type: "tempo-plugin-dev-log"; source: string; message: string };
 
 interface PluginToHostRpcMessage {
   type: "tempo-plugin-rpc";
@@ -250,6 +252,26 @@ export function PluginAppHost({
       void unlistenReload.then((unlisten) => unlisten());
     };
   }, [prepared, pluginId]);
+
+  useEffect(() => {
+    if (!prepared || !pluginId) return;
+    const unlistenLog = listen<{
+      pluginId: string;
+      source: string;
+      message: string;
+    }>("plugin-dev://log", (event) => {
+      if (event.payload.pluginId !== pluginId) return;
+      postToPlugin({
+        type: "tempo-plugin-dev-log",
+        source: event.payload.source,
+        message: event.payload.message,
+      });
+    });
+
+    return () => {
+      void unlistenLog.then((unlisten) => unlisten());
+    };
+  }, [prepared, pluginId, postToPlugin]);
 
   const handleIframeLoad = useCallback(() => {
     if (!prepared) return;

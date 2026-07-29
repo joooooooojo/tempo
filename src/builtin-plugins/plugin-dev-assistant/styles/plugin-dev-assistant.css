@@ -153,6 +153,17 @@
   flex-direction: column;
 }
 
+.plugin-dev-workspace-keepalive {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.plugin-dev-content--inactive {
+  display: none;
+}
+
 .plugin-dev-workspace-tabs {
   flex: none;
   border-radius: var(--radius-lg, 0.5rem);
@@ -314,13 +325,130 @@
 
 .plugin-dev-form {
   display: flex;
-  width: min(100%, 860px);
+  width: min(100%, 1080px);
   flex-direction: column;
-  gap: 22px;
+  gap: 16px;
 }
 
-.plugin-dev-section-heading h2,
-.plugin-dev-test-grid section > h2 {
+.plugin-dev-card {
+  width: 100%;
+}
+
+.plugin-dev-form-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.plugin-dev-form-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.plugin-dev-form-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.plugin-dev-form-grid--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.plugin-dev-field-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.plugin-dev-string-list,
+.plugin-dev-option-list,
+.plugin-dev-schema-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plugin-dev-string-list__row,
+.plugin-dev-option-list__row,
+.plugin-dev-schema-list__row {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugin-dev-string-list__row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.plugin-dev-option-list__row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.plugin-dev-schema-list__row {
+  grid-template-areas:
+    "name type required remove"
+    "description description description description";
+  grid-template-columns: minmax(0, 1fr) 8rem auto auto;
+}
+
+.plugin-dev-schema-list__name {
+  grid-area: name;
+}
+
+.plugin-dev-schema-list__type {
+  grid-area: type;
+}
+
+.plugin-dev-schema-list__description {
+  grid-area: description;
+}
+
+.plugin-dev-schema-list__required {
+  grid-area: required;
+}
+
+.plugin-dev-schema-list__remove {
+  grid-area: remove;
+}
+
+.plugin-dev-schema-list__required {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.plugin-dev-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 24px;
+}
+
+.plugin-dev-toggle-grid [data-slot="field"] {
+  min-width: 0;
+  align-items: center;
+}
+
+.plugin-dev-schema-editor {
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.plugin-dev-mcp-tabs {
+  min-height: 300px;
+}
+
+.plugin-dev-mcp-tabs__content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 10px;
+}
+
+.plugin-dev-section-heading h2 {
   margin: 0;
   font-size: 13px;
   font-weight: 650;
@@ -332,17 +460,9 @@
   font-size: 11.5px;
 }
 
-.plugin-dev-contribution {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
 .plugin-dev-contribution-empty {
   margin: 0;
-  padding: 18px 12px;
-  border: 1px dashed hsl(var(--border) / 0.8);
-  border-radius: 10px;
+  padding: 20px 16px;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
   text-align: center;
@@ -353,9 +473,7 @@
   flex-direction: column;
   gap: 4px;
   overflow: hidden;
-  border: 1px solid hsl(var(--border) / 0.7);
-  border-radius: 10px;
-  background: hsl(var(--muted) / 0.12);
+  background: hsl(var(--muted) / 0.08);
 }
 
 .plugin-dev-contribution-header {
@@ -368,10 +486,6 @@
   font-size: 11px;
   font-weight: 620;
   letter-spacing: 0.01em;
-}
-
-.plugin-dev-contribution-header > span:last-child {
-  width: 32px;
 }
 
 .plugin-dev-contribution-body {
@@ -393,6 +507,13 @@
   background: hsl(var(--background) / 0.72);
 }
 
+.plugin-dev-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .plugin-dev-connection-track {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) 44px minmax(140px, 1fr) 44px minmax(
@@ -400,7 +521,7 @@
       1fr
     );
   align-items: center;
-  width: min(100%, 760px);
+  width: 100%;
 }
 
 .plugin-dev-connection-node {
@@ -438,17 +559,9 @@
   background: hsl(var(--border));
 }
 
-.plugin-dev-log {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 4px;
-}
-
-.plugin-dev-log pre,
-.plugin-dev-command-result {
-  min-height: 180px;
-  max-height: 320px;
+.plugin-dev-output {
+  min-height: 220px;
+  max-height: 360px;
   margin: 0;
   overflow: auto;
   padding: 12px;
@@ -462,10 +575,9 @@
   white-space: pre-wrap;
 }
 
-.plugin-dev-verify {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+.plugin-dev-output--dialog {
+  min-height: 180px;
+  max-height: min(280px, 36vh);
 }
 
 .plugin-dev-verify__hint {
@@ -474,21 +586,47 @@
   font-size: 12px;
 }
 
-.plugin-dev-test-grid {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.8fr) minmax(320px, 1.2fr);
-  gap: 24px;
-  width: min(100%, 900px);
-}
-
-.plugin-dev-test-grid section {
+.plugin-dev-test-form {
   display: flex;
-  min-width: 0;
+  width: 100%;
+  max-width: 560px;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 @media (max-width: 760px) {
+  .plugin-dev-form-grid--2,
+  .plugin-dev-form-grid--3,
+  .plugin-dev-form-grid--4,
+  .plugin-dev-toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plugin-dev-option-list__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .plugin-dev-schema-list__row {
+    grid-template-areas:
+      "name remove"
+      "type required"
+      "description description";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .plugin-dev-mcp-tabs {
+    min-height: 360px;
+  }
+
+  .plugin-dev-option-list__row > :nth-child(2) {
+    grid-column: 1;
+  }
+
+  .plugin-dev-option-list__row > :last-child {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
   .plugin-dev-connection-track {
     grid-template-columns: 1fr;
     gap: 7px;
@@ -498,9 +636,5 @@
     width: 1px;
     height: 14px;
     margin-left: 24px;
-  }
-
-  .plugin-dev-test-grid {
-    grid-template-columns: 1fr;
   }
 }

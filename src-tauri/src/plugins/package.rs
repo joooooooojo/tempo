@@ -238,9 +238,7 @@ fn verify_entry_files(root: &Path, manifest: &PluginManifest) -> Result<(), Stri
     if let Some(main) = &manifest.main {
         let path = root.join(main);
         if !path.is_file() {
-            return Err(format!(
-                "main entry missing at package root: {main} (expected beside manifest.json)"
-            ));
+            return Err(format!("main entry missing in package: {main}"));
         }
     } else if !manifest.has_ui() {
         return Err(format!(

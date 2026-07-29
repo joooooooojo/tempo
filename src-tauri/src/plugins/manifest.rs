@@ -47,12 +47,10 @@ pub struct PluginManifest {
     pub license: Option<String>,
     #[serde(default)]
     pub categories: Vec<String>,
-    /// Root-level Runtime entry: must be `main.mjs` or `main.js` when present.
+    /// Relative path to the Node Runtime entry within the plugin package (`.js` / `.mjs`).
     /// Required for headless (no `apps[]`) plugins; optional for pure UI packages.
     #[serde(default)]
     pub main: Option<String>,
-    #[serde(default)]
-    pub executables: Vec<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
     #[serde(default)]
@@ -730,29 +728,19 @@ impl PluginManifest {
 
         match &self.main {
             Some(main) => {
-                validate_relative_path(main, "main")?;
-                if !is_allowed_main_entry(main) {
-                    return Err(format!(
-                        "main must be `{}` or `{}` at the package root (got {main})",
-                        MAIN_ENTRY_FILES[0], MAIN_ENTRY_FILES[1]
-                    ));
-                }
+                validate_main_entry(main)?;
             }
             None => {
                 if !has_ui {
-                    return Err(format!(
-                        "headless plugins require main (`{}` or `{}`) at the package root",
-                        MAIN_ENTRY_FILES[0], MAIN_ENTRY_FILES[1]
-                    ));
+                    return Err(
+                        "headless plugins require main (a .js or .mjs entry within the package)"
+                            .into(),
+                    );
                 }
                 if !self.activation_events.is_empty() {
                     return Err("activationEvents require a main entry".into());
                 }
             }
-        }
-
-        for exe in &self.executables {
-            validate_relative_path(exe, "executables")?;
         }
 
         Ok(())
@@ -827,8 +815,13 @@ fn canonicalize_json(value: Value) -> Value {
     }
 }
 
-pub fn is_allowed_main_entry(path: &str) -> bool {
-    MAIN_ENTRY_FILES.contains(&path)
+pub fn validate_main_entry(path: &str) -> Result<(), String> {
+    validate_relative_path(path, "main")?;
+    let lower = path.trim().to_ascii_lowercase();
+    if !(lower.ends_with(".js") || lower.ends_with(".mjs")) {
+        return Err(format!("main must be a .js or .mjs file (got {path})"));
+    }
+    Ok(())
 }
 
 pub fn validate_relative_path(path: &str, field: &str) -> Result<(), String> {
@@ -892,7 +885,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_nested_ui_or_main_entry() {
+    fn rejects_nested_ui_entry() {
         let nested_ui = r#"{
           "manifestVersion": 1,
           "id": "com.example.hello",
@@ -904,7 +897,10 @@ mod tests {
           }
         }"#;
         assert!(PluginManifest::parse_str(nested_ui).is_err());
+    }
 
+    #[test]
+    fn accepts_nested_main_entry() {
         let nested_main = r#"{
           "manifestVersion": 1,
           "id": "com.example.hello",
@@ -916,7 +912,23 @@ mod tests {
             "apps": [{ "id": "main", "name": "Hello", "entry": "index.html" }]
           }
         }"#;
-        assert!(PluginManifest::parse_str(nested_main).is_err());
+        assert!(PluginManifest::parse_str(nested_main).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_js_main_entry() {
+        let invalid = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.hello",
+          "name": "Hello",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "main": "dist/main/index.ts",
+          "contributes": {
+            "commands": [{ "id": "hello", "title": "Hello" }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(invalid).is_err());
     }
 
     #[test]

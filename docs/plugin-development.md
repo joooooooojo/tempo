@@ -2,7 +2,7 @@
 
 本文面向希望为 Tempo 开发第三方插件的开发者，描述当前已经实现的插件格式、运行方式和调试流程。
 
-- Host API 版本：`1.3.0`
+- Host API 版本：`1.5.0`
 - Manifest 版本：`1`
 - [Host API 参考](./plugin-host-api.md)
 - [manifest.json JSON Schema](./schemas/plugin-manifest.schema.json)
@@ -16,7 +16,7 @@ Tempo 插件可以只包含 UI、只包含 Runtime，也可以同时包含两者
 |---|---|---|
 | UI | `manifest.json`、`index.html` | 在主面板或独立窗口中显示页面，调用受限 Host API |
 | Headless | `manifest.json`、`main.mjs` 或 `main.js` | 在独立 Node 进程中注册命令、处理 Hook 或 MCP 调用 |
-| Hybrid | UI 文件和 Runtime 文件 | UI 调用 Runtime 命令，适合完整工具 |
+| Hybrid | UI 文件和 Runtime 文件 | UI 经对内 `tempo.ipc` 调用 Runtime；对外能力用 Command |
 
 含 `main` 的插件需要用户在“设置 → 插件”中安装 Tempo 插件 Node Runtime。纯 UI 插件不需要 Node Runtime。
 
@@ -52,7 +52,7 @@ com.example.my-plugin/
   "version": "1.0.0",
   "engines": {
     "tempo": ">=1.2.0",
-    "pluginApi": "^1.3.0"
+    "pluginApi": "^1.5.0"
   },
   "kind": "ui",
   "contributes": {
@@ -119,9 +119,9 @@ Tempo 会在插件页面加载前注入 `window.plugin`。推荐使用 [`@tempo/
 })();
 ```
 
-## 3. 添加 Runtime 命令
+## 3. 添加 Runtime 命令与对内 IPC
 
-先在 manifest 中声明命令和调用入口：
+对外能力先在 manifest 中声明，供 Action / Hook / MCP 使用：
 
 ```json
 {
@@ -147,29 +147,41 @@ Tempo 会在插件页面加载前注入 `window.plugin`。推荐使用 [`@tempo/
 }
 ```
 
-然后在 `main.mjs` 的 `activate` 中注册同名命令：
+然后在 `main.mjs` 的 `activate` 中注册同名对外 command，并用 `ipc.handle` 提供仅 UI 使用的方法（**不必**写进 manifest）：
 
 ```js
-export async function activate(ctx) {
-  ctx.registerCommand("format-note", async (params, signal) => {
-    if (signal.aborted) throw new Error("cancelled");
-    const text = params?.input?.kind === "text" ? params.input.text : "";
-    await ctx.host.notify.show({ title: "Notes", body: "格式化完成" });
-    return { text: text.trim() };
-  });
+import { definePlugin } from "@tempo/plugin-sdk";
+
+function formatNote(params) {
+  const text = params?.input?.kind === "text" ? params.input.text : params?.text ?? "";
+  return { text: String(text).trim() };
 }
 
-export async function deactivate() {
-  // 可选：关闭 socket、文件句柄等资源。
-}
+export default definePlugin({
+  async activate(tempo) {
+    tempo.ipc.handle("format-note", async (_event, params) => {
+      const result = formatNote(params);
+      await tempo.notify.show({ title: "Notes", body: "格式化完成" });
+      tempo.ipc.send("note.formatted", result);
+      return result;
+    });
+
+    tempo.commands.register("format-note", async (params, signal) => {
+      if (signal.aborted) throw new Error("cancelled");
+      return formatNote(params);
+    });
+  },
+});
 ```
 
-UI 调用 Runtime：
+UI 调用对内 IPC（Electron 风格）：
 
 ```js
-const result = await window.plugin.invoke("format-note", { text: "  hello  " });
-console.log(result.text);
+const result = await tempo.ipc.invoke("format-note", { text: "  hello  " });
+tempo.ipc.on("note.formatted", (_event, payload) => console.log(payload));
 ```
+
+UI **不能**调用对外 command（`window.plugin.invoke` / `runtime.*` 已移除）。对外能力必须声明 command，对内用 `ipc`。
 
 Runtime 运行在独立 Node 进程中，拥有与本机 Node 相近的文件、网络和进程能力。它不是安全沙箱，因此用户启用含 `main` 的插件前必须明确授予信任。
 
@@ -268,8 +280,8 @@ UI 可以将 `imageUrl` 用于 `<img>`、Canvas 或图片编辑器。文字输�
 
 一个 command 可以被多个 action、hook 或 MCP tool 复用。仅声明 command 不会自动产生主面板入口。
 `query` 保留用于兼容旧 action 和标题模板，实际输入以 `input` 为准。`visibility` 默认是
-`private`；Host API `1.3.0` 的 UI、Action、Hook 和 MCP 调用都只路由到当前插件。
-`public` 为后续跨插件调用保留，当前没有向第三方插件开放跨插件 command 入口。
+`private`；Host API `1.5.0` 的 UI、Action、Hook 和 MCP 调用都只路由到当前插件。
+`public` 为后续跨插件调用保留，当前没有向第三方插件开放跨插件 command 入口。对内 UI↔Runtime 使用 `tempo.ipc`，不占用 `contributes.commands`。
 
 ### hooks
 
@@ -482,7 +494,8 @@ interface PluginContext {
 - `action/hook/mcpTool.command` 是否引用了同包 `commands[].id`。
 - `main` 和 `index.html` 是否位于包根目录。
 - manifest 声明的 command 是否在 `activate` 中注册。
-- `engines.pluginApi` 是否包含当前 Host API `1.3.0`。
+- `engines.pluginApi` 是否包含当前 Host API `1.5.0`。
+- UI 对内调用是否走 `tempo.ipc.invoke`（而非把私有方法塞进 `contributes.commands`）。
 - 插件是否已信任、启用，含 `main` 时 Node Runtime 是否已安装。
 
 ## 8. 发布前检查

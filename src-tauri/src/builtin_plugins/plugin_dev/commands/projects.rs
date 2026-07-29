@@ -4,13 +4,13 @@ use std::sync::Arc;
 use chrono::Local;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::db::AppState;
 use crate::plugins::host::{generate_id, PluginHost};
 use crate::plugins::manifest::PluginManifest;
 
-use super::connect::plugin_dev_disconnect;
+use super::connect::{plugin_dev_disconnect, CONTRIBUTIONS_CHANGED_EVENT};
 use super::paths::*;
 use super::types::*;
 
@@ -268,7 +268,7 @@ pub(super) fn minimal_manifest(args: &CreateProjectArgs) -> Result<String, Strin
         "id": args.plugin_id.trim(),
         "name": args.name.trim(),
         "version": "0.1.0",
-        "engines": { "tempo": ">=2", "pluginApi": "^1.3.0" },
+        "engines": { "tempo": ">=2", "pluginApi": "^1.5.0" },
         "kind": args.kind,
         "contributes": contributes
     });
@@ -426,6 +426,7 @@ pub fn plugin_dev_get_project(
 
 #[tauri::command]
 pub fn plugin_dev_write_manifest(
+    app: AppHandle,
     state: State<'_, AppState>,
     host: State<'_, Arc<PluginHost>>,
     args: WriteManifestArgs,
@@ -446,6 +447,14 @@ pub fn plugin_dev_write_manifest(
         let _ = std::fs::remove_file(&temp);
         return Err(error);
     }
+
+    // Keep a live development connection's contributions in sync with the saved file.
+    if let Ok(manifest) = PluginManifest::parse_str(&args.raw) {
+        if host.update_development_manifest_for_project(&args.project_id, manifest) {
+            let _ = app.emit(CONTRIBUTIONS_CHANGED_EVENT, ());
+        }
+    }
+
     detail(&conn, &host, &args.project_id)
 }
 
@@ -564,7 +573,7 @@ mod tests {
               "id": "com.example.paths",
               "name": "Paths",
               "version": "0.1.0",
-              "engines": { "tempo": ">=2", "pluginApi": "^1.3.0" },
+              "engines": { "tempo": ">=2", "pluginApi": "^1.5.0" },
               "kind": "headless",
               "main": "main.mjs",
               "contributes": { "commands": [] }

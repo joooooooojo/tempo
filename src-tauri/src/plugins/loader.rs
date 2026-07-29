@@ -18,6 +18,30 @@ use super::paths::packages_dir;
 use super::trust::list_installed_plugins;
 use super::ui::{plugin_entry_url, plugin_hash_of, plugin_icon_url};
 
+/// Prefer the contribution's own icon; otherwise reuse the first app/action icon in the package
+/// (same fallback as the settings plugin list) so launcher tiles stay visible after connect.
+fn contribution_icon_url(
+    plugin_hash: &str,
+    icon: Option<&String>,
+    manifest: &PluginManifest,
+) -> Option<String> {
+    icon.or_else(|| {
+        manifest
+            .contributes
+            .apps
+            .iter()
+            .find_map(|app| app.icon.as_ref())
+    })
+    .or_else(|| {
+        manifest
+            .contributes
+            .actions
+            .iter()
+            .find_map(|action| action.icon.as_ref())
+    })
+    .map(|path| plugin_icon_url(plugin_hash, path))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginAppContribution {
@@ -79,10 +103,11 @@ pub fn development_contribution_bundle(
             local_id: contrib.id.clone(),
             name: contrib.name.clone(),
             keywords: contrib.keywords.clone(),
-            icon_url: contrib
-                .icon
-                .as_ref()
-                .map(|icon| plugin_icon_url(&plugin_hash, icon)),
+            icon_url: contribution_icon_url(
+                &plugin_hash,
+                contrib.icon.as_ref(),
+                manifest,
+            ),
             entry_path: match &development.ui_source {
                 Some(DevelopmentUiSource::Url(url)) => url.clone(),
                 _ => plugin_entry_url(&plugin_hash, &contrib.entry),
@@ -100,10 +125,11 @@ pub fn development_contribution_bundle(
             local_id: contrib.id.clone(),
             name: contrib.name.clone(),
             keywords: contrib.keywords.clone(),
-            icon_url: contrib
-                .icon
-                .as_ref()
-                .map(|icon| plugin_icon_url(&plugin_hash, icon)),
+            icon_url: contribution_icon_url(
+                &plugin_hash,
+                contrib.icon.as_ref(),
+                manifest,
+            ),
             app_id: contrib
                 .app
                 .as_ref()
@@ -194,10 +220,11 @@ pub fn scan_enabled_contributions(
                 local_id: contrib.id.clone(),
                 name: contrib.name.clone(),
                 keywords: contrib.keywords.clone(),
-                icon_url: contrib
-                    .icon
-                    .as_ref()
-                    .map(|icon| plugin_icon_url(&plugin_hash, icon)),
+                icon_url: contribution_icon_url(
+                    &plugin_hash,
+                    contrib.icon.as_ref(),
+                    &manifest,
+                ),
                 entry_path: plugin_entry_url(&plugin_hash, &contrib.entry),
                 window_mode: contrib.window_mode.clone(),
                 rect: contrib.rect.clone(),
@@ -213,10 +240,11 @@ pub fn scan_enabled_contributions(
                 local_id: contrib.id.clone(),
                 name: contrib.name.clone(),
                 keywords: contrib.keywords.clone(),
-                icon_url: contrib
-                    .icon
-                    .as_ref()
-                    .map(|icon| plugin_icon_url(&plugin_hash, icon)),
+                icon_url: contribution_icon_url(
+                    &plugin_hash,
+                    contrib.icon.as_ref(),
+                    &manifest,
+                ),
                 app_id: contrib
                     .app
                     .as_ref()

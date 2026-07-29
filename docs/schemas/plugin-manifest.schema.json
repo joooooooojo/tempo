@@ -61,17 +61,8 @@
       "default": []
     },
     "main": {
-      "type": "string",
-      "enum": ["main.mjs", "main.js"],
-      "description": "Optional package-root Node Runtime entry. Required when no apps are contributed."
-    },
-    "executables": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/relativePath"
-      },
-      "uniqueItems": true,
-      "default": []
+      "$ref": "#/$defs/relativePath",
+      "description": "Optional Node Runtime entry within the plugin package (.js or .mjs). Required when no apps are contributed."
     },
     "capabilities": {
       "type": "array",

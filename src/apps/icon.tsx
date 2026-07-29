@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { AppIconDescriptor } from "@/apps/types";
 import { cn } from "@/lib/utils";
 
@@ -10,13 +11,19 @@ export function AppIconView({
   className?: string;
   imgClassName?: string;
 }) {
+  const [failed, setFailed] = useState(false);
+  const src = icon.type === "file" ? icon.url : undefined;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
   if (icon.type === "lucide") {
     const Icon = icon.icon;
     return <Icon className={className} aria-hidden="true" />;
   }
 
-  const src = icon.url;
-  if (!src) {
+  if (!src || failed) {
     return <span className={cn("inline-block size-4 rounded bg-muted", className)} aria-hidden="true" />;
   }
 
@@ -26,6 +33,7 @@ export function AppIconView({
       alt=""
       className={cn("size-4 object-contain", imgClassName, className)}
       draggable={false}
+      onError={() => setFailed(true)}
     />
   );
 }

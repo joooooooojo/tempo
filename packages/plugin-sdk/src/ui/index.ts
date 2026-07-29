@@ -17,20 +17,30 @@ import {
 import { toHostRpcError } from "../errors.js";
 import { createSettingsApi, type PluginSettingsApi } from "../settings.js";
 import { createStorageApi, type PluginStorageApi } from "../storage.js";
-import type { PluginUiContext, Unsubscribe } from "../types.js";
+import type { PluginUiContext, Unsubscribe, IpcEvent, IpcListener } from "../types.js";
+
+export type { IpcEvent, IpcListener };
+
+export interface UiIpcApi {
+  invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+  send(channel: string, ...args: unknown[]): void;
+  on(channel: string, listener: IpcListener): Unsubscribe;
+}
 
 export interface TempoPluginUiBridge {
   ready(): Promise<PluginUiContext>;
   readonly context: PluginUiContext | null;
-  invoke<TResult = unknown>(command: string, params?: unknown): Promise<TResult>;
+  readonly ipc: UiIpcApi;
   host<TResult = unknown>(method: string, params?: unknown): Promise<TResult>;
+  /** Host pushes (settings/theme) and raw Runtime events. Prefer `ipc.on` for Runtime. */
   on(event: string, handler: (payload: unknown) => void): Unsubscribe;
 }
 
 export interface UiTempo {
   ready(): Promise<PluginUiContext>;
   readonly context: PluginUiContext | null;
-  invoke<TResult = unknown>(command: string, params?: unknown): Promise<TResult>;
+  readonly ipc: UiIpcApi;
+  /** Host pushes; prefer `settings.subscribe` / `theme.subscribe` / `ipc.on`. */
   on(event: string, handler: (payload: unknown) => void): Unsubscribe;
   readonly storage: PluginStorageApi;
   readonly settings: PluginSettingsApi;
@@ -41,7 +51,6 @@ export interface UiTempo {
   readonly app: AppApi;
   readonly external: ExternalApi;
   readonly session: SessionApi;
-  /** Escape hatch for rare host methods. */
   host<TResult = unknown>(method: string, params?: unknown): Promise<TResult>;
   readonly raw: TempoPluginUiBridge;
 }
@@ -62,14 +71,21 @@ function getBridge(explicit?: TempoPluginUiBridge): TempoPluginUiBridge {
   return bridge;
 }
 
+function wrapIpc(raw: TempoPluginUiBridge): UiIpcApi {
+  return {
+    invoke: (channel, ...args) => raw.ipc.invoke(channel, ...args),
+    send: (channel, ...args) => raw.ipc.send(channel, ...args),
+    on: (channel, listener) => raw.ipc.on(channel, listener),
+  };
+}
+
 /**
  * Create the ergonomic UI client around the host-injected `window.plugin` bridge.
  *
  * ```ts
  * import { createPluginClient } from "@tempo/plugin-sdk";
  * const tempo = await createPluginClient();
- * const loud = await tempo.settings.get("loud", false);
- * await tempo.notify.show({ title: "Hi", body: "Ready" });
+ * const result = await tempo.ipc.invoke("greet", { who: "Tempo" });
  * ```
  */
 export async function createPluginClient(
@@ -105,12 +121,12 @@ export async function createPluginClient(
     },
   });
 
-  const client: UiTempo = {
+  return {
     ready: () => raw.ready(),
     get context() {
       return raw.context;
     },
-    invoke: (command, params) => raw.invoke(command, params),
+    ipc: wrapIpc(raw),
     on: (event, handler) => raw.on(event, handler),
     storage,
     settings: createSettingsApi(storage, (event, handler) => raw.on(event, handler)),
@@ -125,8 +141,6 @@ export async function createPluginClient(
       call(method, params) as Promise<TResult>,
     raw,
   };
-
-  return client;
 }
 
 /** Synchronous wrapper when you already awaited `window.plugin.ready()`. */
@@ -161,7 +175,7 @@ export function createPluginClientSync(bridge?: TempoPluginUiBridge): UiTempo {
     get context() {
       return raw.context;
     },
-    invoke: (command, params) => raw.invoke(command, params),
+    ipc: wrapIpc(raw),
     on: (event, handler) => raw.on(event, handler),
     storage,
     settings: createSettingsApi(storage, (event, handler) => raw.on(event, handler)),

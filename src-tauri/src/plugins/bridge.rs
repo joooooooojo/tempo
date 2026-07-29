@@ -34,7 +34,7 @@ pub mod codes {
 }
 
 /// Host Bridge API semver (design §7.2) — independent from the Tempo product version.
-pub const HOST_API_VERSION: &str = "1.3.0";
+pub const HOST_API_VERSION: &str = "1.5.0";
 
 /// Max single-message size (design §7): 1 MiB.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -146,8 +146,7 @@ fn payload_too_large(params: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// Shared Runtime command boundary for UI, actions, hooks, and MCP. Callers choose the
-/// command only after applying their own routing/authorization policy.
+/// Shared Runtime command boundary for actions, hooks, and MCP (not UI).
 pub async fn invoke_runtime_command(
     host: &Arc<PluginHost>,
     plugin_id: &str,
@@ -173,8 +172,58 @@ pub async fn invoke_runtime_command(
         .await
 }
 
-/// Single entry point for both UI (`plugin_bridge_invoke`) and Runtime-relayed `host.*` calls.
-/// Routes `runtime.*` to the Supervisor (same plugin only); everything else to the Host API.
+/// Private UI ↔ Runtime `ipc.invoke` (`ipc.invoke.*`). SCA envelope is opaque to the host.
+pub async fn invoke_runtime_ipc(
+    host: &Arc<PluginHost>,
+    plugin_id: &str,
+    channel: &str,
+    args: Value,
+    timeout: Duration,
+) -> Result<Value, RpcError> {
+    if channel.trim().is_empty() {
+        return Err(RpcError::new(
+            codes::INVALID_REQUEST,
+            "missing ipc channel",
+        ));
+    }
+    if payload_too_large(&args) {
+        return Err(RpcError::new(
+            codes::PAYLOAD_TOO_LARGE,
+            "request payload exceeds 1 MiB",
+        ));
+    }
+    let _guard = acquire_slot(host, plugin_id)?;
+    host.supervisor
+        .call_ipc(plugin_id, channel, args, timeout)
+        .await
+}
+
+/// Private UI ↔ Runtime fire-and-forget `ipc.send` (`ipc.send.*`). SCA envelope is opaque.
+pub async fn send_runtime_ipc(
+    host: &Arc<PluginHost>,
+    plugin_id: &str,
+    channel: &str,
+    args: Value,
+) -> Result<Value, RpcError> {
+    if channel.trim().is_empty() {
+        return Err(RpcError::new(
+            codes::INVALID_REQUEST,
+            "missing ipc channel",
+        ));
+    }
+    if payload_too_large(&args) {
+        return Err(RpcError::new(
+            codes::PAYLOAD_TOO_LARGE,
+            "request payload exceeds 1 MiB",
+        ));
+    }
+    let _guard = acquire_slot(host, plugin_id)?;
+    host.supervisor.send_ipc(plugin_id, channel, args).await?;
+    Ok(Value::Null)
+}
+
+/// UI / Runtime Host entry. UI may use `ipc.invoke.*` / `ipc.send.*` and Host methods —
+/// never `runtime.*` (commands are for Action/Hook/MCP via [`invoke_runtime_command`]).
 pub async fn dispatch(
     app: &AppHandle,
     host: &Arc<PluginHost>,
@@ -186,9 +235,24 @@ pub async fn dispatch(
         return Err(RpcError::new(codes::INVALID_REQUEST, "method is required"));
     }
 
-    if let Some(command_id) = method.strip_prefix("runtime.") {
-        return invoke_runtime_command(host, &ctx.plugin_id, command_id, params, DEFAULT_TIMEOUT)
-            .await;
+    if method.starts_with("runtime.") {
+        return Err(RpcError::new(
+            codes::FORBIDDEN,
+            "UI cannot invoke runtime commands; use ipc.invoke for private UI↔Runtime IPC",
+        ));
+    }
+
+    if let Some(channel) = method.strip_prefix("ipc.invoke.") {
+        return invoke_runtime_ipc(host, &ctx.plugin_id, channel, params, DEFAULT_TIMEOUT).await;
+    }
+
+    if let Some(channel) = method.strip_prefix("ipc.send.") {
+        return send_runtime_ipc(host, &ctx.plugin_id, channel, params).await;
+    }
+
+    // Legacy Host API 1.4 alias
+    if let Some(channel) = method.strip_prefix("rpc.") {
+        return invoke_runtime_ipc(host, &ctx.plugin_id, channel, params, DEFAULT_TIMEOUT).await;
     }
 
     if payload_too_large(&params) {

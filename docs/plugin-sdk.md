@@ -5,7 +5,7 @@
 - Runtime：`definePlugin` / `wrapRuntimeContext`
 - UI：`createPluginClient` / `createPluginClientSync`
 
-源码：`packages/plugin-sdk`。示例：`examples/plugins/com.example.hello`。
+源码：`packages/plugin-sdk`。示例：`examples/plugins/com.example.hello`。需要 Host API `>= 1.5.0` 才能使用完整的 `tempo.ipc`。
 
 ## 安装
 
@@ -46,52 +46,37 @@ import { definePlugin } from "@tempo/plugin-sdk";
 
 export default definePlugin({
   async activate(tempo) {
-    const all = await tempo.settings.getAll();
     const loud = await tempo.settings.get("loud", false);
 
     tempo.settings.subscribe((values) => {
       console.log("settings changed", values);
     });
 
-    tempo.commands.register("hello", async (params, signal) => {
+    // Private UI ↔ Runtime (Electron-style; not in contributes.commands)
+    tempo.ipc.handle("greet", async (_event, params) => {
       await tempo.notify.show({ title: "Hi", body: String(params?.who ?? "") });
-      tempo.ui.emit("greeted", { who: params?.who });
+      tempo.ipc.send("greeted", { who: params?.who });
       return { ok: true };
     });
 
-    await tempo.mainPanel.hide();
-    await tempo.app.open("translate", { initialTranslateText: "hi" });
-    await tempo.external.open("https://example.com");
-    const theme = await tempo.theme.get();
-
-    await tempo.storage.set("preferences", { compact: true });
-    const prefs = await tempo.storage.get("preferences");
+    // Declared external command for Action / MCP only
+    tempo.commands.register("hello", async (params) => {
+      return { ok: true, who: params?.who };
+    });
   },
 });
 ```
-
-也支持具名导出：
-
-```ts
-export const { activate, deactivate } = definePlugin({ ... });
-```
-
-Bootstrap 同时支持 `export default definePlugin(...)` 与 `export async function activate(ctx)`。
 
 ### Runtime `tempo` 一览
 
 | API | 说明 |
 |---|---|
-| `settings.getAll()` / `get(id, default?)` / `subscribe(fn)` | 中心配置 |
-| `storage.get/set/delete/list/update` | 插件私有 KV |
-| `notify.show` | 系统通知 |
-| `theme.get` | 当前主题 |
-| `mainPanel.hide` | 隐藏主面板 |
-| `app.open` / `external.open` | 打开应用 / 外链 |
-| `commands.register` | 注册 command |
-| `ui.emit` | 广播给本插件 UI |
-| `paths.data` / `runtime.nodeVersion` / `pluginId` | 上下文 |
-| `on(event, fn)` | 宿主推送事件（含 `settings.changed`） |
+| `ipc.handle` / `ipc.on` / `ipc.send` | Electron 风格对内 IPC（UI 专用） |
+| `commands.register` | 对外 command（Action / Hook / MCP） |
+| `settings.*` / `storage.*` | 配置与私有 KV |
+| `notify` / `theme` / `app` / `external` / `mainPanel.hide` | Host 能力 |
+| `ui.emit` | **deprecated**，委托 `ipc.send` |
+| `on(event, fn)` | 宿主推送（含 `settings.changed`） |
 | `raw` | 原始 bootstrap `ctx` |
 
 ## UI
@@ -101,35 +86,23 @@ import { createPluginClient } from "@tempo/plugin-sdk";
 
 const tempo = await createPluginClient();
 
-const loud = await tempo.settings.get("loud", false);
+const result = await tempo.ipc.invoke("greet", { who: "Tempo" });
+tempo.ipc.on("greeted", (_event, payload) => console.log(payload));
+tempo.ipc.send("ping", { n: 1 });
+
 await tempo.notify.show({ title: "Ready" });
-const result = await tempo.invoke("hello", { who: "Tempo" });
-
-tempo.settings.subscribe((values) => {
-  console.log(values);
-});
-
-const stopTheme = await tempo.theme.subscribe((theme) => {
-  document.documentElement.dataset.theme = theme;
-});
-
-await tempo.session.push({ route: "/home" });
-await tempo.mainPanel.setSize(640);
+tempo.settings.subscribe((values) => console.log(values));
 ```
+
+`ipc.invoke` / `ipc.send` / `ipc.on` 的参数与返回值（及事件 args）均使用 HTML Structured Clone 语义序列化（Date / Map / Set / TypedArray / 循环引用等）。Function / Promise / DOM 等会抛错。
 
 ### UI `tempo` 一览
 
 | API | 说明 |
 |---|---|
-| `settings.*` | 同 Runtime；变更由宿主推送到打开的页面 |
-| `storage.*` | 私有 KV（自动适配 UI `{ value }` / `{ keys }` 信封） |
-| `notify` / `theme` / `app` / `external` | Host 能力 |
-| `theme.subscribe` | 自动 `theme.onChange` + `subscription.release` |
-| `mainPanel.hide/back/setSize` | 面板 |
-| `window.setRect/close` | 独立窗口 |
-| `session.push` | 会话恢复 |
-| `invoke` / `on` | Runtime command / 事件 |
-| `ready` / `context` | 与注入 bridge 一致 |
+| `ipc.invoke` / `ipc.send` / `ipc.on` | 对内 Runtime IPC（**不能**调对外 command） |
+| `settings.*` / `storage.*` / `notify` / `theme` / … | Host 能力 |
+| `on` | 宿主推送；Runtime 事件优先 `ipc.on` |
 | `host(method, params)` | 逃生舱 |
 | `raw` | `window.plugin` |
 
@@ -142,4 +115,4 @@ await tempo.mainPanel.setSize(640);
 
 ## 与裸 API 的关系
 
-底层仍是 Host Bridge。SDK 不替换 `window.plugin` / bootstrap `ctx`，只是在其上提供完整封装。需要时仍可用 `tempo.raw` 或 `tempo.host(...)`。
+底层仍是 Host Bridge。SDK 不替换 `window.plugin` / bootstrap `ctx`，只是在其上提供完整封装。

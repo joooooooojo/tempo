@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::asset_protocol::{percent_decode, percent_encode};
 
-use super::host::PluginHost;
+use super::host::{DevelopmentUiSource, PluginHost};
 use super::manifest::PluginManifest;
 
 pub const PROTOCOL: &str = "tempo-plugin";
@@ -23,9 +23,14 @@ pub const PROTOCOL: &str = "tempo-plugin";
 /// Host-owned bridge script path (not read from the plugin package). Injected into every
 /// plugin HTML document so authors get `window.plugin` without an SDK.
 pub const BRIDGE_CLIENT_PATH: &str = "__tempo__/client.js";
+pub const BRIDGE_SCA_PATH: &str = "__tempo__/structured-clone.js";
 
+const BRIDGE_SCA_SOURCE: &str = include_str!("../../../plugin-ui/structured-clone.js");
 const BRIDGE_CLIENT_SOURCE: &str = include_str!("../../../plugin-ui/bridge-client.js");
-const BRIDGE_SCRIPT_TAG: &str = r#"<script src="__tempo__/client.js"></script>"#;
+const BRIDGE_SCRIPT_TAG: &str = concat!(
+    r#"<script src="__tempo__/structured-clone.js"></script>"#,
+    r#"<script src="__tempo__/client.js"></script>"#,
+);
 
 /// Baseline CSP (design §5.2). Plugins cannot loosen `script-src`/`object-src`/`frame-src`/
 /// `base-uri`; we simply always serve this baseline since Phase 1 has no per-plugin override.
@@ -199,6 +204,14 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
     let development = entry.package_hash.is_empty();
 
     // Host-owned bridge — never read from the plugin package (reserved `__tempo__/` namespace).
+    if rel_path == BRIDGE_SCA_PATH {
+        return ok_bytes(
+            "text/javascript; charset=utf-8",
+            BRIDGE_SCA_SOURCE.as_bytes().to_vec(),
+            head_only,
+            development,
+        );
+    }
     if rel_path == BRIDGE_CLIENT_PATH {
         return ok_bytes(
             "text/javascript; charset=utf-8",
@@ -211,11 +224,10 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
         return empty_response(StatusCode::FORBIDDEN);
     }
 
-    let Ok(canonical_root) = entry.install_path.canonicalize() else {
-        return empty_response(StatusCode::NOT_FOUND);
-    };
-    let candidate = entry.install_path.join(PathBuf::from(&rel_path));
-    let Ok(canonical_path) = candidate.canonicalize() else {
+    let asset_roots = development_asset_roots(&host, &entry);
+    let Some((canonical_root, canonical_path)) =
+        resolve_asset_path(&asset_roots, &rel_path)
+    else {
         return empty_response(StatusCode::NOT_FOUND);
     };
     if !canonical_path.starts_with(&canonical_root) || !canonical_path.is_file() {
@@ -242,6 +254,48 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
             empty_response(StatusCode::NOT_FOUND)
         }
     }
+}
+
+fn development_asset_roots(
+    host: &PluginHost,
+    entry: &super::host::PluginRegistryEntry,
+) -> Vec<PathBuf> {
+    let mut roots = vec![entry.install_path.clone()];
+    if !entry.package_hash.is_empty() {
+        return roots;
+    }
+    let Some(development) = host.development_plugin(&entry.plugin_id) else {
+        return roots;
+    };
+    push_unique_path(&mut roots, development.root_path.clone());
+    if let Some(DevelopmentUiSource::Static(path)) = development.ui_source {
+        push_unique_path(&mut roots, path);
+    }
+    roots
+}
+
+fn push_unique_path(roots: &mut Vec<PathBuf>, path: PathBuf) {
+    if roots.iter().any(|existing| existing == &path) {
+        return;
+    }
+    roots.push(path);
+}
+
+fn resolve_asset_path(roots: &[PathBuf], rel_path: &str) -> Option<(PathBuf, PathBuf)> {
+    let relative = PathBuf::from(rel_path);
+    for root in roots {
+        let Ok(canonical_root) = root.canonicalize() else {
+            continue;
+        };
+        let candidate = root.join(&relative);
+        let Ok(canonical_path) = candidate.canonicalize() else {
+            continue;
+        };
+        if canonical_path.starts_with(&canonical_root) && canonical_path.is_file() {
+            return Some((canonical_root, canonical_path));
+        }
+    }
+    None
 }
 
 /// Load `manifest.json` from an install directory (used by `plugin_ui_prepare` to resolve an

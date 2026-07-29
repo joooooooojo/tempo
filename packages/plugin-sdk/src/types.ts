@@ -48,3 +48,10 @@ export interface WindowRectInput {
 }
 
 export type Unsubscribe = () => void;
+
+/** First argument to Electron-style ipc handle/on listeners. */
+export interface IpcEvent {
+  sender: "ui" | "runtime" | string;
+}
+
+export type IpcListener = (event: IpcEvent, ...args: unknown[]) => void;

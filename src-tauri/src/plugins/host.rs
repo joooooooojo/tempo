@@ -163,6 +163,41 @@ impl PluginHost {
         removed
     }
 
+    /// Refresh the in-memory development manifest after the project file is saved so
+    /// declarative contributions (apps/actions keywords, names, etc.) update without reconnect.
+    pub fn update_development_manifest_for_project(
+        &self,
+        project_id: &str,
+        manifest: PluginManifest,
+    ) -> bool {
+        let mut development = self.development.lock();
+        let Some(old_plugin_id) = development
+            .iter()
+            .find_map(|(plugin_id, entry)| {
+                (entry.project_id == project_id).then(|| plugin_id.clone())
+            })
+        else {
+            return false;
+        };
+
+        let Some(mut entry) = development.remove(&old_plugin_id) else {
+            return false;
+        };
+        let new_plugin_id = manifest.id.clone();
+        entry.manifest = manifest;
+        development.insert(new_plugin_id.clone(), entry);
+
+        if old_plugin_id != new_plugin_id {
+            let old_hash = super::ui::plugin_hash_of(&old_plugin_id);
+            let new_hash = super::ui::plugin_hash_of(&new_plugin_id);
+            let mut hashes = self.development_hash_index.lock();
+            hashes.remove(&old_hash);
+            hashes.insert(new_hash, new_plugin_id);
+        }
+
+        true
+    }
+
     pub fn plugin_storage_namespace(&self, plugin_id: &str) -> String {
         self.development_plugin(plugin_id)
             .filter(|entry| !entry.use_production_data)

@@ -1,18 +1,35 @@
 export type PluginKind = "ui" | "headless" | "hybrid";
+export type PluginCapability =
+  | "filesystem"
+  | "network"
+  | "process"
+  | "clipboard"
+  | "system";
+export type RectValue = number | string;
+
+export interface EditableAppRect {
+  width?: RectValue;
+  height?: RectValue;
+  x?: RectValue;
+  y?: RectValue;
+}
 
 export interface EditablePluginApp {
   id: string;
   name: string;
   entry: string;
   keywords?: string[];
+  icon?: string;
   windowMode?: "normal" | "standalone";
+  rect?: EditableAppRect;
+  sessionVersion?: number;
   [key: string]: unknown;
 }
 
 export interface EditablePluginCommand {
   id: string;
   title: string;
-  visibility?: string;
+  visibility?: "private" | "public";
   [key: string]: unknown;
 }
 
@@ -21,6 +38,8 @@ export interface EditablePluginAction {
   name: string;
   keywords?: string[];
   accepts?: Array<"text" | "image" | "file">;
+  icon?: string;
+  titleTemplate?: string;
   app?: string;
   command?: string;
   [key: string]: unknown;
@@ -38,6 +57,12 @@ export interface EditablePluginMcpTool {
   command: string;
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
   [key: string]: unknown;
 }
 
@@ -53,13 +78,22 @@ export interface EditablePluginSetting {
 }
 
 export interface EditablePluginManifest {
+  $schema?: string;
   manifestVersion: number;
   id: string;
   name: string;
   version: string;
   description?: string;
   kind?: PluginKind | string;
+  author?: string;
+  publisher?: string;
   main?: string;
+  homepage?: string;
+  repository?: string;
+  license?: string;
+  categories?: string[];
+  capabilities?: PluginCapability[];
+  activationEvents?: Array<"onStartup">;
   engines: {
     tempo: string;
     pluginApi: string;

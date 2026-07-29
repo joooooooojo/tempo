@@ -3,60 +3,73 @@
   "manifestVersion": 1,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "engines": {
     "tempo": ">=2",
-    "pluginApi": "^1.3.0"
+    "pluginApi": "^1.5.0"
   },
   "kind": "hybrid",
   "author": "Tempo",
   "publisher": "tempo-examples",
-  "description": "Phase 1 插件系统最小示例：一个面板应用 + 一个快捷操作，共用同一个 Runtime 命令。",
+  "description": "混合示例：对外 hello command + 对内 tempo.ipc（含 SCA 探测）。",
   "homepage": "https://example.com/tempo-plugins/hello",
   "license": "MIT",
-  "categories": ["tools"],
+  "categories": [
+    "tools"
+  ],
   "main": "main.mjs",
-  "capabilities": ["filesystem"],
+  "capabilities": [
+    "filesystem"
+  ],
   "contributes": {
     "apps": [
       {
         "id": "main",
-        "name": "Hello 示例",
-        "keywords": ["hello", "示例", "demo"],
-        "icon": "icons/app.svg",
+        "name": "Hello 示例插件",
         "entry": "index.html",
+        "icon": "icons/app.svg",
+        "keywords": [
+          "测试关键词"
+        ],
         "windowMode": "normal",
         "sessionVersion": 1
       },
       {
-        "id": "window",
-        "name": "Hello 独立窗口",
-        "keywords": ["hello", "示例", "window", "窗口"],
-        "icon": "icons/app.svg",
+        "id": "single",
+        "name": "Hello 示例插件-独立窗口",
         "entry": "index.html",
-        "windowMode": "standalone",
-        "rect": {
-          "x": "center",
-          "y": "center"
-        },
-        "sessionVersion": 1
+        "icon": "icons/app.svg",
+        "keywords": [],
+        "windowMode": "standalone"
       }
     ],
     "actions": [
       {
         "id": "open-input",
         "name": "使用当前输入",
-        "keywords": ["input", "输入", "图片"],
+        "keywords": [
+          "input",
+          "输入",
+          "图片"
+        ],
         "icon": "icons/app.svg",
-        "accepts": ["text", "image"],
+        "accepts": [
+          "text",
+          "image"
+        ],
         "app": "main"
       },
       {
         "id": "say-hello",
         "name": "Hello 一下",
-        "keywords": ["hello", "示例"],
+        "keywords": [
+          "hello",
+          "示例"
+        ],
         "icon": "icons/app.svg",
-        "accepts": ["text"],
+        "accepts": [
+          "text"
+        ],
         "command": "hello"
       }
     ],
@@ -108,7 +121,9 @@
             },
             "langs": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Selected language codes from plugin settings"
             },
             "greeting": {
@@ -116,7 +131,15 @@
               "description": "Final greeting text after applying loud setting"
             }
           },
-          "required": ["who", "timestamp", "logPath", "loud", "theme", "langs", "greeting"],
+          "required": [
+            "who",
+            "timestamp",
+            "logPath",
+            "loud",
+            "theme",
+            "langs",
+            "greeting"
+          ],
           "additionalProperties": false
         },
         "annotations": {
@@ -142,9 +165,18 @@
         "description": "示例单选设置（仅用于测试设置 UI）",
         "default": "auto",
         "options": [
-          { "value": "auto", "label": "跟随系统" },
-          { "value": "light", "label": "浅色" },
-          { "value": "dark", "label": "深色" }
+          {
+            "value": "auto",
+            "label": "跟随系统"
+          },
+          {
+            "value": "light",
+            "label": "浅色"
+          },
+          {
+            "value": "dark",
+            "label": "深色"
+          }
         ]
       },
       {
@@ -152,10 +184,18 @@
         "type": "multiselect",
         "title": "语言",
         "description": "示例多选设置（仅用于测试设置 UI）",
-        "default": ["zh"],
+        "default": [
+          "zh"
+        ],
         "options": [
-          { "value": "zh", "label": "中文" },
-          { "value": "en", "label": "English" }
+          {
+            "value": "zh",
+            "label": "中文"
+          },
+          {
+            "value": "en",
+            "label": "English"
+          }
         ]
       },
       {
@@ -166,6 +206,7 @@
         "default": "world",
         "placeholder": "world"
       }
-    ]
+    ],
+    "hooks": []
   }
 }

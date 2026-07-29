@@ -158,6 +158,77 @@ impl Supervisor {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, RpcError> {
+        self.call_framed(
+            plugin_id,
+            json!({
+                "type": "invoke",
+                "commandId": command_id,
+                "params": params,
+            }),
+            timeout,
+            "command timed out",
+        )
+        .await
+    }
+
+    /// Private UI ↔ Runtime IPC invoke (`ipc.invoke` / `ipc-invoke` frame).
+    /// `args` is an opaque SCA envelope (`{ "$sca": "..." }`) or legacy JSON.
+    pub async fn call_ipc(
+        &self,
+        plugin_id: &str,
+        channel: &str,
+        args: Value,
+        timeout: Duration,
+    ) -> Result<Value, RpcError> {
+        self.call_framed(
+            plugin_id,
+            json!({
+                "type": "ipc-invoke",
+                "channel": channel,
+                "args": args,
+            }),
+            timeout,
+            "ipc timed out",
+        )
+        .await
+    }
+
+    /// Fire-and-forget UI → Runtime (`ipc.send` / `ipc-send` frame).
+    /// `args` is an opaque SCA envelope (`{ "$sca": "..." }`).
+    pub async fn send_ipc(
+        &self,
+        plugin_id: &str,
+        channel: &str,
+        args: Value,
+    ) -> Result<(), RpcError> {
+        self.ensure_started(plugin_id).await?;
+        let process = self.get(plugin_id).ok_or_else(|| {
+            RpcError::new(
+                bridge::codes::RUNTIME_UNAVAILABLE,
+                "plugin runtime is not running",
+            )
+        })?;
+        let frame = json!({
+            "type": "ipc-send",
+            "channel": channel,
+            "args": args,
+        });
+        if encode_and_send(&process.write_tx, &frame).is_err() {
+            return Err(RpcError::new(
+                bridge::codes::RUNTIME_UNAVAILABLE,
+                "plugin runtime connection closed",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn call_framed(
+        &self,
+        plugin_id: &str,
+        mut frame: Value,
+        timeout: Duration,
+        timeout_message: &str,
+    ) -> Result<Value, RpcError> {
         self.ensure_started(plugin_id).await?;
         let process = self.get(plugin_id).ok_or_else(|| {
             RpcError::new(
@@ -167,15 +238,12 @@ impl Supervisor {
         })?;
 
         let id = generate_id();
+        if let Some(object) = frame.as_object_mut() {
+            object.insert("id".into(), json!(id));
+        }
         let (tx, rx) = oneshot::channel();
         process.pending.lock().insert(id.clone(), tx);
 
-        let frame = json!({
-            "type": "invoke",
-            "id": id,
-            "commandId": command_id,
-            "params": params,
-        });
         if encode_and_send(&process.write_tx, &frame).is_err() {
             process.pending.lock().remove(&id);
             return Err(RpcError::new(
@@ -194,7 +262,7 @@ impl Supervisor {
                 process.pending.lock().remove(&id);
                 let cancel = json!({ "type": "cancel", "id": id });
                 let _ = encode_and_send(&process.write_tx, &cancel);
-                Err(RpcError::new(bridge::codes::TIMEOUT, "command timed out"))
+                Err(RpcError::new(bridge::codes::TIMEOUT, timeout_message))
             }
         }
     }
@@ -856,10 +924,14 @@ fn prune_crash_history(history: &mut VecDeque<Instant>) {
 fn write_bootstrap_script(app: &AppHandle) -> Result<PathBuf, String> {
     // The embedded loader uses Node's pathToFileURL so canonical Windows paths remain importable.
     const BOOTSTRAP_SOURCE: &str = include_str!("../../../plugin-runtime/bootstrap.mjs");
+    const SCA_SOURCE: &str = include_str!("../../../plugin-runtime/structured-clone.mjs");
     let root = super::paths::plugin_runtime_root(app)?;
     super::paths::ensure_dir(&root)?;
     let path = root.join("bootstrap.mjs");
     std::fs::write(&path, BOOTSTRAP_SOURCE).map_err(|e| format!("write bootstrap.mjs: {e}"))?;
+    let sca_path = root.join("structured-clone.mjs");
+    std::fs::write(&sca_path, SCA_SOURCE)
+        .map_err(|e| format!("write structured-clone.mjs: {e}"))?;
     Ok(path)
 }
 

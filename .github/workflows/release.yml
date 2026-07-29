@@ -114,6 +114,18 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
           echo "Resolved signing identity: $CERT_ID"
 
+      - name: Prepare release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES="$(node ./scripts/changelog-for-version.mjs)"
+          {
+            echo "body<<EOF"
+            printf '%s\n' "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -125,10 +137,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: Tempo v__VERSION__
-          releaseBody: |
-            ## Tempo v__VERSION__
-
-            在应用内打开「设置 → 关于」检查更新，或下载对应平台的安装包手动安装。
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           # We generate latest.json ourselves with public browser download URLs.
