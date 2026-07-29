@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Tempo</title>
     <style>
       html,
@@ -158,9 +159,13 @@
 
         if (view === "main-panel" || view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker" || view === "plugin-window") {
           var isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || "");
-          root.style.background = view === "plugin-window" ? "#f3f8f5" : view === "main-panel" && !isMac ? "#f7f9f8" : "transparent";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           root.classList.toggle("dark", prefersDark);
+          if (view === "plugin-window") {
+            root.style.background = prefersDark ? "#12151a" : "#f3f8f5";
+          } else {
+            root.style.background = view === "main-panel" && !isMac ? (prefersDark ? "#121518" : "#f7f9f8") : "transparent";
+          }
           if (view === "shelf-picker" || view === "clipboard-picker" || view === "snippet-picker") {
             root.classList.add("shelf-picker-window");
             root.classList.add(isMac ? "shelf-picker-window--mac" : "shelf-picker-window--css-shadow");

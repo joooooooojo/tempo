@@ -1144,3 +1144,90 @@ fn macos_apple_languages() -> Option<Vec<String>> {
     }
     (!langs.is_empty()).then_some(langs)
 }
+
+/// OS appearance preference (not the app's overridden `NSApp.appearance`).
+/// Used when Tempo theme is "system" — WKWebView `prefers-color-scheme` is unreliable
+/// for LSUIElement / Accessory apps until `color-scheme` opts in and native theme syncs.
+pub fn system_prefers_dark() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos_system_prefers_dark()
+    }
+    #[cfg(windows)]
+    {
+        windows_system_prefers_dark()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_system_prefers_dark() -> bool {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+
+    // Prefer NSUserDefaults — `defaults` CLI can fail/hang for GUI/LSUIElement processes.
+    unsafe {
+        let Some(defaults_class) = Class::get("NSUserDefaults") else {
+            return macos_system_prefers_dark_via_cli();
+        };
+        let defaults: *mut Object = msg_send![defaults_class, standardUserDefaults];
+        if defaults.is_null() {
+            return macos_system_prefers_dark_via_cli();
+        }
+        let Some(string_class) = Class::get("NSString") else {
+            return macos_system_prefers_dark_via_cli();
+        };
+        let key: *mut Object =
+            msg_send![string_class, stringWithUTF8String: b"AppleInterfaceStyle\0".as_ptr()];
+        if key.is_null() {
+            return macos_system_prefers_dark_via_cli();
+        }
+        let value: *mut Object = msg_send![defaults, stringForKey: key];
+        if value.is_null() {
+            return false;
+        }
+        nsstring_to_rust_string(value).eq_ignore_ascii_case("Dark")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_system_prefers_dark_via_cli() -> bool {
+    let output = std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .eq_ignore_ascii_case("Dark"),
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+fn windows_system_prefers_dark() -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD, REG_VALUE_TYPE,
+    };
+
+    // 0 = apps use dark theme; missing/1 = light.
+    let mut data: u32 = 1;
+    let mut data_size = std::mem::size_of::<u32>() as u32;
+    let mut data_type = REG_VALUE_TYPE::default();
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            Some(&mut data_type),
+            Some((&raw mut data).cast()),
+            Some(&mut data_size),
+        )
+    };
+    status == ERROR_SUCCESS && data == 0
+}

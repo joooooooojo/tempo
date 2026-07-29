@@ -20,12 +20,21 @@ tauri_panel! {
 }
 
 #[derive(Clone, Copy)]
+pub enum OverlayChrome {
+    /// Main panel: titled + fullSizeContentView so AppKit owns corner radius.
+    SystemRounded,
+    /// Clipboard shelf: borderless + HudWindow vibrancy owns the 16px radius.
+    Borderless,
+}
+
+#[derive(Clone, Copy)]
 pub struct OverlayPanelConfig {
     pub level: PanelLevel,
     pub collection_behavior: CollectionBehavior,
     pub transparent: bool,
     pub has_shadow: bool,
     pub becomes_key_only_if_needed: bool,
+    pub chrome: OverlayChrome,
 }
 
 impl OverlayPanelConfig {
@@ -34,21 +43,30 @@ impl OverlayPanelConfig {
     }
 }
 
-fn overlay_style_mask() -> StyleMask {
-    // Titled + fullSizeContentView lets AppKit own the window corner radius.
-    // Borderless panels stay square unless we hardcode layer.cornerRadius.
-    StyleMask::empty()
-        .titled()
-        .full_size_content_view()
-        .nonactivating_panel()
+fn style_mask_for(chrome: OverlayChrome) -> StyleMask {
+    match chrome {
+        OverlayChrome::SystemRounded => StyleMask::empty()
+            .titled()
+            .full_size_content_view()
+            .nonactivating_panel(),
+        OverlayChrome::Borderless => StyleMask::empty().borderless().nonactivating_panel(),
+    }
 }
 
 fn dialog_host_style_mask() -> StyleMask {
     StyleMask::empty().titled().full_size_content_view()
 }
 
+fn shared_collection_behavior() -> CollectionBehavior {
+    CollectionBehavior::new()
+        .can_join_all_spaces()
+        .stationary()
+        .full_screen_auxiliary()
+        .full_screen_none()
+}
+
 fn apply_base(panel: &dyn Panel, input: bool, config: &OverlayPanelConfig) {
-    panel.set_style_mask(overlay_style_mask().into());
+    panel.set_style_mask(style_mask_for(config.chrome).into());
     panel.set_floating_panel(true);
     panel.set_becomes_key_only_if_needed(if input {
         config.becomes_key_only_if_needed
@@ -65,30 +83,31 @@ fn apply_base(panel: &dyn Panel, input: bool, config: &OverlayPanelConfig) {
     panel.set_movable_by_window_background(true);
 }
 
-fn input_panel_config(transparent: bool) -> OverlayPanelConfig {
-    // Match ZTools: Electron `setAlwaysOnTop(true, 'modal-panel')` → NSModalPanelWindowLevel (8).
-    // Status (25) sits above system file sheets and makes Import Directory / zip look like a no-op.
+/// Quick launcher / main panel — stays below Dock; ModalPanel keeps NSOpenPanel usable.
+pub fn main_panel_config() -> OverlayPanelConfig {
     OverlayPanelConfig {
+        // Match ZTools: Electron `setAlwaysOnTop(true, 'modal-panel')` → level 8.
+        // Status (25) sits above system file sheets and makes Import Directory look like a no-op.
         level: PanelLevel::ModalPanel,
-        collection_behavior: CollectionBehavior::new()
-            .can_join_all_spaces()
-            .stationary()
-            .full_screen_auxiliary()
-            .full_screen_none(),
-        transparent,
+        collection_behavior: shared_collection_behavior(),
+        transparent: false,
         has_shadow: true,
         // false: main panel must become key on show so the search input can autofocus.
-        // With true, AppKit ignores makeKeyWindow unless an NSTextField asks — WKWebView does not.
         becomes_key_only_if_needed: false,
+        chrome: OverlayChrome::SystemRounded,
     }
 }
 
-pub fn main_panel_config() -> OverlayPanelConfig {
-    input_panel_config(false)
-}
-
+/// Clipboard shelf — Status (25) sits above the Dock; keep independent of main-panel chrome.
 pub fn shelf_picker_config() -> OverlayPanelConfig {
-    input_panel_config(true)
+    OverlayPanelConfig {
+        level: PanelLevel::Status,
+        collection_behavior: shared_collection_behavior(),
+        transparent: true,
+        has_shadow: true,
+        becomes_key_only_if_needed: true,
+        chrome: OverlayChrome::Borderless,
+    }
 }
 
 pub fn ensure_input_panel(
@@ -100,13 +119,17 @@ pub fn ensure_input_panel(
     if let Ok(panel) = app.get_webview_panel(label) {
         // Re-apply on every ensure so level/style changes take effect without recreating the panel.
         config.apply_input(panel.as_ref());
-        apply_system_window_chrome(window);
+        if matches!(config.chrome, OverlayChrome::SystemRounded) {
+            apply_system_window_chrome(window);
+        }
         return Ok(());
     }
 
     let panel = window.to_panel::<OverlayInputPanel>()?;
     config.apply_input(panel.as_ref());
-    apply_system_window_chrome(window);
+    if matches!(config.chrome, OverlayChrome::SystemRounded) {
+        apply_system_window_chrome(window);
+    }
     Ok(())
 }
 
@@ -171,7 +194,7 @@ pub fn hide_overlay(app: &AppHandle, label: &str) {
 }
 
 /// Temporarily make overlay panels safe hosts for NSOpenPanel sheets. Nonactivating + high
-/// levels can swallow or hide the picker.
+/// levels can swallow or hide the picker. Prefer main-panel; shelf is included only if open.
 pub fn prepare_for_native_dialog(app: &AppHandle) {
     for label in ["main-panel", "shelf-picker"] {
         if let Ok(panel) = app.get_webview_panel(label) {
@@ -180,14 +203,16 @@ pub fn prepare_for_native_dialog(app: &AppHandle) {
             panel.set_level(PanelLevel::ModalPanel.value());
             panel.set_becomes_key_only_if_needed(false);
             panel.show_and_make_key();
-            if let Some(window) = app.get_webview_window(label) {
-                apply_system_window_chrome(&window);
+            if label == "main-panel" {
+                if let Some(window) = app.get_webview_window(label) {
+                    apply_system_window_chrome(&window);
+                }
             }
         }
     }
 }
 
-/// Restore overlay panels to the ZTools-aligned ModalPanel + nonactivating style.
+/// Restore each overlay to its own config (main panel ≠ shelf).
 pub fn restore_after_native_dialog(app: &AppHandle) {
     for (label, config) in [
         ("main-panel", main_panel_config()),
@@ -195,8 +220,10 @@ pub fn restore_after_native_dialog(app: &AppHandle) {
     ] {
         if let Ok(panel) = app.get_webview_panel(label) {
             config.apply_input(panel.as_ref());
-            if let Some(window) = app.get_webview_window(label) {
-                apply_system_window_chrome(&window);
+            if matches!(config.chrome, OverlayChrome::SystemRounded) {
+                if let Some(window) = app.get_webview_window(label) {
+                    apply_system_window_chrome(&window);
+                }
             }
         }
     }

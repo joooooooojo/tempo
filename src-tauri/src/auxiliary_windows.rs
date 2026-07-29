@@ -400,6 +400,17 @@ pub fn sync_main_panel_appearance(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Re-apply shelf vibrancy material after theme changes (HudWindow ↔ Popover).
+#[tauri::command]
+pub fn sync_shelf_picker_appearance(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window(SHELF_PICKER_LABEL) {
+        apply_macos_shelf_vibrancy(&window);
+    }
+    let _ = &app;
+    Ok(())
+}
+
 fn place_main_panel_window(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -636,8 +647,10 @@ fn show_shelf_picker_window(app: &AppHandle, tab: ShelfPickerTab) -> tauri::Resu
             "set shelf picker always on top",
         );
     }
-    polish_shelf_picker_window(&window, true);
+    // Apply NSPanel config first, then shelf-only vibrancy / level so main-panel chrome
+    // cannot overwrite HudWindow + Status (25).
     show_shelf_window_without_stealing_focus(app, SHELF_PICKER_LABEL, &window)?;
+    polish_shelf_picker_window(&window, true);
     #[cfg(target_os = "macos")]
     {
         crate::macos_overlay_panel::install_shelf_outside_click_monitor(app, SHELF_PICKER_LABEL);
@@ -1029,6 +1042,8 @@ pub fn polish_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
 
 #[cfg(target_os = "macos")]
 const MACOS_SHELF_WINDOW_LEVEL: i64 = 25;
+#[cfg(target_os = "macos")]
+const MACOS_SHELF_CORNER_RADIUS: f64 = 16.0;
 
 #[cfg(target_os = "windows")]
 fn apply_windows_shelf_appearance(window: &WebviewWindow) {
@@ -1069,21 +1084,41 @@ fn windows_hwnd(window: &WebviewWindow) -> Option<windows::Win32::Foundation::HW
 }
 
 #[cfg(target_os = "macos")]
+fn shelf_resolves_dark(window: &WebviewWindow) -> bool {
+    let theme = window
+        .app_handle()
+        .try_state::<crate::db::AppState>()
+        .map(|state| {
+            let conn = state.db.lock();
+            crate::db::get_setting(&conn, "theme", "system")
+        })
+        .unwrap_or_else(|| "system".into());
+    match theme.as_str() {
+        "dark" => true,
+        "light" => false,
+        _ => crate::platform::system_prefers_dark(),
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
     use window_vibrancy::{
         apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
     };
 
     crate::logging::debug_if_err(clear_vibrancy(window), "clear shelf picker macos vibrancy");
-    // Popover follows the window's effective appearance (light/dark). HudWindow is a dark
-    // HUD material and stays unreadable under Tempo's light-theme foreground colors.
-    // Pass None for radius: do not override AppKit's system window corner radius.
+    // Dark → HudWindow (white-on-glass CSS). Light → Popover so black type stays readable.
+    let material = if shelf_resolves_dark(window) {
+        NSVisualEffectMaterial::HudWindow
+    } else {
+        NSVisualEffectMaterial::Popover
+    };
     crate::logging::debug_if_err(
         apply_vibrancy(
             window,
-            NSVisualEffectMaterial::Popover,
+            material,
             Some(NSVisualEffectState::Active),
-            None,
+            Some(MACOS_SHELF_CORNER_RADIUS),
         ),
         "apply shelf picker macos vibrancy",
     );
@@ -1091,9 +1126,9 @@ fn apply_macos_shelf_vibrancy(window: &WebviewWindow) {
 
 #[cfg(target_os = "macos")]
 fn polish_macos_shelf_picker_window(window: &WebviewWindow, topmost: bool) {
+    // Resolve system → concrete theme before vibrancy so HudWindow/Popover matches.
     sync_overlay_window_theme(window);
     apply_macos_shelf_vibrancy(window);
-    crate::macos_overlay_panel::apply_system_window_chrome(window);
 
     crate::logging::debug_if_err(
         window.with_webview(move |webview| unsafe {
@@ -1146,9 +1181,25 @@ pub fn polish_main_panel_window(window: &WebviewWindow) {
         crate::macos_overlay_panel::apply_system_window_chrome(window);
     }
 
-    let background = match window.theme() {
-        Ok(tauri::Theme::Dark) => Color(18, 20, 24, 255),
-        _ => Color(247, 249, 248, 255),
+    let theme_setting = window
+        .app_handle()
+        .try_state::<crate::db::AppState>()
+        .map(|state| {
+            let conn = state.db.lock();
+            crate::db::get_setting(&conn, "theme", "system")
+        })
+        .unwrap_or_else(|| "system".into());
+    let background = match theme_setting.as_str() {
+        "dark" => Color(18, 20, 24, 255),
+        "light" => Color(247, 249, 248, 255),
+        _ => {
+            // Prefer OS preference over a possibly stale window.theme() cache.
+            if crate::platform::system_prefers_dark() {
+                Color(18, 20, 24, 255)
+            } else {
+                Color(247, 249, 248, 255)
+            }
+        }
     };
     crate::logging::debug_if_err(
         window.set_background_color(Some(background)),
@@ -1172,10 +1223,16 @@ fn sync_overlay_window_theme(window: &WebviewWindow) {
         })
         .unwrap_or_else(|| "system".into());
 
+    // Resolve "system" to a concrete theme. set_theme(None) is unreliable for
+    // WKWebView / vibrancy on macOS Accessory (LSUIElement) apps.
     let native = match theme.as_str() {
         "light" => Some(tauri::Theme::Light),
         "dark" => Some(tauri::Theme::Dark),
-        _ => None,
+        _ => Some(if crate::platform::system_prefers_dark() {
+            tauri::Theme::Dark
+        } else {
+            tauri::Theme::Light
+        }),
     };
     crate::logging::debug_if_err(window.set_theme(native), "sync overlay window theme");
 }

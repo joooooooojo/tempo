@@ -14,3 +14,9 @@ pub fn debug_log(scope: String, message: String) {
         "frontend debug log"
     );
 }
+
+/// Whether the OS appearance preference is dark (for theme = "system").
+#[tauri::command]
+pub fn system_prefers_dark() -> bool {
+    crate::platform::system_prefers_dark()
+}

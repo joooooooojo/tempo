@@ -2,7 +2,13 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isBlurHideSuppressed } from "@/lib/blurHideGuard";
-import { applyTheme, subscribeThemeChanges } from "@/lib/theme";
+import {
+  applyTheme,
+  applyThemeAsync,
+  subscribeThemeChanges,
+  watchSystemTheme,
+} from "@/lib/theme";
+import type { Settings } from "@/types";
 
 export function useAuxiliaryWindowShell(className: string) {
   useEffect(() => {
@@ -14,19 +20,35 @@ export function useAuxiliaryWindowShell(className: string) {
     document.body.classList.add(className);
     document.body.style.overflow = "hidden";
 
+    let currentTheme: Settings["theme"] = "system";
     applyTheme("system");
-    void applyThemeFromSettings();
+    void applyThemeFromSettings().then((theme) => {
+      currentTheme = theme;
+    });
     const unsubscribeTheme = subscribeThemeChanges((theme) => {
+      currentTheme = theme;
       applyTheme(theme);
     });
+    const unwatchSystemTheme = watchSystemTheme(
+      () => currentTheme,
+      () => {
+        void applyThemeAsync("system");
+      }
+    );
 
     return () => {
       root.classList.remove(className);
       document.body.classList.remove(className);
       document.body.style.overflow = previousBodyOverflow;
+      unwatchSystemTheme();
       unsubscribeTheme();
     };
   }, [className]);
+}
+
+/** Re-read settings and apply theme — call when an overlay becomes visible. */
+export async function refreshAuxiliaryWindowTheme(): Promise<Settings["theme"]> {
+  return applyThemeFromSettings();
 }
 
 export function useShelfBlurClose(openEvent: string, busy = false) {
@@ -67,12 +89,14 @@ export function useShelfBlurClose(openEvent: string, busy = false) {
   }, [openEvent, busy]);
 }
 
-async function applyThemeFromSettings() {
+async function applyThemeFromSettings(): Promise<Settings["theme"]> {
   try {
     const { api } = await import("@/lib/api");
     const settings = await api.getSettings();
-    applyTheme(settings.theme);
+    await applyThemeAsync(settings.theme);
+    return settings.theme;
   } catch {
-    applyTheme("system");
+    await applyThemeAsync("system");
+    return "system";
   }
 }

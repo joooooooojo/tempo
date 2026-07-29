@@ -22,7 +22,7 @@ import {
 } from "@/builtin-plugins/clipboard/components/ShelfCard";
 import { ClipboardFileGlyph } from "@/builtin-plugins/clipboard/components/ClipboardFileGlyph";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAuxiliaryWindowShell } from "@/hooks/useAuxiliaryWindow";
+import { useAuxiliaryWindowShell, refreshAuxiliaryWindowTheme } from "@/hooks/useAuxiliaryWindow";
 import { api } from "@/lib/api";
 import {
   formatClipboardFilesFooter,
@@ -265,14 +265,17 @@ export function ShelfPickerPage() {
     });
     const unlistenPrepare = listen<{ tab?: string }>("shelf-picker:prepare", (event) => {
       const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
+      void refreshAuxiliaryWindowTheme();
       prepareOpen(nextTab);
     });
     const unlistenOpen = listen<{ tab?: string }>("shelf-picker:open", (event) => {
       const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
+      void refreshAuxiliaryWindowTheme();
       resetAndOpen(nextTab);
     });
     const unlistenActivate = listen<{ tab?: string }>("shelf-picker:activate", (event) => {
       const nextTab = isShelfTab(event.payload.tab) ? event.payload.tab : "clipboard";
+      void refreshAuxiliaryWindowTheme();
       if (nextTab === tabRef.current) {
         hideShelf();
         return;

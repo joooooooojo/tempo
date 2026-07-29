@@ -6,38 +6,69 @@ import type { Settings } from "@/types";
 export const THEME_CHANGED_EVENT = "settings:theme-changed";
 
 export function applyTheme(theme: Settings["theme"]) {
-  const root = document.documentElement;
-  if (theme === "dark") {
-    root.classList.add("dark");
-  } else if (theme === "light") {
-    root.classList.remove("dark");
-  } else {
-    root.classList.toggle(
-      "dark",
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    );
-  }
-  void syncNativeWindowTheme(theme);
+  void applyThemeAsync(theme);
 }
 
-/** Keep the Tauri/native window appearance aligned with the CSS theme. */
-async function syncNativeWindowTheme(theme: Settings["theme"]) {
+/**
+ * Keep CSS `.dark` and the native window appearance aligned with the setting.
+ *
+ * "system" is resolved to a concrete light/dark. On macOS, `setTheme(null)` does not
+ * reliably drive WKWebView / shelf vibrancy for LSUIElement apps; explicit themes do.
+ */
+export async function applyThemeAsync(theme: Settings["theme"]) {
+  const root = document.documentElement;
+  // Boot script may set an inline background for the splash; clear so tokens win.
+  if (root.style.background) {
+    root.style.removeProperty("background");
+  }
+
+  const resolved = await resolveTheme(theme);
+  root.classList.toggle("dark", resolved === "dark");
+  root.style.colorScheme = resolved;
+  await syncNativeWindowTheme(resolved);
+}
+
+export async function resolveTheme(
+  theme: Settings["theme"]
+): Promise<"light" | "dark"> {
+  if (theme === "dark" || theme === "light") return theme;
+  return (await resolveSystemIsDark()) ? "dark" : "light";
+}
+
+async function resolveSystemIsDark(): Promise<boolean> {
+  if ("__TAURI_INTERNALS__" in window) {
+    try {
+      return await invoke<boolean>("system_prefers_dark");
+    } catch {
+      try {
+        const native = await getCurrentWindow().theme();
+        if (native === "dark") return true;
+        if (native === "light") return false;
+      } catch {
+        // fall through to matchMedia
+      }
+    }
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+/** Drive native chrome with an explicit light/dark (never null / system). */
+async function syncNativeWindowTheme(resolved: "light" | "dark") {
   if (!("__TAURI_INTERNALS__" in window)) return;
   try {
-    const native = theme === "system" ? null : theme;
-    await getCurrentWindow().setTheme(native);
-    // Keep the native main-panel fill aligned after appearance changes.
-    const label = getCurrentWindow().label;
-    if (label === "main-panel") {
-      await invoke("sync_main_panel_appearance");
-    }
+    await getCurrentWindow().setTheme(resolved);
+    // Theme is app-wide on macOS; refresh every overlay that may be alive.
+    await Promise.all([
+      invoke("sync_main_panel_appearance").catch(() => undefined),
+      invoke("sync_shelf_picker_appearance").catch(() => undefined),
+    ]);
   } catch {
     // Some auxiliary windows may not support setTheme; ignore.
   }
 }
 
 export async function emitThemeChange(theme: Settings["theme"]) {
-  applyTheme(theme);
+  await applyThemeAsync(theme);
   await emit(THEME_CHANGED_EVENT, { theme });
 }
 
@@ -63,14 +94,61 @@ export function subscribeThemeChanges(
   };
 }
 
+/**
+ * Watch OS appearance while the setting is "system".
+ * Polls the native preference because forcing an explicit window theme (required for
+ * reliable shelf/UI sync) stops matchMedia / onThemeChanged from tracking the OS.
+ */
 export function watchSystemTheme(
   getTheme: () => Settings["theme"],
   onSystemChange: () => void
 ): () => void {
+  let lastDark: boolean | null = null;
+  let cancelled = false;
+
+  const notifyIfChanged = async () => {
+    if (cancelled || getTheme() !== "system") return;
+    const isDark = await resolveSystemIsDark();
+    if (cancelled) return;
+    if (lastDark === null) {
+      lastDark = isDark;
+      return;
+    }
+    if (lastDark !== isDark) {
+      lastDark = isDark;
+      onSystemChange();
+    }
+  };
+
   const media = window.matchMedia("(prefers-color-scheme: dark)");
-  const handler = () => {
+  const mediaHandler = () => {
     if (getTheme() === "system") onSystemChange();
   };
-  media.addEventListener("change", handler);
-  return () => media.removeEventListener("change", handler);
+  media.addEventListener("change", mediaHandler);
+
+  let unlistenTauri: (() => void) | undefined;
+  if ("__TAURI_INTERNALS__" in window) {
+    void getCurrentWindow()
+      .onThemeChanged(() => {
+        if (getTheme() === "system") onSystemChange();
+      })
+      .then((fn) => {
+        unlistenTauri = fn;
+      })
+      .catch(() => {
+        // Older runtimes / unsupported windows.
+      });
+  }
+
+  const interval = window.setInterval(() => {
+    void notifyIfChanged();
+  }, 1500);
+  void notifyIfChanged();
+
+  return () => {
+    cancelled = true;
+    window.clearInterval(interval);
+    media.removeEventListener("change", mediaHandler);
+    unlistenTauri?.();
+  };
 }
