@@ -432,6 +432,7 @@ impl Supervisor {
             .stderr(Stdio::null())
             .kill_on_drop(true);
         apply_minimal_plugin_runtime_env(&mut command);
+        hide_plugin_runtime_console(&mut command);
         #[cfg(unix)]
         {
             command.process_group(0);
@@ -570,6 +571,7 @@ impl Supervisor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         apply_minimal_plugin_runtime_env(&mut command);
+        hide_plugin_runtime_console(&mut command);
         #[cfg(unix)]
         command.process_group(0);
 
@@ -695,6 +697,18 @@ fn apply_minimal_plugin_runtime_env(command: &mut tokio::process::Command) {
             }
         }
     }
+}
+
+/// Packaged Tempo is a GUI app without a console. Spawning `node.exe` without this flag on
+/// Windows allocates a visible console window (seen when connecting a plugin Runtime).
+/// `tauri dev` often already has a console attached, so the window is less noticeable.
+fn hide_plugin_runtime_console(command: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+        command.creation_flags(CREATE_NO_WINDOW.0);
+    }
+    let _ = command;
 }
 
 fn encode_frame(value: &Value) -> Result<Vec<u8>, String> {
