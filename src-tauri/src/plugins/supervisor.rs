@@ -3,7 +3,7 @@
 //! One Node child process per plugin, talking to the host over a length-prefixed JSON frame
 //! protocol on a Unix domain socket (0600) / Windows named pipe, handshaking via a token passed
 //! on stdin (never argv/env — design §7). Activation is always lazy: `ensure_started` is only
-//! called from a command/`runtime.*` invocation (or `onStartup`), never at boot/enable time.
+//! called from a Command/private IPC invocation (or `onStartup`), never at boot/enable time.
 //!
 //! Simplifications explicitly taken for Phase 1 given scope (documented, not hidden):
 //! - Crash backoff (1/5/30s, max 3 per 10 min) is evaluated lazily on the *next* triggered
@@ -149,8 +149,7 @@ impl Supervisor {
         self.spawn(plugin_id).await
     }
 
-    /// `runtime.*` entry point used by the Host Bridge (design §7). Routes only to the same
-    /// plugin's Runtime — cross-plugin routing is not exposed here.
+    /// Invoke an externally declared Command in this plugin's Runtime.
     pub async fn call(
         &self,
         plugin_id: &str,
@@ -167,6 +166,27 @@ impl Supervisor {
             }),
             timeout,
             "command timed out",
+        )
+        .await
+    }
+
+    /// Invoke an MCP Tool registered with `tempo.mcpTools.register` in this plugin's Runtime.
+    pub async fn call_mcp_tool(
+        &self,
+        plugin_id: &str,
+        tool_name: &str,
+        arguments: Value,
+        timeout: Duration,
+    ) -> Result<Value, RpcError> {
+        self.call_framed(
+            plugin_id,
+            json!({
+                "type": "mcp-invoke",
+                "toolName": tool_name,
+                "arguments": arguments,
+            }),
+            timeout,
+            "MCP tool timed out",
         )
         .await
     }
@@ -520,7 +540,7 @@ impl Supervisor {
                 }
                 Err(RpcError::new(
                     bridge::codes::ACTIVATION_FAILED,
-                    "plugin activate() did not complete within 10s",
+                    "plugin Runtime startup did not complete within 10s",
                 ))
             }
         }
@@ -819,7 +839,7 @@ async fn handle_frame(
                         .get("error")
                         .and_then(|e| e.get("message"))
                         .and_then(Value::as_str)
-                        .unwrap_or("activate() failed")
+                        .unwrap_or("Runtime startup failed")
                         .to_string();
                     let _ = tx.send(Err(message));
                 }
@@ -898,6 +918,7 @@ async fn handle_frame(
                 "plugin-runtime-event",
                 json!({
                     "pluginId": process.plugin_id,
+                    "source": "runtime",
                     "event": event,
                     "payload": payload,
                 }),

@@ -1,0 +1,48 @@
+{
+  "$schema": "__MANIFEST_SCHEMA_URL__",
+  "manifestVersion": 1,
+  "id": "__PLUGIN_ID__",
+  "name": "__PLUGIN_NAME__",
+  "version": "0.1.0",
+  "engines": {
+    "tempo": ">=2",
+    "pluginApi": "^1.0.0"
+  },
+  "kind": "hybrid",
+  "main": "main.mjs",
+  "contributes": {
+    "apps": [
+      {
+        "id": "main",
+        "name": "__PLUGIN_NAME__",
+        "entry": "index.html",
+        "windowMode": "normal"
+      }
+    ],
+    "commands": [
+      {
+        "id": "greet",
+        "title": "Greet"
+      }
+    ],
+    "actions": [
+      {
+        "id": "open",
+        "name": "打开 __PLUGIN_NAME__",
+        "app": "main"
+      }
+    ],
+    "mcpTools": [
+      {
+        "name": "greet-tool",
+        "description": "Return a greeting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" }
+          }
+        }
+      }
+    ]
+  }
+}

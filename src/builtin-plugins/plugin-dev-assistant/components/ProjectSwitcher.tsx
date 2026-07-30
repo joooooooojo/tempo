@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import { Check, ChevronDown, FolderOpen, Plus } from "lucide-react";
+import { ChevronDown, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import {
   Popover,
@@ -19,6 +19,7 @@ type ProjectSwitcherProps = {
   activeProjectId: string | null;
   disabled?: boolean;
   onSelect: (projectId: string) => void;
+  onDelete: (project: PluginDevProject) => void;
   onCreate: () => void;
   onOpen: () => void;
 };
@@ -28,6 +29,7 @@ export function ProjectSwitcher({
   activeProjectId,
   disabled = false,
   onSelect,
+  onDelete,
   onCreate,
   onOpen,
 }: ProjectSwitcherProps) {
@@ -124,45 +126,57 @@ export function ProjectSwitcher({
                   projectFolderName(project.rootPath) ||
                   "未命名项目";
                 return (
-                  <Button
+                  <div
                     key={project.id}
-                    type="button"
-                    variant={selected ? "secondary" : "ghost"}
-                    size="sm"
                     className={cn(
-                      "h-auto w-full justify-start gap-2.5 py-2 whitespace-normal",
+                      "group/project flex items-center rounded-lg transition-colors hover:bg-muted",
+                      selected && "bg-secondary hover:bg-secondary",
                     )}
-                    onClick={() => {
-                      setOpen(false);
-                      if (!selected) onSelect(project.id);
-                    }}
                   >
-                    <span
-                      className="plugin-dev-project__mark"
-                      aria-hidden="true"
-                      style={
-                        {
-                          "--plugin-dev-project-mark": projectMarkColor(
-                            project.rootPath,
-                          ),
-                        } as CSSProperties
-                      }
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-current={selected ? "true" : undefined}
+                      className="h-auto min-w-0 flex-1 justify-start gap-2.5 border-0 bg-transparent py-2 whitespace-normal shadow-none hover:bg-transparent"
+                      onClick={() => {
+                        setOpen(false);
+                        if (!selected) onSelect(project.id);
+                      }}
                     >
-                      {projectMonogram(project.rootPath)}
-                    </span>
-                    <span className="plugin-dev-switcher-menu__meta">
-                      <strong>{name}</strong>
-                      <small title={project.rootPath}>{project.rootPath}</small>
-                    </span>
-                    {selected ? (
-                      <Check
-                        className="plugin-dev-switcher-menu__check"
+                      <span
+                        className="plugin-dev-project__mark"
                         aria-hidden="true"
-                      />
-                    ) : (
-                      <span className="plugin-dev-switcher-menu__check" />
-                    )}
-                  </Button>
+                        style={
+                          {
+                            "--plugin-dev-project-mark": projectMarkColor(
+                              project.rootPath,
+                            ),
+                          } as CSSProperties
+                        }
+                      >
+                        {projectMonogram(project.rootPath)}
+                      </span>
+                      <span className="plugin-dev-switcher-menu__meta">
+                        <strong>{name}</strong>
+                        <small title={project.rootPath}>{project.rootPath}</small>
+                      </span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="mr-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`移除项目 ${name}`}
+                      title={`移除项目 ${name}`}
+                      onClick={() => {
+                        setOpen(false);
+                        onDelete(project);
+                      }}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
                 );
               })}
             </div>

@@ -40,7 +40,6 @@ import type {
   EditablePluginAction,
   EditablePluginApp,
   EditablePluginCommand,
-  EditablePluginHook,
   EditablePluginManifest,
   EditablePluginMcpTool,
   EditablePluginSetting,
@@ -58,10 +57,6 @@ const COMMAND_VISIBILITY_ITEMS = [
 ] as const;
 
 const APP_ENTRY_ITEMS = [{ value: "index.html", label: "index.html" }] as const;
-
-const HOOK_EVENT_ITEMS = [
-  { value: "clipboard.changed", label: "clipboard.changed" },
-] as const;
 
 const ACTION_INPUT_ITEMS = [
   { value: "text", label: "文本" },
@@ -629,115 +624,22 @@ export function ActionEditor({
   );
 }
 
-export function HookEditor({
-  hook,
-  index,
-  commands,
-  verifyContext,
-  onUpdate,
-}: {
-  hook: EditablePluginHook;
-  index: number;
-  commands: EditablePluginCommand[];
-  verifyContext?: ContributionVerifyContext;
-  onUpdate: (mutate: (next: EditablePluginManifest) => void) => void;
-}) {
-  const commandItems = commands.map((command) => ({
-    value: command.id,
-    label: command.title || command.id,
-  }));
-  return (
-    <div
-      className={cn("plugin-dev-contribution-row", "grid-cols-[1fr_1fr_auto]")}
-    >
-      <Select
-        items={HOOK_EVENT_ITEMS}
-        value={hook.event || null}
-        onValueChange={(value) =>
-          value &&
-          onUpdate((next) => {
-            next.contributes.hooks[index].event = value;
-          })
-        }
-      >
-        <SelectTrigger className="w-full" aria-label="事件">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            {HOOK_EVENT_ITEMS.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <Select
-        items={commandItems}
-        value={hook.command}
-        onValueChange={(value) =>
-          value &&
-          onUpdate((next) => {
-            next.contributes.hooks[index].command = value;
-          })
-        }
-      >
-        <SelectTrigger className="w-full" aria-label="Command">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            {commandItems.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <RowActions>
-        {verifyContext ? (
-          <ContributionVerifyDialog
-            target={{ kind: "hook", item: hook }}
-            context={verifyContext}
-          />
-        ) : null}
-        <DeleteRowButton
-          label="删除 Hook"
-          onClick={() =>
-            onUpdate((next) => {
-              next.contributes.hooks.splice(index, 1);
-            })
-          }
-        />
-      </RowActions>
-    </div>
-  );
-}
-
 export function McpToolEditor({
   tool,
   index,
-  commands,
   verifyContext,
   onUpdate,
 }: {
   tool: EditablePluginMcpTool;
   index: number;
-  commands: EditablePluginCommand[];
   verifyContext?: ContributionVerifyContext;
   onUpdate: (mutate: (next: EditablePluginManifest) => void) => void;
 }) {
-  const commandItems = commands.map((command) => ({
-    value: command.id,
-    label: command.title || command.id,
-  }));
   return (
     <div
       className={cn(
         "plugin-dev-contribution-row",
-        "grid-cols-[1fr_1fr_1.5fr_auto]",
+        "grid-cols-[1fr_1.5fr_auto]",
       )}
     >
       <Input
@@ -749,29 +651,6 @@ export function McpToolEditor({
           })
         }
       />
-      <Select
-        items={commandItems}
-        value={tool.command}
-        onValueChange={(value) =>
-          value &&
-          onUpdate((next) => {
-            next.contributes.mcpTools[index].command = value;
-          })
-        }
-      >
-        <SelectTrigger className="w-full" aria-label="Command">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            {commandItems.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
       <Input
         aria-label="描述"
         value={tool.description}

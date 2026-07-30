@@ -1,4 +1,5 @@
 mod types;
+mod templates;
 mod paths;
 mod projects;
 mod connect;

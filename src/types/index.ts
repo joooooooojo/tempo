@@ -488,7 +488,6 @@ export interface PluginDevPreferences {
   uiStaticRoot?: string | null;
   runtimeDevEntry?: string | null;
   autoReconnectRuntime: boolean;
-  receiveRealHooks: boolean;
   useProductionData: boolean;
 }
 

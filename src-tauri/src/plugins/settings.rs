@@ -78,6 +78,7 @@ pub fn notify_settings_changed(app: &AppHandle, plugin_id: &str, values: &Map<St
         "plugin-runtime-event",
         json!({
             "pluginId": plugin_id,
+            "source": "platform",
             "event": "settings.changed",
             "payload": { "values": values },
         }),

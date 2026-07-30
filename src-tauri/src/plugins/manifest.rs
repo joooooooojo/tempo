@@ -67,7 +67,7 @@ pub struct PluginEngines {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginContributes {
     #[serde(default)]
     pub apps: Vec<ContributedApp>,
@@ -75,8 +75,6 @@ pub struct PluginContributes {
     pub actions: Vec<ContributedAction>,
     #[serde(default)]
     pub commands: Vec<ContributedCommand>,
-    #[serde(default)]
-    pub hooks: Vec<ContributedHook>,
     #[serde(default)]
     pub mcp_tools: Vec<ContributedMcpTool>,
     #[serde(default)]
@@ -256,18 +254,10 @@ pub struct ContributedCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContributedHook {
-    pub event: String,
-    pub command: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContributedMcpTool {
     pub name: String,
     pub description: String,
-    pub command: String,
     #[serde(default = "default_mcp_input_schema")]
     pub input_schema: Value,
     #[serde(default)]
@@ -507,10 +497,7 @@ impl ContributedSetting {
                 let mut seen = std::collections::HashSet::new();
                 for item in items {
                     let Some(raw) = item.as_str() else {
-                        return Err(format!(
-                            "setting {} array items must be strings",
-                            self.id
-                        ));
+                        return Err(format!("setting {} array items must be strings", self.id));
                     };
                     if !allowed.iter().any(|option| option.value == raw) {
                         return Err(format!("setting {} value is not in options", self.id));
@@ -559,6 +546,15 @@ impl PluginManifest {
         }
         if self.engines.plugin_api.trim().is_empty() {
             return Err("engines.pluginApi is required".into());
+        }
+        let mut activation_events = std::collections::HashSet::new();
+        for event in &self.activation_events {
+            if event != "onStartup" {
+                return Err(format!("unsupported activation event: {event}"));
+            }
+            if !activation_events.insert(event.as_str()) {
+                return Err(format!("duplicate activation event: {event}"));
+            }
         }
 
         let has_ui = !self.contributes.apps.is_empty();
@@ -664,15 +660,6 @@ impl PluginManifest {
             }
         }
 
-        for hook in &self.contributes.hooks {
-            if !command_ids.contains(hook.command.as_str()) {
-                return Err(format!(
-                    "hook {} references missing command {}",
-                    hook.event, hook.command
-                ));
-            }
-        }
-
         if self.contributes.mcp_tools.len() > MAX_MCP_TOOLS_PER_PLUGIN {
             return Err(format!(
                 "plugins may declare at most {MAX_MCP_TOOLS_PER_PLUGIN} MCP tools"
@@ -695,17 +682,8 @@ impl PluginManifest {
                     tool.name
                 ));
             }
-            if !command_ids.contains(tool.command.as_str()) {
-                return Err(format!(
-                    "mcpTool {} references missing command {}",
-                    tool.name, tool.command
-                ));
-            }
             if self.main.is_none() {
-                return Err(format!(
-                    "mcpTool {} targets command {} but the plugin has no main entry",
-                    tool.name, tool.command
-                ));
+                return Err(format!("mcpTool {} requires a main entry", tool.name));
             }
             validate_mcp_schema(&tool.input_schema, &tool.name, "inputSchema")?;
             if let Some(schema) = &tool.output_schema {
@@ -881,7 +859,7 @@ mod tests {
         let raw = include_str!("../../../examples/plugins/com.example.hello/manifest.json");
         let manifest = PluginManifest::parse_str(raw).unwrap();
         assert_eq!(manifest.id, "com.example.hello");
-        assert_eq!(manifest.version, "1.0.9");
+        assert_eq!(manifest.version, "1.1.0");
     }
 
     #[test]
@@ -973,6 +951,36 @@ mod tests {
           "contributes": {
             "actions": [{ "id": "run", "name": "Run", "command": "missing" }]
           }
+        }"#;
+        assert!(PluginManifest::parse_str(raw).is_err());
+    }
+
+    #[test]
+    fn rejects_removed_hook_contribution() {
+        let raw = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.listener",
+          "name": "Listener",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=2", "pluginApi": "^1.0.0" },
+          "main": "main.mjs",
+          "contributes": {
+            "hooks": [{ "event": "clipboard.changed", "command": "listen" }]
+          }
+        }"#;
+        assert!(PluginManifest::parse_str(raw).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_activation_event() {
+        let raw = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.listener",
+          "name": "Listener",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=2", "pluginApi": "^1.5.0" },
+          "main": "main.mjs",
+          "activationEvents": ["onClipboardChanged"]
         }"#;
         assert!(PluginManifest::parse_str(raw).is_err());
     }
@@ -1125,11 +1133,9 @@ mod tests {
           "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.2.0" },
           "main": "main.mjs",
           "contributes": {
-            "commands": [{ "id": "summarize", "title": "Summarize" }],
             "mcpTools": [{
               "name": "summarize",
               "description": "Summarize a note",
-              "command": "summarize",
               "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1178,11 +1184,9 @@ mod tests {
           "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.2.0" },
           "main": "main.mjs",
           "contributes": {
-            "commands": [{ "id": "run", "title": "Run" }],
             "mcpTools": [{
               "name": "run",
               "description": "Run",
-              "command": "run",
               "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1200,13 +1204,15 @@ mod tests {
         }"#;
         assert!(PluginManifest::parse_str(raw).is_ok());
 
-        let with_desc = raw.replace(
-            r#""who": { "type": "string" }"#,
-            r#""who": { "type": "string", "description": "Who to greet" }"#,
-        ).replace(
-            r#""ok": { "type": "boolean" }"#,
-            r#""ok": { "type": "boolean", "description": "Whether the run succeeded" }"#,
-        );
+        let with_desc = raw
+            .replace(
+                r#""who": { "type": "string" }"#,
+                r#""who": { "type": "string", "description": "Who to greet" }"#,
+            )
+            .replace(
+                r#""ok": { "type": "boolean" }"#,
+                r#""ok": { "type": "boolean", "description": "Whether the run succeeded" }"#,
+            );
         assert!(PluginManifest::parse_str(&with_desc).is_ok());
     }
 
@@ -1220,11 +1226,9 @@ mod tests {
           "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.2.0" },
           "main": "main.mjs",
           "contributes": {
-            "commands": [{ "id": "run", "title": "Run" }],
             "mcpTools": [{
               "name": "run",
               "description": "Run",
-              "command": "run",
               "inputSchema": { "type": "object" }
             }]
           }
@@ -1239,12 +1243,17 @@ mod tests {
             &valid.replace(r#""description": "Run""#, r#""description": "  ""#)
         )
         .is_err());
+        let legacy_command = valid.replace(
+            r#""description": "Run","#,
+            r#""description": "Run",
+              "command": "run","#,
+        );
+        assert!(PluginManifest::parse_str(&legacy_command).is_err());
         let duplicate = valid.replace(
             "]\n          }",
             r#", {
               "name": "run",
               "description": "Run again",
-              "command": "run",
               "inputSchema": { "type": "object" }
             }]
           }"#,
@@ -1312,10 +1321,9 @@ mod tests {
             SettingFieldType::Multiselect
         );
 
-        assert!(PluginManifest::parse_str(&valid.replace(
-            r#""default": "auto""#,
-            r#""default": "neon""#
-        ))
+        assert!(PluginManifest::parse_str(
+            &valid.replace(r#""default": "auto""#, r#""default": "neon""#)
+        )
         .is_err());
         assert!(PluginManifest::parse_str(&valid.replace(
             r#""type": "switch""#,

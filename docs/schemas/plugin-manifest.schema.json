@@ -194,13 +194,6 @@
           },
           "default": []
         },
-        "hooks": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/hook"
-          },
-          "default": []
-        },
         "mcpTools": {
           "type": "array",
           "maxItems": 64,
@@ -463,23 +456,9 @@
       },
       "additionalProperties": false
     },
-    "hook": {
-      "type": "object",
-      "required": ["event", "command"],
-      "properties": {
-        "event": {
-          "type": "string",
-          "enum": ["clipboard.changed"]
-        },
-        "command": {
-          "$ref": "#/$defs/localId"
-        }
-      },
-      "additionalProperties": false
-    },
     "mcpTool": {
       "type": "object",
-      "required": ["name", "description", "command"],
+      "required": ["name", "description"],
       "properties": {
         "name": {
           "$ref": "#/$defs/localId"
@@ -488,9 +467,6 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 1024
-        },
-        "command": {
-          "$ref": "#/$defs/localId"
         },
         "inputSchema": {
           "$ref": "#/$defs/mcpObjectSchema",

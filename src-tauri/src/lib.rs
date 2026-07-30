@@ -236,7 +236,7 @@ pub fn run() {
                 }
 
                 // Phase 1 §4.3/§15: only `onStartup` plugins get an eagerly-started Runtime;
-                // every other plugin stays lazy until its first command/`runtime.*` call.
+                // every other plugin stays lazy until its first Command or private IPC call.
                 match plugins::paths::packages_dir(app.handle()) {
                     Ok(packages_root) => match plugins::loader::plugins_needing_startup(&conn, &packages_root) {
                         Ok(plugin_ids) => {
@@ -419,7 +419,6 @@ pub fn run() {
             builtin_plugins::plugin_dev::plugin_dev_reload_ui,
             builtin_plugins::plugin_dev::plugin_dev_disconnect,
             builtin_plugins::plugin_dev::plugin_dev_reconnect_runtime,
-            builtin_plugins::plugin_dev::plugin_dev_simulate_hook,
             builtin_plugins::plugin_dev::plugin_dev_run_mcp_tool,
             builtin_plugins::plugin_dev::plugin_dev_forget_project,
             builtin_plugins::settings::list_builtin_mcp_tools,

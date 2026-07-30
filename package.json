@@ -9,11 +9,15 @@
     "clean:rust": "cargo clean --manifest-path ./src-tauri/Cargo.toml --profile dev",
     "clean:rust:all": "cargo clean --manifest-path ./src-tauri/Cargo.toml",
     "icons": "node ./scripts/generate-icons.mjs",
-    "sync:version": "node ./scripts/sync-version.mjs",
-    "version": "node ./scripts/sync-version.mjs",
-    "build": "node ./scripts/sync-version.mjs && tsc && node ./scripts/run-tauri-build.mjs",
-    "build:plugin-sdk": "npm run build --prefix ./packages/plugin-sdk && npx --yes esbuild@0.25.12 ./packages/plugin-sdk/dist/index.js --bundle --format=esm --platform=neutral --outfile=./examples/plugins/com.example.hello/vendor/tempo-sdk.mjs",
-    "preview": "vite preview"
+    "sync:app-version": "node ./scripts/sync-app-version.mjs",
+    "version": "node ./scripts/sync-app-version.mjs",
+    "build": "node ./scripts/run-tauri-build.mjs",
+    "preview": "vite preview",
+    "plugin-assets:build": "node ./scripts/build-plugin-assets.mjs",
+    "test:plugin-events": "node ./scripts/test-plugin-events.mjs",
+    "docs:dev": "pnpm plugin-assets:build && vitepress dev docs",
+    "docs:build": "pnpm plugin-assets:build && vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -53,6 +57,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitepress": "^1.6.4"
   }
 }

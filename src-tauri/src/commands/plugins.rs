@@ -600,14 +600,14 @@ pub async fn plugin_call_command(
     args: PluginCallCommandArgs,
 ) -> Result<Value, RpcError> {
     let params = enrich_action_command_input(&app, &state, args.params)?;
-    host.supervisor
-        .call(
-            &args.plugin_id,
-            &args.command_id,
-            params,
-            bridge::DEFAULT_TIMEOUT,
-        )
-        .await
+    bridge::invoke_runtime_command(
+        host.inner(),
+        &args.plugin_id,
+        &args.command_id,
+        params,
+        bridge::DEFAULT_TIMEOUT,
+    )
+    .await
 }
 
 fn enrich_action_command_input(

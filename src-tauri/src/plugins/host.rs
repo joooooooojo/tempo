@@ -26,7 +26,6 @@ pub struct DevelopmentPlugin {
     pub manifest: PluginManifest,
     pub ui_source: Option<DevelopmentUiSource>,
     pub runtime_entry: Option<PathBuf>,
-    pub receive_real_hooks: bool,
     pub use_production_data: bool,
 }
 

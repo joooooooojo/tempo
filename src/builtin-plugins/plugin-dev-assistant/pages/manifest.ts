@@ -45,16 +45,9 @@ export interface EditablePluginAction {
   [key: string]: unknown;
 }
 
-export interface EditablePluginHook {
-  event: string;
-  command: string;
-  [key: string]: unknown;
-}
-
 export interface EditablePluginMcpTool {
   name: string;
   description: string;
-  command: string;
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   annotations?: {
@@ -103,7 +96,6 @@ export interface EditablePluginManifest {
     apps: EditablePluginApp[];
     commands: EditablePluginCommand[];
     actions: EditablePluginAction[];
-    hooks: EditablePluginHook[];
     settings: EditablePluginSetting[];
     mcpTools: EditablePluginMcpTool[];
     [key: string]: unknown;
@@ -131,15 +123,15 @@ export function parseEditableManifest(
     contributes.actions = Array.isArray(contributes.actions)
       ? contributes.actions
       : [];
-    contributes.hooks = Array.isArray(contributes.hooks)
-      ? contributes.hooks
-      : [];
     contributes.settings = Array.isArray(contributes.settings)
       ? contributes.settings
       : [];
     contributes.mcpTools = Array.isArray(contributes.mcpTools)
       ? contributes.mcpTools
       : [];
+    for (const tool of contributes.mcpTools) {
+      delete tool.command;
+    }
     return manifest as EditablePluginManifest;
   } catch {
     return null;

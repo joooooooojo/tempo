@@ -214,7 +214,6 @@ pub async fn plugin_dev_connect(
         manifest,
         ui_source,
         runtime_entry: runtime_entry.clone(),
-        receive_real_hooks: preferences.receive_real_hooks,
         use_production_data: preferences.use_production_data,
     });
     let _ = app.emit(CONTRIBUTIONS_CHANGED_EVENT, ());
@@ -321,4 +320,3 @@ pub async fn plugin_dev_reconnect_runtime(
         .map_err(|error| error.message)?;
     Ok(connection_status(&host, &args.project_id))
 }
-

@@ -7,7 +7,7 @@
 //   { socketPath, token, pluginId, mainPath, dataPath, nodeVersion }
 //
 // Speaks `u32 BE length + UTF-8 JSON` framed protocol. Private UI↔Runtime uses Electron-style
-// ipc (invoke/handle, send/on); external Action/Hook/MCP use commands.register.
+// ipc (invoke/handle, send/on); Actions use commands.register and MCP Tools use mcpTools.register.
 
 import net from "node:net";
 import { randomUUID } from "node:crypto";
@@ -84,9 +84,10 @@ function callHost(method, params) {
   });
 }
 
-// -- External commands + Electron-style IPC ---------------------------------------------
+// -- External Commands, MCP Tools, and Electron-style IPC --------------------------------
 
 const commands = new Map();
+const mcpTools = new Map();
 const ipcHandlers = new Map();
 const ipcSendListeners = new Map();
 const activeInvocations = new Map();
@@ -101,22 +102,32 @@ function registerCommand(id, handler) {
   commands.set(id, handler);
 }
 
-function ipcHandle(channel, handler) {
-  if (typeof channel !== "string" || !channel) {
-    throw new TypeError("ipc.handle requires a non-empty string channel");
+function registerMcpTool(name, handler) {
+  if (typeof name !== "string" || !name) {
+    throw new TypeError("tempo.mcpTools.register requires a non-empty MCP tool name");
   }
   if (typeof handler !== "function") {
-    throw new TypeError("ipc.handle requires a handler function");
+    throw new TypeError("tempo.mcpTools.register requires a handler function");
+  }
+  mcpTools.set(name, handler);
+}
+
+function ipcHandle(channel, handler) {
+  if (typeof channel !== "string" || !channel) {
+    throw new TypeError("ipcMain.handle requires a non-empty string channel");
+  }
+  if (typeof handler !== "function") {
+    throw new TypeError("ipcMain.handle requires a handler function");
   }
   ipcHandlers.set(channel, handler);
 }
 
 function ipcOn(channel, listener) {
   if (typeof channel !== "string" || !channel) {
-    throw new TypeError("ipc.on requires a non-empty string channel");
+    throw new TypeError("ipcMain.on requires a non-empty string channel");
   }
   if (typeof listener !== "function") {
-    throw new TypeError("ipc.on requires a listener function");
+    throw new TypeError("ipcMain.on requires a listener function");
   }
   if (!ipcSendListeners.has(channel)) ipcSendListeners.set(channel, new Set());
   ipcSendListeners.get(channel).add(listener);
@@ -130,7 +141,7 @@ function ipcSendToUi(channel, ...args) {
   } catch (error) {
     log(
       "warn",
-      `ipc.send failed to serialize args for ${channel}: ${error && error.message ? error.message : error}`,
+      `ipcMain.send failed to serialize args for ${channel}: ${error && error.message ? error.message : error}`,
     );
     return;
   }
@@ -191,6 +202,56 @@ async function runCommandHandler(message) {
   }
 }
 
+async function runMcpToolHandler(message) {
+  const { id, toolName, arguments: input } = message;
+  const handler = mcpTools.get(toolName);
+  if (!handler) {
+    send({
+      type: "response",
+      id,
+      ok: false,
+      error: { code: "NOT_FOUND", message: `unknown MCP tool: ${toolName}` },
+    });
+    return;
+  }
+
+  const controller = new AbortController();
+  activeInvocations.set(id, controller);
+  const timer = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
+  const graceTimer = setTimeout(() => {
+    log("warn", `MCP tool ${toolName} exceeded grace period after abort`);
+  }, COMMAND_TIMEOUT_MS + COMMAND_GRACE_MS);
+
+  try {
+    const result = await handler(input, controller.signal);
+    send({ type: "response", id, ok: true, result: result === undefined ? null : result });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      send({
+        type: "response",
+        id,
+        ok: false,
+        error: { code: "TIMEOUT", message: "MCP tool timed out" },
+      });
+    } else {
+      send({
+        type: "response",
+        id,
+        ok: false,
+        error: {
+          code: "MCP_TOOL_FAILED",
+          message: error && error.message ? String(error.message) : String(error),
+          data: error && error.data !== undefined ? error.data : undefined,
+        },
+      });
+    }
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(graceTimer);
+    activeInvocations.delete(id);
+  }
+}
+
 async function handleIpcInvoke(message) {
   const { id, channel, args } = message;
   const handler = ipcHandlers.get(channel);
@@ -228,7 +289,7 @@ async function handleIpcInvoke(message) {
   }, COMMAND_TIMEOUT_MS + COMMAND_GRACE_MS);
 
   try {
-    const event = { sender: "ui" };
+    const event = { sender: { send: ipcSendToUi } };
     const result = await handler(event, ...decodedArgs);
     let encodedResult;
     try {
@@ -291,12 +352,12 @@ function handleIpcSend(message) {
     );
     return;
   }
-  const event = { sender: "ui" };
+  const event = { sender: { send: ipcSendToUi } };
   for (const listener of ipcSendListeners.get(channel) ?? []) {
     try {
       listener(event, ...args);
     } catch (error) {
-      log("warn", `ipc.on handler failed for ${channel}: ${error}`);
+      log("warn", `ipcMain.on handler failed for ${channel}: ${error}`);
     }
   }
 }
@@ -308,14 +369,12 @@ function handleCancel(message) {
 
 async function handleShutdown() {
   try {
-    if (typeof pluginModule?.deactivate === "function") {
-      await Promise.race([
-        Promise.resolve(pluginModule.deactivate()),
-        new Promise((resolve) => setTimeout(resolve, COMMAND_GRACE_MS)),
-      ]);
-    }
+    await Promise.race([
+      runUnmountedHooks(),
+      new Promise((resolve) => setTimeout(resolve, COMMAND_GRACE_MS)),
+    ]);
   } catch (error) {
-    log("warn", `deactivate() threw: ${error}`);
+    log("warn", String(error));
   } finally {
     process.exit(0);
   }
@@ -333,6 +392,9 @@ function handleHostFrame(message) {
     }
     case "invoke":
       void runCommandHandler(message);
+      return;
+    case "mcp-invoke":
+      void runMcpToolHandler(message);
       return;
     case "ipc-invoke":
       void handleIpcInvoke(message);
@@ -357,16 +419,101 @@ function handleHostFrame(message) {
 // -- Host → runtime events --------------------------------------------------------------
 
 const runtimeEventListeners = new Map();
+const runtimeInternalEventListeners = new Map();
+const ORIGINAL_EVENT_LISTENER = Symbol("tempo.originalEventListener");
+const SPECIALIZED_RUNTIME_EVENTS = new Set(["settings.changed", "theme.changed"]);
+
+function runtimeEventName(event) {
+  if (typeof event !== "string" || !event.trim()) {
+    throw new TypeError("tempo.events event must be a non-empty string");
+  }
+  return event.trim();
+}
+
+function assertRuntimeEventHandler(handler) {
+  if (typeof handler !== "function") {
+    throw new TypeError("tempo.events handler must be a function");
+  }
+}
+
+function removeRuntimeEventListenerEntry(name, handler) {
+  const listeners = runtimeEventListeners.get(name);
+  if (!listeners) return false;
+  const removed = listeners.delete(handler);
+  if (listeners.size === 0) runtimeEventListeners.delete(name);
+  return removed;
+}
+
+function offRuntimeEvent(event, handler) {
+  const name = runtimeEventName(event);
+  assertRuntimeEventHandler(handler);
+  const listeners = runtimeEventListeners.get(name);
+  if (!listeners) return false;
+  let removed = false;
+  for (const listener of listeners) {
+    if (listener === handler || listener[ORIGINAL_EVENT_LISTENER] === handler) {
+      listeners.delete(listener);
+      removed = true;
+    }
+  }
+  if (listeners.size === 0) runtimeEventListeners.delete(name);
+  return removed;
+}
 
 function onRuntimeEvent(event, handler) {
-  if (!runtimeEventListeners.has(event)) runtimeEventListeners.set(event, new Set());
-  runtimeEventListeners.get(event).add(handler);
-  return () => runtimeEventListeners.get(event)?.delete(handler);
+  const name = runtimeEventName(event);
+  assertRuntimeEventHandler(handler);
+  if (!runtimeEventListeners.has(name)) runtimeEventListeners.set(name, new Set());
+  runtimeEventListeners.get(name).add(handler);
+  return () => {
+    removeRuntimeEventListenerEntry(name, handler);
+  };
+}
+
+function onInternalRuntimeEvent(event, handler) {
+  const name = runtimeEventName(event);
+  assertRuntimeEventHandler(handler);
+  if (!runtimeInternalEventListeners.has(name)) {
+    runtimeInternalEventListeners.set(name, new Set());
+  }
+  runtimeInternalEventListeners.get(name).add(handler);
+  return () => {
+    const listeners = runtimeInternalEventListeners.get(name);
+    listeners?.delete(handler);
+    if (listeners?.size === 0) runtimeInternalEventListeners.delete(name);
+  };
+}
+
+function onceRuntimeEvent(event, handler) {
+  const name = runtimeEventName(event);
+  assertRuntimeEventHandler(handler);
+  const wrapped = (payload) => {
+    removeRuntimeEventListenerEntry(name, wrapped);
+    handler(payload);
+  };
+  wrapped[ORIGINAL_EVENT_LISTENER] = handler;
+  return onRuntimeEvent(name, wrapped);
+}
+
+function removeAllRuntimeEventListeners(event) {
+  if (event === undefined) {
+    runtimeEventListeners.clear();
+    return;
+  }
+  runtimeEventListeners.delete(runtimeEventName(event));
+}
+
+function runtimeEventListenerCount(event) {
+  return runtimeEventListeners.get(runtimeEventName(event))?.size ?? 0;
 }
 
 function dispatchRuntimeEvent(event, payload) {
   const name = String(event ?? "");
-  for (const handler of runtimeEventListeners.get(name) ?? []) {
+  const handlers = [
+    ...(runtimeInternalEventListeners.get(name) ?? []),
+    ...(SPECIALIZED_RUNTIME_EVENTS.has(name) ? [] : (runtimeEventListeners.get(name) ?? [])),
+  ];
+  for (const handler of handlers) {
     try {
       handler(payload ?? null);
     } catch (error) {
@@ -375,56 +522,71 @@ function dispatchRuntimeEvent(event, payload) {
   }
 }
 
-// -- ExtensionContext -------------------------------------------------------------------
+// -- Host-injected globals ---------------------------------------------------------------
 
-function buildHostProxy() {
-  return {
-    mainPanel: {
-      hide: () => callHost("mainPanel.hide", {}),
+function buildTempo(descriptor) {
+  const storage = {
+    get: async (key) => {
+      const result = await callHost("storage.plugin.get", { key });
+      return result?.value ?? null;
     },
-    app: {
-      open: (appId, params) => callHost("app.open", { appId, params: params ?? null }),
-    },
-    external: {
-      open: (url) => callHost("external.open", { url }),
-    },
-    notify: {
-      show: (options) => callHost("notify.show", options ?? {}),
-    },
-    theme: {
-      get: () => callHost("theme.get", {}),
-    },
-    storage: {
-      plugin: {
-        get: async (key) => {
-          const result = await callHost("storage.plugin.get", { key });
-          return result?.value ?? null;
-        },
-        set: (key, value) => callHost("storage.plugin.set", { key, value }),
-        delete: (key) => callHost("storage.plugin.delete", { key }),
-        list: async () => {
-          const result = await callHost("storage.plugin.list", {});
-          return Array.isArray(result?.keys) ? result.keys : [];
-        },
-      },
+    set: (key, value) => callHost("storage.plugin.set", { key, value }),
+    delete: (key) => callHost("storage.plugin.delete", { key }),
+    list: async () => {
+      const result = await callHost("storage.plugin.list", {});
+      return Array.isArray(result?.keys) ? result.keys : [];
     },
   };
-}
-
-function buildContext(descriptor) {
-  const ipc = {
-    handle: ipcHandle,
-    on: ipcOn,
-    send: ipcSendToUi,
+  const settings = {
+    async getAll() {
+      return { ...((await storage.get("__tempo/settings")) ?? {}) };
+    },
+    async get(id, fallback) {
+      const values = await settings.getAll();
+      return Object.prototype.hasOwnProperty.call(values, id) ? values[id] : fallback;
+    },
+    subscribe(handler) {
+      return onInternalRuntimeEvent("settings.changed", (payload) => {
+        handler(payload?.values && typeof payload.values === "object" ? payload.values : {});
+      });
+    },
   };
   return {
     pluginId: descriptor.pluginId,
-    registerCommand,
-    host: buildHostProxy(),
-    ipc,
-    ui: {
-      /** @deprecated Prefer ctx.ipc.send */
-      emit: (event, payload) => ipcSendToUi(event, payload),
+    commands: {
+      register: registerCommand,
+    },
+    mcpTools: {
+      register: registerMcpTool,
+    },
+    events: {
+      on: onRuntimeEvent,
+      once: onceRuntimeEvent,
+      off: offRuntimeEvent,
+      removeAllListeners: removeAllRuntimeEventListeners,
+      listenerCount: runtimeEventListenerCount,
+      eventNames: () => [...runtimeEventListeners.keys()],
+    },
+    storage,
+    settings,
+    notify: {
+      show: (options = {}) => callHost("notify.show", options),
+    },
+    theme: {
+      async get() {
+        const result = await callHost("theme.get", {});
+        return typeof result === "string" ? result : (result?.theme ?? "system");
+      },
+    },
+    mainPanel: {
+      hide: () => callHost("mainPanel.hide", {}).then(() => undefined),
+    },
+    app: {
+      open: (appId, params) =>
+        callHost("app.open", { appId, params: params ?? null }).then(() => undefined),
+    },
+    external: {
+      open: (url) => callHost("external.open", { url }).then(() => undefined),
     },
     paths: {
       data: descriptor.dataPath,
@@ -432,13 +594,49 @@ function buildContext(descriptor) {
     runtime: {
       nodeVersion: descriptor.nodeVersion,
     },
-    on: onRuntimeEvent,
+    host: callHost,
   };
 }
 
 // -- Boot sequence ------------------------------------------------------------------------
 
-let pluginModule;
+const mountedHooks = [];
+const unmountedHooks = [];
+let runtimeMounted = false;
+
+async function runLifecycleHooks(hooks, name) {
+  for (const hook of hooks.splice(0)) {
+    try {
+      await hook();
+    } catch (error) {
+      throw new Error(`${name} hook failed: ${error && error.message ? error.message : error}`);
+    }
+  }
+}
+
+async function runUnmountedHooks() {
+  for (const hook of unmountedHooks.splice(0)) {
+    try {
+      await hook();
+    } catch (error) {
+      log(
+        "warn",
+        `onUnmounted hook failed: ${error && error.message ? error.message : error}`,
+      );
+    }
+  }
+}
+
+function registerMountedHook(hook) {
+  if (typeof hook !== "function") throw new TypeError("onMounted requires a function");
+  if (runtimeMounted) queueMicrotask(() => void Promise.resolve(hook()));
+  else mountedHooks.push(hook);
+}
+
+function registerUnmountedHook(hook) {
+  if (typeof hook !== "function") throw new TypeError("onUnmounted requires a function");
+  unmountedHooks.push(hook);
+}
 
 async function readHandshakeDescriptor() {
   return new Promise((resolve, reject) => {
@@ -491,22 +689,19 @@ async function main() {
     return;
   }
 
-  const ctx = buildContext(descriptor);
+  globalThis.tempo = buildTempo(descriptor);
+  globalThis.ipcMain = {
+    handle: ipcHandle,
+    on: ipcOn,
+    send: ipcSendToUi,
+  };
+  globalThis.onMounted = registerMountedHook;
+  globalThis.onUnmounted = registerUnmountedHook;
 
   try {
-    pluginModule = await import(pathToFileURL(descriptor.mainPath).href);
-    const entry =
-      pluginModule &&
-      typeof pluginModule.default === "object" &&
-      pluginModule.default &&
-      typeof pluginModule.default.activate === "function"
-        ? pluginModule.default
-        : pluginModule;
-    if (typeof entry.activate !== "function") {
-      throw new Error("plugin main does not export an activate(ctx) function");
-    }
-    pluginModule = entry;
-    await pluginModule.activate(ctx);
+    await import(pathToFileURL(descriptor.mainPath).href);
+    runtimeMounted = true;
+    await runLifecycleHooks(mountedHooks, "onMounted");
     send({ type: "ready", ok: true });
   } catch (error) {
     send({

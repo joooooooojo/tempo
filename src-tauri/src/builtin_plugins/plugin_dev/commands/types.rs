@@ -34,7 +34,7 @@ pub struct PluginDevManifestDocument {
     pub diagnostics: Vec<ManifestDiagnostic>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginDevPreferences {
     pub ui_source_kind: Option<String>,
@@ -44,13 +44,24 @@ pub struct PluginDevPreferences {
     #[serde(default = "default_true")]
     pub auto_reconnect_runtime: bool,
     #[serde(default)]
-    pub receive_real_hooks: bool,
-    #[serde(default)]
     pub use_production_data: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+impl Default for PluginDevPreferences {
+    fn default() -> Self {
+        Self {
+            ui_source_kind: None,
+            ui_service_url: None,
+            ui_static_root: None,
+            runtime_dev_entry: None,
+            auto_reconnect_runtime: true,
+            use_production_data: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,15 +132,6 @@ pub struct ProbeUiUrlResult {
     pub reachable: bool,
     pub status: Option<u16>,
     pub message: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RunHookArgs {
-    pub project_id: String,
-    pub event: String,
-    #[serde(default)]
-    pub payload: Value,
 }
 
 #[derive(Debug, Deserialize)]

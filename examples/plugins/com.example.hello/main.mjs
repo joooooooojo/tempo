@@ -1,4 +1,3 @@
-import { definePlugin } from "./vendor/tempo-sdk.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -55,7 +54,7 @@ function describeScaValue(value, prefix = "value") {
   return checks;
 }
 
-async function greet(tempo, params) {
+async function greet(params) {
   const settings = await tempo.settings.getAll();
   const { loud, defaultWho, theme, langs } = readPluginSettings(settings);
   const who =
@@ -74,8 +73,8 @@ async function greet(tempo, params) {
     body: `${greeting} · 主题 ${theme} · 语言 ${langLabel}`,
   });
 
-  // Event payload includes a Date so UI can verify ipc.send → ipc.on SCA.
-  tempo.ipc.send("greeted", {
+  // Event payload includes a Date so UI can verify ipcMain.send -> ipcRenderer.on SCA.
+  ipcMain.send("greeted", {
     who,
     at,
     loud,
@@ -86,33 +85,34 @@ async function greet(tempo, params) {
   return { who, at, timestamp, logPath, loud, theme, langs, greeting };
 }
 
-export default definePlugin({
-  async activate(tempo) {
-    tempo.ipc.handle("greet", async (_event, params) => greet(tempo, params ?? {}));
+onMounted(() => {
+  ipcMain.handle("greet", async (_event, params) => greet(params ?? {}));
 
-    // Dedicated SCA probe: UI → Runtime invoke + Runtime → UI send.
-    tempo.ipc.handle("sca-probe", async (_event, incoming) => {
-      console.log("[hello] sca-probe received", describeScaValue(incoming, "in").join(" | "));
-      const outgoing = buildScaFixture(`echo:${incoming?.label ?? "?"}`);
-      tempo.ipc.send("sca-echo", outgoing);
-      return {
-        ok: true,
-        checks: describeScaValue(incoming, "in"),
-        outgoing,
-      };
-    });
+  // Dedicated SCA probe: UI -> Runtime invoke + Runtime -> UI send.
+  ipcMain.handle("sca-probe", async (_event, incoming) => {
+    console.log("[hello] sca-probe received", describeScaValue(incoming, "in").join(" | "));
+    const outgoing = buildScaFixture(`echo:${incoming?.label ?? "?"}`);
+    ipcMain.send("sca-echo", outgoing);
+    return {
+      ok: true,
+      checks: describeScaValue(incoming, "in"),
+      outgoing,
+    };
+  });
 
-    // UI → Runtime fire-and-forget send → on.
-    tempo.ipc.on("sca-ping", (_event, incoming) => {
-      console.log("[hello] sca-ping received", describeScaValue(incoming, "ping").join(" | "));
-      tempo.ipc.send("sca-pong", buildScaFixture(`pong:${incoming?.label ?? "?"}`));
-    });
+  // UI -> Runtime fire-and-forget send -> on.
+  ipcMain.on("sca-ping", (_event, incoming) => {
+    console.log("[hello] sca-ping received", describeScaValue(incoming, "ping").join(" | "));
+    ipcMain.send("sca-pong", buildScaFixture(`pong:${incoming?.label ?? "?"}`));
+  });
 
-    // Declared external command for Action / MCP only (UI cannot invoke commands).
-    tempo.commands.register("hello", async (params) => greet(tempo, params));
+  // Declared Command for Actions only (UI cannot invoke Commands).
+  tempo.commands.register("hello", async (params) => greet(params));
 
-    tempo.settings.subscribe((values) => {
-      console.log("[hello] settings changed", values);
-    });
-  },
+  // MCP Tools use their own registry and never route through Commands.
+  tempo.mcpTools.register("say-hello", async (params) => greet(params));
+
+  tempo.settings.subscribe((values) => {
+    console.log("[hello] settings changed", values);
+  });
 });

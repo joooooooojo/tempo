@@ -1,7 +1,6 @@
-import { createPluginClient } from "./vendor/tempo-sdk.mjs";
+"use strict";
 
-(async function () {
-  "use strict";
+const context = await window.tempo.ready();
 
   const whoInput = document.getElementById("who");
   const goButton = document.getElementById("go");
@@ -71,11 +70,9 @@ import { createPluginClient } from "./vendor/tempo-sdk.mjs";
     );
   }
 
-  const tempo = await createPluginClient();
-  const context = tempo.context;
   themeEl.textContent = `宿主主题：${context.theme} · API v${context.apiVersion}`;
 
-  const settings = await tempo.settings.getAll();
+  const settings = await window.tempo.settings.getAll();
   pluginSettingsEl.textContent = formatPluginSettings(settings);
   const defaultWho =
     typeof settings["default-who"] === "string" && settings["default-who"].trim()
@@ -99,7 +96,7 @@ import { createPluginClient } from "./vendor/tempo-sdk.mjs";
     appendLog(`Action 注入文件：${paths.join(", ") || "(空)"}`);
   }
 
-  tempo.settings.subscribe((values) => {
+  window.tempo.settings.subscribe((values) => {
     pluginSettingsEl.textContent = formatPluginSettings(values);
     appendLog(`配置已更新：${JSON.stringify(values)}`);
     if (
@@ -111,23 +108,23 @@ import { createPluginClient } from "./vendor/tempo-sdk.mjs";
     }
   });
 
-  void tempo.theme.subscribe((theme) => {
+  void window.tempo.theme.subscribe((theme) => {
     themeEl.textContent = `宿主主题：${theme} · API v${context.apiVersion}`;
   });
 
-  tempo.ipc.on("greeted", (_event, payload) => {
+  window.ipcRenderer.on("greeted", (_event, payload) => {
     const dateOk = payload?.at instanceof Date;
     appendLog(
       `on greeted：who=${payload?.who} Date=${dateOk ? "ok " + payload.at.toISOString() : "FAIL"} loud=${payload?.loud}`,
     );
   });
 
-  tempo.ipc.on("sca-echo", (_event, payload) => {
+  window.ipcRenderer.on("sca-echo", (_event, payload) => {
     for (const line of describeScaValue(payload, "on sca-echo")) appendLog(line);
     appendLog(allScaOk(payload) ? "✓ sca-echo SCA 通过" : "✗ sca-echo SCA 失败");
   });
 
-  tempo.ipc.on("sca-pong", (_event, payload) => {
+  window.ipcRenderer.on("sca-pong", (_event, payload) => {
     for (const line of describeScaValue(payload, "on sca-pong")) appendLog(line);
     appendLog(allScaOk(payload) ? "✓ sca-pong SCA 通过" : "✗ sca-pong SCA 失败");
   });
@@ -135,12 +132,12 @@ import { createPluginClient } from "./vendor/tempo-sdk.mjs";
   goButton.addEventListener("click", async () => {
     goButton.disabled = true;
     try {
-      const result = await tempo.ipc.invoke("greet", { who: whoInput.value });
+      const result = await window.ipcRenderer.invoke("greet", { who: whoInput.value });
       const dateOk = result?.at instanceof Date;
       appendLog(
         `invoke greet：${result.greeting ?? result.who} · Date=${dateOk ? "ok " + result.at.toISOString() : "FAIL"} · langs=${(result.langs ?? []).join("+")}`,
       );
-      await tempo.session.push({ who: whoInput.value });
+      await window.tempo.session.push({ who: whoInput.value });
     } catch (error) {
       appendLog(`失败：${error.message ?? error}`);
     } finally {
@@ -155,7 +152,7 @@ import { createPluginClient } from "./vendor/tempo-sdk.mjs";
       appendLog("— SCA 探测开始 —");
       for (const line of describeScaValue(outgoing, "ui→rt invoke args")) appendLog(line);
 
-      const result = await tempo.ipc.invoke("sca-probe", outgoing);
+      const result = await window.ipcRenderer.invoke("sca-probe", outgoing);
       appendLog(`invoke sca-probe ok=${result?.ok}`);
       for (const line of result?.checks ?? []) appendLog(`  rt: ${line}`);
       for (const line of describeScaValue(result?.outgoing, "invoke result.outgoing")) {
@@ -165,8 +162,8 @@ import { createPluginClient } from "./vendor/tempo-sdk.mjs";
         allScaOk(result?.outgoing) ? "✓ invoke/handle SCA 通过" : "✗ invoke/handle SCA 失败",
       );
 
-      // Fire-and-forget send; pong arrives via ipc.on("sca-pong").
-      tempo.ipc.send("sca-ping", buildScaFixture("ui-ping"));
+      // Fire-and-forget send; pong arrives via ipcRenderer.on("sca-pong").
+      window.ipcRenderer.send("sca-ping", buildScaFixture("ui-ping"));
       appendLog("send sca-ping 已发出（等待 sca-pong）");
     } catch (error) {
       appendLog(`SCA 探测失败：${error.message ?? error}`);
@@ -174,4 +171,3 @@ import { createPluginClient } from "./vendor/tempo-sdk.mjs";
       scaButton.disabled = false;
     }
   });
-})();

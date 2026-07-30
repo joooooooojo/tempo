@@ -226,7 +226,7 @@ export function RuntimeWorkspace({
                   <Input
                     id="plugin-dev-runtime-entry"
                     value={preferences.runtimeDevEntry ?? ""}
-                    placeholder={`${detail.project.rootPath}\\main.mjs`}
+                    placeholder={`${detail.project.rootPath}\\dist\\main.mjs`}
                     onChange={(event) =>
                       onPreferencesChange({
                         ...preferences,
@@ -269,21 +269,6 @@ export function RuntimeWorkspace({
                     onPreferencesChange({
                       ...preferences,
                       autoReconnectRuntime: checked,
-                    })
-                  }
-                />
-              </Field>
-              <Field orientation="horizontal">
-                <FieldLabel htmlFor="plugin-dev-real-hooks">
-                  接收真实 Hook 事件
-                </FieldLabel>
-                <Switch
-                  id="plugin-dev-real-hooks"
-                  checked={preferences.receiveRealHooks}
-                  onCheckedChange={(checked) =>
-                    onPreferencesChange({
-                      ...preferences,
-                      receiveRealHooks: checked,
                     })
                   }
                 />

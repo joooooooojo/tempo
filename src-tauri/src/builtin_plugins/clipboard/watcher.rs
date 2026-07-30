@@ -787,13 +787,12 @@ pub fn emit_clipboard_update(app: &AppHandle) {
         app.emit_to("shelf-picker", "clipboard-update", ()),
         "emit shelf picker clipboard update",
     );
-    // Phase 2 hook (design §6.1): notify subscribed plugins that the clipboard changed. The
-    // payload deliberately omits clipboard contents by default — plugins that need the actual
-    // content should read it themselves via their own Runtime (which has full system access).
+    // Broadcast metadata only. Plugins that need clipboard contents can read them from a
+    // running Runtime; stopped Runtimes are never activated by this event.
     if let Some(host) = app.try_state::<Arc<crate::plugins::host::PluginHost>>() {
         let host = host.inner().clone();
         let app = app.clone();
-        crate::plugins::hooks::dispatch_event(
+        crate::plugins::host_events::broadcast(
             &app,
             &host,
             "clipboard.changed",

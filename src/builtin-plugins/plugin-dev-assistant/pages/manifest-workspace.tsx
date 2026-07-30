@@ -21,7 +21,6 @@ import {
   AppEditor,
   CommandEditor,
   ContributionSection,
-  HookEditor,
   McpToolEditor,
   SettingEditor,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/editors";
@@ -102,7 +101,7 @@ export function ManifestWorkspace({
         </ContributionSection>
         <ContributionSection
           title="Commands"
-          description="对外能力：仅 Action / Hook / MCP；对内 UI 通信请用 tempo.ipc，勿占用此表"
+          description="供 Action 调用；UI 与 Runtime 私有通信使用 ipcRenderer / ipcMain"
           columns={["Command ID", "标题", "可见性"]}
           columnsClassName="grid-cols-[1fr_1.4fr_0.9fr_auto]"
           onAdd={() =>
@@ -152,41 +151,15 @@ export function ManifestWorkspace({
           ))}
         </ContributionSection>
         <ContributionSection
-          title="Hooks"
-          description="将平台事件路由到 Runtime Command"
-          columns={["事件", "Command"]}
-          columnsClassName="grid-cols-[1fr_1fr_auto]"
-          onAdd={() =>
-            onUpdate((next) =>
-              next.contributes.hooks.push({
-                event: "clipboard.changed",
-                command: next.contributes.commands[0]?.id ?? "",
-              }),
-            )
-          }
-        >
-          {manifest.contributes.hooks.map((hook, index) => (
-            <HookEditor
-              key={index}
-              hook={hook}
-              index={index}
-              commands={manifest.contributes.commands}
-              verifyContext={verifyContext}
-              onUpdate={onUpdate}
-            />
-          ))}
-        </ContributionSection>
-        <ContributionSection
           title="MCP Tools"
-          description="在助手内测试，开发态默认不向外暴露"
-          columns={["Tool 名称", "Command", "描述"]}
-          columnsClassName="grid-cols-[1fr_1fr_1.5fr_auto]"
+          description="在 Runtime 使用 tempo.mcpTools.register 注册；开发态默认不向外暴露"
+          columns={["Tool 名称", "描述"]}
+          columnsClassName="grid-cols-[1fr_1.5fr_auto]"
           onAdd={() =>
             onUpdate((next) =>
               next.contributes.mcpTools.push({
                 name: `tool-${next.contributes.mcpTools.length + 1}`,
                 description: "Tool description",
-                command: next.contributes.commands[0]?.id ?? "",
                 inputSchema: { type: "object", properties: {} },
               }),
             )
@@ -197,7 +170,6 @@ export function ManifestWorkspace({
               key={index}
               tool={tool}
               index={index}
-              commands={manifest.contributes.commands}
               verifyContext={verifyContext}
               onUpdate={onUpdate}
             />

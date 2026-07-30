@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::Local;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::AppState;
@@ -12,6 +12,7 @@ use crate::plugins::manifest::PluginManifest;
 
 use super::connect::{plugin_dev_disconnect, CONTRIBUTIONS_CHANGED_EVENT};
 use super::paths::*;
+use super::templates::scaffold_project;
 use super::types::*;
 
 pub(super) fn manifest_document(raw: String) -> PluginDevManifestDocument {
@@ -75,11 +76,14 @@ pub(super) fn project_root(conn: &Connection, project_id: &str) -> Result<PathBu
     canonical_directory(&root)
 }
 
-pub(super) fn preferences_for(conn: &Connection, project_id: &str) -> Result<PluginDevPreferences, String> {
+pub(super) fn preferences_for(
+    conn: &Connection,
+    project_id: &str,
+) -> Result<PluginDevPreferences, String> {
     ensure_plugin_dev_tables(conn)?;
     conn.query_row(
         "SELECT ui_source_kind, ui_service_url, ui_static_root, runtime_dev_entry,
-                auto_reconnect_runtime, receive_real_hooks, use_production_data
+                auto_reconnect_runtime, use_production_data
          FROM plugin_dev_preferences WHERE project_id = ?1",
         [project_id],
         |row| {
@@ -89,8 +93,7 @@ pub(super) fn preferences_for(conn: &Connection, project_id: &str) -> Result<Plu
                 ui_static_root: row.get(2)?,
                 runtime_dev_entry: row.get(3)?,
                 auto_reconnect_runtime: row.get::<_, i64>(4)? != 0,
-                receive_real_hooks: row.get::<_, i64>(5)? != 0,
-                use_production_data: row.get::<_, i64>(6)? != 0,
+                use_production_data: row.get::<_, i64>(5)? != 0,
             })
         },
     )
@@ -230,58 +233,6 @@ pub(super) fn detail(
     })
 }
 
-pub(super) fn minimal_manifest(args: &CreateProjectArgs) -> Result<String, String> {
-    let mut contributes = json!({
-        "apps": [],
-        "actions": [],
-        "commands": [],
-        "hooks": [],
-        "settings": [],
-        "mcpTools": []
-    });
-    let main = match args.kind.as_str() {
-        "ui" => {
-            contributes["apps"] = json!([{
-                "id": "main",
-                "name": args.name.trim(),
-                "keywords": [],
-                "entry": "index.html",
-                "windowMode": "normal"
-            }]);
-            None
-        }
-        "headless" => Some("main.mjs"),
-        "hybrid" => {
-            contributes["apps"] = json!([{
-                "id": "main",
-                "name": args.name.trim(),
-                "keywords": [],
-                "entry": "index.html",
-                "windowMode": "normal"
-            }]);
-            Some("main.mjs")
-        }
-        _ => return Err("插件类型必须是 ui、headless 或 hybrid".into()),
-    };
-    let mut value = json!({
-        "manifestVersion": 1,
-        "id": args.plugin_id.trim(),
-        "name": args.name.trim(),
-        "version": "0.1.0",
-        "engines": { "tempo": ">=2", "pluginApi": "^1.5.0" },
-        "kind": args.kind,
-        "contributes": contributes
-    });
-    if let Some(main) = main {
-        value["main"] = Value::String(main.into());
-    }
-    let raw = serde_json::to_string_pretty(&value)
-        .map_err(|error| format!("生成 Manifest 失败: {error}"))?;
-    PluginManifest::parse_str(&raw)?;
-    Ok(format!("{raw}\n"))
-}
-
-
 pub fn ensure_plugin_dev_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS plugin_dev_projects (
@@ -300,7 +251,6 @@ pub fn ensure_plugin_dev_tables(conn: &Connection) -> Result<(), String> {
             ui_static_root TEXT,
             runtime_dev_entry TEXT,
             auto_reconnect_runtime INTEGER NOT NULL DEFAULT 1,
-            receive_real_hooks INTEGER NOT NULL DEFAULT 0,
             use_production_data INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(project_id) REFERENCES plugin_dev_projects(id) ON DELETE CASCADE
         );",
@@ -308,7 +258,6 @@ pub fn ensure_plugin_dev_tables(conn: &Connection) -> Result<(), String> {
     .map_err(|error| format!("prepare plugin dev tables: {error}"))?;
     migrate_plugin_dev_paths(conn)
 }
-
 
 #[tauri::command]
 pub fn plugin_dev_list_projects(
@@ -336,7 +285,8 @@ pub fn plugin_dev_list_projects(
 }
 
 #[tauri::command]
-pub fn plugin_dev_create_project(
+pub async fn plugin_dev_create_project(
+    app: AppHandle,
     state: State<'_, AppState>,
     host: State<'_, Arc<PluginHost>>,
     args: CreateProjectArgs,
@@ -351,9 +301,7 @@ pub fn plugin_dev_create_project(
     if path.exists() {
         return Err("目标目录已经存在 manifest.json，请使用“打开项目”".into());
     }
-    let raw = minimal_manifest(&args)?;
-    std::fs::write(&path, raw.as_bytes())
-        .map_err(|error| format!("写入 {} 失败: {error}", path.display()))?;
+    scaffold_project(&app, &root, &args).await?;
 
     let now = Local::now().to_rfc3339();
     let id = format!("project-{}", generate_id());
@@ -374,6 +322,22 @@ pub fn plugin_dev_create_project(
         ],
     )
     .map_err(|error| format!("登记开发项目失败: {error}"))?;
+    let (ui_source_kind, ui_service_url) = match args.kind.as_str() {
+        "ui" | "hybrid" => (Some("url"), Some("http://127.0.0.1:5173/")),
+        _ => (None, None),
+    };
+    let runtime_dev_entry = match args.kind.as_str() {
+        "hybrid" | "headless" => Some("dist/main.mjs"),
+        _ => None,
+    };
+    conn.execute(
+        "INSERT INTO plugin_dev_preferences
+           (project_id, ui_source_kind, ui_service_url, runtime_dev_entry,
+            auto_reconnect_runtime, use_production_data)
+         VALUES (?1, ?2, ?3, ?4, 1, 0)",
+        params![id, ui_source_kind, ui_service_url, runtime_dev_entry,],
+    )
+    .map_err(|error| format!("初始化开发连接设置失败: {error}"))?;
     detail(&conn, &host, &id)
 }
 
@@ -471,15 +435,14 @@ pub fn plugin_dev_update_preferences(
     conn.execute(
         "INSERT INTO plugin_dev_preferences
            (project_id, ui_source_kind, ui_service_url, ui_static_root, runtime_dev_entry,
-            auto_reconnect_runtime, receive_real_hooks, use_production_data)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            auto_reconnect_runtime, use_production_data)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(project_id) DO UPDATE SET
            ui_source_kind = excluded.ui_source_kind,
            ui_service_url = excluded.ui_service_url,
            ui_static_root = excluded.ui_static_root,
            runtime_dev_entry = excluded.runtime_dev_entry,
            auto_reconnect_runtime = excluded.auto_reconnect_runtime,
-           receive_real_hooks = excluded.receive_real_hooks,
            use_production_data = excluded.use_production_data",
         params![
             args.project_id,
@@ -488,7 +451,6 @@ pub fn plugin_dev_update_preferences(
             preferences.ui_static_root,
             preferences.runtime_dev_entry,
             preferences.auto_reconnect_runtime as i64,
-            preferences.receive_real_hooks as i64,
             preferences.use_production_data as i64,
         ],
     )
@@ -523,26 +485,11 @@ pub async fn plugin_dev_forget_project(
 
 #[cfg(test)]
 mod tests {
-    use super::{manifest_document, minimal_manifest, CreateProjectArgs};
     use super::super::connect::{resolve_runtime_entry, resolve_static_source};
     use super::super::paths::{path_from_input, path_to_storage_string};
     use super::super::probe::validate_loopback_url;
     use crate::plugins::host::generate_id;
     use crate::plugins::manifest::PluginManifest;
-
-    #[test]
-    fn generated_manifests_are_valid_for_all_kinds() {
-        for kind in ["ui", "headless", "hybrid"] {
-            let raw = minimal_manifest(&CreateProjectArgs {
-                root_path: String::new(),
-                plugin_id: format!("com.example.{kind}"),
-                name: format!("Example {kind}"),
-                kind: kind.into(),
-            })
-            .unwrap();
-            assert!(manifest_document(raw).valid);
-        }
-    }
 
     #[test]
     fn loopback_url_validation_rejects_remote_hosts() {
@@ -573,7 +520,7 @@ mod tests {
               "id": "com.example.paths",
               "name": "Paths",
               "version": "0.1.0",
-              "engines": { "tempo": ">=2", "pluginApi": "^1.5.0" },
+              "engines": { "tempo": ">=2", "pluginApi": "^1.0.0" },
               "kind": "headless",
               "main": "main.mjs",
               "contributes": { "commands": [] }

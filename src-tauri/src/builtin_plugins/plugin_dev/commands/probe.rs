@@ -1,8 +1,9 @@
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use serde_json::{json, Value};
 use tauri::State;
 
+use crate::plugins::bridge::{invoke_runtime_mcp_tool, DEFAULT_TIMEOUT};
 use crate::plugins::host::PluginHost;
 
 use super::types::*;
@@ -25,7 +26,6 @@ pub(super) fn validate_loopback_url(raw: &str) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
-
 #[tauri::command]
 pub async fn plugin_dev_probe_ui_url(args: ProbeUiUrlArgs) -> Result<ProbeUiUrlResult, String> {
     let url = validate_loopback_url(&args.url)?;
@@ -47,44 +47,6 @@ pub async fn plugin_dev_probe_ui_url(args: ProbeUiUrlArgs) -> Result<ProbeUiUrlR
     }
 }
 
-
-#[tauri::command]
-pub async fn plugin_dev_simulate_hook(
-    host: State<'_, Arc<PluginHost>>,
-    args: RunHookArgs,
-) -> Result<Value, String> {
-    let entry = host
-        .development_plugins()
-        .into_iter()
-        .find(|candidate| candidate.project_id == args.project_id)
-        .ok_or_else(|| "项目尚未连接到 Tempo".to_string())?;
-    let hooks = entry
-        .manifest
-        .contributes
-        .hooks
-        .iter()
-        .filter(|hook| hook.event == args.event)
-        .collect::<Vec<_>>();
-    if hooks.is_empty() {
-        return Err(format!("Manifest 未声明 Hook 事件 {}", args.event));
-    }
-    let mut results = Vec::with_capacity(hooks.len());
-    for hook in hooks {
-        let result = host
-            .supervisor
-            .call(
-                &entry.manifest.id,
-                &hook.command,
-                args.payload.clone(),
-                crate::plugins::bridge::DEFAULT_TIMEOUT,
-            )
-            .await
-            .map_err(|error| error.message)?;
-        results.push(json!({ "command": hook.command, "result": result }));
-    }
-    Ok(Value::Array(results))
-}
-
 #[tauri::command]
 pub async fn plugin_dev_run_mcp_tool(
     host: State<'_, Arc<PluginHost>>,
@@ -102,21 +64,25 @@ pub async fn plugin_dev_run_mcp_tool(
         .iter()
         .find(|tool| tool.name == args.tool_name)
         .ok_or_else(|| format!("Manifest 未声明 MCP Tool {}", args.tool_name))?;
+    let arguments = if args.arguments.is_null() {
+        json!({})
+    } else {
+        args.arguments
+    };
     let input_validator = jsonschema::validator_for(&tool.input_schema)
         .map_err(|error| format!("MCP inputSchema 无效: {error}"))?;
     input_validator
-        .validate(&args.arguments)
+        .validate(&arguments)
         .map_err(|error| format!("MCP 输入不符合 Schema: {error}"))?;
-    let result = host
-        .supervisor
-        .call(
-            &entry.manifest.id,
-            &tool.command,
-            args.arguments,
-            crate::plugins::bridge::DEFAULT_TIMEOUT,
-        )
-        .await
-        .map_err(|error| error.message)?;
+    let result = invoke_runtime_mcp_tool(
+        host.inner(),
+        &entry.manifest.id,
+        &tool.name,
+        arguments,
+        DEFAULT_TIMEOUT,
+    )
+    .await
+    .map_err(|error| error.message)?;
     if let Some(schema) = &tool.output_schema {
         let output_validator = jsonschema::validator_for(schema)
             .map_err(|error| format!("MCP outputSchema 无效: {error}"))?;
@@ -126,4 +92,3 @@ pub async fn plugin_dev_run_mcp_tool(
     }
     Ok(result)
 }
-

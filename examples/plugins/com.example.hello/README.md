@@ -1,8 +1,8 @@
 # Hello 示例插件（com.example.hello）
 
-混合示例：对外 `hello` command（Action / MCP）+ 对内 `tempo.ipc`（含 Structured Clone 探测）。
+混合示例：Action 通过 `hello` Command 调用 Runtime，MCP Tool 通过 `tempo.mcpTools.register("say-hello", ...)` 独立注册，页面使用 `ipcRenderer` / `ipcMain` 与 Runtime 私下通信。
 
-需要 Host API `^1.5.0`。
+需要 Host API `^1.0.0`。
 
 ## 手动验证 SCA
 
@@ -12,21 +12,22 @@
    - `invoke greet` 返回值里的 `at` 应为 `Date`  
    - `on greeted` 里的 `at` 应为 `Date`
 4. 点 **测试 SCA**  
-   - UI → Runtime：`ipc.invoke("sca-probe")` 携带 Date / Map / Set / Uint8Array / 循环引用  
-   - Runtime → UI：`ipc.send("sca-echo")` 同结构  
-   - UI → Runtime：`ipc.send("sca-ping")` → Runtime `ipc.on` → `ipc.send("sca-pong")`  
+   - UI → Runtime：`ipcRenderer.invoke("sca-probe")` 携带 Date / Map / Set / Uint8Array / 循环引用
+   - Runtime → UI：`ipcMain.send("sca-echo")` 同结构
+   - UI → Runtime：`ipcRenderer.send("sca-ping")` → Runtime `ipcMain.on` → `ipcMain.send("sca-pong")`
    - 日志应出现 `✓ invoke/handle SCA 通过`、`✓ sca-echo SCA 通过`、`✓ sca-pong SCA 通过`
 
 ```js
 // main.mjs
-tempo.ipc.handle("greet", ...);
-tempo.ipc.handle("sca-probe", ...);
-tempo.ipc.on("sca-ping", ...);
-tempo.commands.register("hello", ...); // Action/MCP only
+ipcMain.handle("greet", ...);
+ipcMain.handle("sca-probe", ...);
+ipcMain.on("sca-ping", ...);
+tempo.commands.register("hello", ...); // 仅供 Action 调用
+tempo.mcpTools.register("say-hello", ...); // 仅供 MCP 调用
 
 // index.js
-await tempo.ipc.invoke("greet", { who: "Tempo" });
-await tempo.ipc.invoke("sca-probe", fixture);
-tempo.ipc.send("sca-ping", fixture);
-tempo.ipc.on("sca-echo" | "sca-pong" | "greeted", ...);
+await window.ipcRenderer.invoke("greet", { who: "Tempo" });
+await window.ipcRenderer.invoke("sca-probe", fixture);
+window.ipcRenderer.send("sca-ping", fixture);
+window.ipcRenderer.on("sca-echo" | "sca-pong" | "greeted", ...);
 ```

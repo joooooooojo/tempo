@@ -13,10 +13,10 @@ import type { PluginRpcError, PluginUiPrepareResult } from "@/types";
  * ownership on the Rust side; nothing here is trusted at face value from the iframe.
  *
  * The host injects `__tempo__/structured-clone.js` + `__tempo__/client.js` and mounts
- * `window.plugin` so plugin authors do not need an SDK:
+ * `window.tempo` plus `window.ipcRenderer`:
  *
- *   await window.plugin.ipc.invoke("greet", { who: "Tempo" })  // private UI ↔ Runtime
- *   await window.plugin.host("notify.show", { title: "Hi" })   // Host only
+ *   await window.ipcRenderer.invoke("greet", { who: "Tempo" })
+ *   await window.tempo.notify.show({ title: "Hi" })
  *
  * Host -> plugin:
  *   { type: "tempo-plugin-context", apiVersion, theme, params, session }
@@ -24,14 +24,14 @@ import type { PluginRpcError, PluginUiPrepareResult } from "@/types";
  *   { type: "tempo-plugin-event", subscriptionId?, event, payload }
  *   { type: "tempo-plugin-dev-log", source, message }  (dev Runtime stdout/stderr)
  *
- * Plugin -> host (via window.plugin.ipc / plugin.host → postMessage):
+ * Plugin -> host (via ipcRenderer / tempo.host -> postMessage):
  *   { type: "tempo-plugin-rpc", id, method, params }
  */
 type HostToPluginMessage =
   | { type: "tempo-plugin-context"; apiVersion: string; theme: string; params: unknown; session: unknown }
   | { type: "tempo-plugin-rpc-response"; id: string; ok: true; result: unknown }
   | { type: "tempo-plugin-rpc-response"; id: string; ok: false; error: PluginRpcError }
-  | { type: "tempo-plugin-event"; subscriptionId?: string; event: string; payload: unknown }
+  | { type: "tempo-plugin-event"; source: "platform" | "runtime"; subscriptionId?: string; event: string; payload: unknown }
   | { type: "tempo-plugin-dev-log"; source: string; message: string };
 
 interface PluginToHostRpcMessage {
@@ -85,7 +85,7 @@ export interface PluginAppHostProps {
   appId?: string;
   params?: Record<string, unknown>;
   /**
-   * Called when the plugin asks the host to go back (Esc / `host.mainPanel.back`). Falls back
+   * Called when the plugin asks the host to go back (Esc / `tempo.mainPanel.back`). Falls back
    * to the ambient `AppNavigationProvider` context when omitted.
    */
   onBack?: () => void;
@@ -214,6 +214,7 @@ export function PluginAppHost({
       pluginId: string;
       viewInstanceId?: string;
       subscriptionId?: string;
+      source?: "platform" | "runtime";
       event: string;
       payload: unknown;
     }>("plugin-runtime-event", (e) => {
@@ -221,6 +222,7 @@ export function PluginAppHost({
       if (e.payload.viewInstanceId && e.payload.viewInstanceId !== viewInstanceId) return;
       postToPlugin({
         type: "tempo-plugin-event",
+        source: e.payload.source ?? "platform",
         subscriptionId: e.payload.subscriptionId,
         event: e.payload.event,
         payload: e.payload.payload,

@@ -358,10 +358,6 @@ export const api = {
     invoke<PluginDevConnectionStatus>("plugin_dev_reconnect_runtime", {
       args: { projectId },
     }),
-  simulatePluginDevHook: (projectId: string, event: string, payload: unknown) =>
-    invoke<unknown>("plugin_dev_simulate_hook", {
-      args: { projectId, event, payload },
-    }),
   runPluginDevMcpTool: (projectId: string, toolName: string, argumentsValue: unknown) =>
     invoke<unknown>("plugin_dev_run_mcp_tool", {
       args: { projectId, toolName, arguments: argumentsValue },

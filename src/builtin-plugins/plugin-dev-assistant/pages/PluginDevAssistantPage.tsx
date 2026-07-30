@@ -9,11 +9,23 @@ import {
   Braces,
   FolderOpen,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useOptionalMainPanelAppBarChrome } from "@/apps/appBarChrome";
 import { useOptionalAppNavigation } from "@/apps/navigation";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -61,7 +73,6 @@ import { RuntimeWorkspace } from "@/builtin-plugins/plugin-dev-assistant/pages/r
 import { ManifestWorkspace } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest-workspace";
 import { ProjectSwitcher } from "@/builtin-plugins/plugin-dev-assistant/components/ProjectSwitcher.tsx";
 import {
-  KIND_ITEMS,
   messageOf,
   normalizePreferences,
   type ManifestMode,
@@ -75,6 +86,18 @@ import type {
   PluginDevProject,
   PluginDevProjectDetail,
 } from "@/types";
+
+const PROJECT_TEMPLATE_ITEMS = [
+  { value: "ui", label: "UI · Vite" },
+  { value: "hybrid", label: "Hybrid · Vite" },
+  { value: "headless", label: "Headless · Vite" },
+] as const;
+
+const PROJECT_TEMPLATE_DESCRIPTIONS: Record<PluginKind, string> = {
+  ui: "页面插件。构建后 dist 包含 index.html 与 manifest.json。",
+  hybrid: "页面与 Runtime。构建后 dist 同时包含 index.html、main.mjs 与 manifest.json。",
+  headless: "仅 Runtime。构建后 dist 包含 main.mjs 与 manifest.json。",
+};
 
 export function PluginDevAssistantPage() {
   const navigation = useOptionalAppNavigation();
@@ -97,6 +120,8 @@ export function PluginDevAssistantPage() {
   const [createId, setCreateId] = useState("com.example.plugin");
   const [createName, setCreateName] = useState("Tempo Plugin");
   const [createKind, setCreateKind] = useState<PluginKind>("ui");
+  const [pendingRemoval, setPendingRemoval] =
+    useState<PluginDevProject | null>(null);
   const [logs, setLogs] = useState<PluginDevLogEvent[]>([]);
 
   const applyDetail = useCallback((next: PluginDevProjectDetail) => {
@@ -322,12 +347,16 @@ export function PluginDevAssistantPage() {
   };
 
   const forgetProject = async () => {
-    if (!detail) return;
+    if (!pendingRemoval) return;
+    const project = pendingRemoval;
     setBusy(true);
     try {
-      await api.forgetPluginDevProject(detail.project.id);
-      setActiveProjectId(null);
-      setDetail(null);
+      await api.forgetPluginDevProject(project.id);
+      setPendingRemoval(null);
+      if (project.id === activeProjectId) {
+        setActiveProjectId(null);
+        setDetail(null);
+      }
       await loadProjects();
       toast.success("已从最近项目中移除");
     } catch (error) {
@@ -353,6 +382,7 @@ export function PluginDevAssistantPage() {
             activeProjectId={activeProjectId}
             disabled={busy}
             onSelect={(projectId) => void loadProject(projectId)}
+            onDelete={setPendingRemoval}
             onCreate={() => setCreateOpen(true)}
             onOpen={() => void openProject()}
           />
@@ -405,7 +435,7 @@ export function PluginDevAssistantPage() {
                   onRawChange={setManifestRaw}
                   onUpdate={updateManifest}
                   onSave={() => void saveManifest()}
-                  onForget={() => void forgetProject()}
+                  onForget={() => setPendingRemoval(detail.project)}
                 />
               </WorkspaceKeepAlive>
               {preferences ? (
@@ -479,7 +509,7 @@ export function PluginDevAssistantPage() {
           <DialogHeader>
             <DialogTitle>创建插件项目</DialogTitle>
             <DialogDescription>
-              只在所选根目录创建 manifest.json。
+              从模板创建完整 Vite 工程，构建后的 dist 可直接供 Tempo 使用。
             </DialogDescription>
           </DialogHeader>
           <DialogContent>
@@ -493,7 +523,7 @@ export function PluginDevAssistantPage() {
                     id="plugin-dev-create-path"
                     value={createPath}
                     onChange={(event) => setCreatePath(event.target.value)}
-                    placeholder="C:\\projects\\my-plugin"
+                    placeholder="输入/选择项目根目录"
                   />
                   <Button
                     variant="outline"
@@ -529,9 +559,9 @@ export function PluginDevAssistantPage() {
                 </Field>
               </div>
               <Field>
-                <FieldLabel>类型</FieldLabel>
+                <FieldLabel>项目模板</FieldLabel>
                 <Select
-                  items={KIND_ITEMS}
+                  items={PROJECT_TEMPLATE_ITEMS}
                   value={createKind}
                   onValueChange={(value) =>
                     value && setCreateKind(value as PluginKind)
@@ -542,7 +572,7 @@ export function PluginDevAssistantPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      {KIND_ITEMS.map((item) => (
+                      {PROJECT_TEMPLATE_ITEMS.map((item) => (
                         <SelectItem key={item.value} value={item.value}>
                           {item.label}
                         </SelectItem>
@@ -550,6 +580,9 @@ export function PluginDevAssistantPage() {
                     </SelectGroup>
                   </SelectContent>
                 </Select>
+                <p className="text-muted-foreground text-sm">
+                  {PROJECT_TEMPLATE_DESCRIPTIONS[createKind]}
+                </p>
               </Field>
             </FieldGroup>
           </DialogContent>
@@ -577,7 +610,50 @@ export function PluginDevAssistantPage() {
           </DialogFooter>
         </DialogPanel>
       </Dialog>
+
+      <AlertDialog
+        open={pendingRemoval !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setPendingRemoval(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia className="bg-destructive/10 text-destructive">
+              <Trash2 />
+            </AlertDialogMedia>
+            <AlertDialogTitle>
+              移除{pendingRemoval?.name ? `“${pendingRemoval.name}”` : "这个项目"}？
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              只会从插件开发助手的项目列表中移除记录，不会删除本地项目文件或目录。
+              {pendingRemoval?.rootPath ? (
+                <span
+                  className="mt-2 block break-all font-mono text-xs"
+                  title={pendingRemoval.rootPath}
+                >
+                  {pendingRemoval.rootPath}
+                </span>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void forgetProject()}
+            >
+              {busy ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Trash2 data-icon="inline-start" />
+              )}
+              {busy ? "正在移除" : "移除记录"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
-

@@ -1,17 +1,17 @@
 {
-  "$schema": "../../../docs/schemas/plugin-manifest.schema.json",
+  "$schema": "https://raw.githubusercontent.com/joooooooojo/tempo/master/docs/schemas/plugin-manifest.schema.json",
   "manifestVersion": 1,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
   "version": "1.1.0",
   "engines": {
     "tempo": ">=2",
-    "pluginApi": "^1.5.0"
+    "pluginApi": "^1.0.0"
   },
   "kind": "hybrid",
   "author": "Tempo",
   "publisher": "tempo-examples",
-  "description": "混合示例：对外 hello command + 对内 tempo.ipc（含 SCA 探测）。",
+  "description": "混合示例：Action 使用 Command，MCP Tool 使用 tempo.mcpTools.register，UI 与 Runtime 使用私有 IPC。",
   "homepage": "https://example.com/tempo-plugins/hello",
   "license": "MIT",
   "categories": [
@@ -84,7 +84,6 @@
       {
         "name": "say-hello",
         "description": "Write a greeting to the plugin log and show a notification",
-        "command": "hello",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -206,7 +205,6 @@
         "default": "world",
         "placeholder": "world"
       }
-    ],
-    "hooks": []
+    ]
   }
 }

@@ -1,7 +1,7 @@
-//! Dynamic MCP exposure for plugin Runtime commands.
+//! Dynamic MCP exposure for plugin Runtime MCP Tool handlers.
 //!
 //! The platform owns the MCP endpoint and external names. Plugins only declare public tool
-//! contracts that map to their own commands; every list and call rechecks trust and approval.
+//! contracts registered with `tempo.mcpTools.register`; every list and call rechecks trust and approval.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::db::AppState;
 
-use super::bridge::{invoke_runtime_command, DEFAULT_TIMEOUT};
+use super::bridge::{invoke_runtime_mcp_tool, DEFAULT_TIMEOUT};
 use super::host::PluginHost;
 use super::manifest::{ContributedMcpToolAnnotations, PluginManifest};
 use super::paths::packages_dir;
@@ -267,10 +267,9 @@ async fn call_exposed_tool_inner(
         arguments
     };
     validate_instance(&tool.input_schema, &arguments, "input")?;
-    let result =
-        invoke_runtime_command(&host, plugin_id, &tool.command, arguments, DEFAULT_TIMEOUT)
-            .await
-            .map_err(|error| error.to_string())?;
+    let result = invoke_runtime_mcp_tool(&host, plugin_id, &tool.name, arguments, DEFAULT_TIMEOUT)
+        .await
+        .map_err(|error| error.to_string())?;
     if let Some(output_schema) = &tool.output_schema {
         validate_instance(output_schema, &result, "output")?;
     }

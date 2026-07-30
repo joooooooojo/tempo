@@ -5,6 +5,10 @@ node_modules/
 dist/
 dist-ssr/
 
+# VitePress
+docs/.vitepress/dist
+docs/.vitepress/cache
+
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/schemas

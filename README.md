@@ -77,7 +77,7 @@ Tempo 的定位是**可扩展宿主**：内置应用与第三方插件在主面�
 | **声明式清单** | 导入时只解析 `manifest.json`，注册面板入口与快捷操作，不执行插件代码 |
 | **信任** | 用户确认后才视为信任包；含 `main` 的插件会提示其权限接近 Tempo 本体（读写文件、网络、起进程等） |
 | **启用** | 开关控制是否向面板注册贡献；Runtime **懒启动**，首次 `invoke` 或需要时才拉起 Node 进程 |
-| **Host Bridge** | 插件 UI 不直连 Tauri IPC；通过 `window.plugin.host(...)` 走宿主鉴权路由 |
+| **Host Bridge** | Host 向 UI 注入 `window.tempo` / `window.ipcRenderer`，向 Runtime 注入 `globalThis.tempo` / `globalThis.ipcMain` |
 | **Runtime** | 声明 `main.mjs` / `main.js` 的插件在独立 Node 进程中运行；Supervisor 负责启停与清理 |
 | **安全模型** | 信任模型而非沙箱：恶意插件无法被能力列表完全拦住，请只安装可信来源 |
 
@@ -97,9 +97,9 @@ com.example.myplugin/
 - **纯 UI**：无 `main`，不需安装插件 Node 运行时  
 - **混合 / 无界面**：有 `main` 时须在设置 → 插件中安装 **插件 Node 运行时**  
 
-`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`contributes.apps` / `actions` / `commands` / `mcpTools`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `examples/plugins/com.example.hello/manifest.json`。
+`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`contributes.apps` / `commands` / `actions` / `mcpTools` / `settings`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `examples/plugins/com.example.hello/manifest.json`。
 
-开发资料：[插件开发指南](./docs/plugin-development.md) · [Plugin SDK](./docs/plugin-sdk.md) · [Host API 参考](./docs/plugin-host-api.md) · [manifest.json JSON Schema](./docs/schemas/plugin-manifest.schema.json)
+文档：[在线文档](https://joooooooojo.github.io/tempo/)（本地：`pnpm docs:dev`）· [快速开始](./docs/guide/getting-started.md) · [插件开发](./docs/developer/index.md) · [插件全局 API](./docs/reference/plugin-api.md) · [平台 API](./docs/reference/plugin-host-api.md) · [Manifest](./docs/reference/manifest-schema.md)
 
 ### 安装与试用（Hello 示例）
 
@@ -108,25 +108,34 @@ com.example.myplugin/
 3. 导入后为**未信任、已禁用**；点击 **信任** → 打开 **启用**  
 4. 主面板搜索「Hello 示例」「Hello 独立窗口」或快捷操作「Hello 一下」
 
-面板内 UI 自动注入 `window.plugin`。推荐使用官方 SDK：
+插件入口不需要额外的 Tempo 依赖或包装函数。Host 会在代码执行前注入全局 API：
 
 ```ts
-import { createPluginClient } from "@tempo/plugin-sdk";
+// UI
+await window.tempo.ready();
+const result = await window.ipcRenderer.invoke("greet", { who: "Tempo" });
+await window.tempo.notify.show({ title: result.greeting });
 
-const tempo = await createPluginClient();
-await tempo.ipc.invoke("greet", { who: "Tempo" });
-await tempo.notify.show({ title: "Hi" });
+// Runtime
+onMounted(() => {
+  ipcMain.handle("greet", async (_event, { who }) => ({
+    greeting: `Hello, ${who}!`,
+  }));
+});
 ```
 
-Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一；两种目标都会收到结构化的 `{ actionId, query, input }`。UI 对内通信用 `tempo.ipc`；对外 Command 仅供 Action / Hook / MCP（UI 不可调 command）。
+Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一。MCP Tool 在 Manifest 声明契约，并由 Runtime 的 `tempo.mcpTools.register()` 独立注册。UI 与 Runtime 的私有通信使用 `ipcRenderer` / `ipcMain`；平台事件通过 `tempo.events.on/once/off` 管理，不写入 Manifest，也不需要 `hooks`。
 
-宿主侧常用 Bridge 方法（节选）：`mainPanel.hide` / `mainPanel.back` / `mainPanel.setSize`、独立窗口专用的 `window.setRect` / `window.close`、`app.open`、`external.open`（仅 http(s)/mailto）、`notify.show`、`theme.get` / `theme.onChange`、`storage.plugin.get|set|delete|list`、`session.push` 等。
+常用平台 API 包括 `tempo.mainPanel`、`tempo.window`、`tempo.app`、`tempo.external`、`tempo.notify`、`tempo.theme`、`tempo.storage`、`tempo.settings`、`tempo.session` 与 `tempo.events`。
+Runtime 另外提供 `tempo.commands.register()` 给 Action 注册 Command，以及独立的 `tempo.mcpTools.register()` 给 MCP Tool 注册实现。
 
 卸载插件会停止 Runtime、移除面板贡献，安装包可移入回收目录（可选删除插件私有数据）。
 
-### 插件 SDK
+### Vite 项目模板
 
-`@tempo/plugin-sdk`（与主包同版本）统一导出 `definePlugin` / `createPluginClient` 等 API，详见 [Plugin SDK](./docs/plugin-sdk.md)。示例 Hello 已 vendoring 打包后的 SDK。
+插件开发助手会从 GitHub Pages 获取最新兼容的 UI、Hybrid、Headless 模板，并在本地缓存通过 SHA-256 校验的版本。模板与 Tempo 应用独立发布，不需要更新桌面端即可获得新模板。模板不依赖 Tempo npm 包，`pnpm build` 生成的 `dist` 已包含 `manifest.json` 和对应的 UI / Runtime 入口，可直接导入 Tempo。
+
+模板目录同时协商版本化 Manifest Schema。新项目的 `manifest.json` 会自动写入当前模板对应的远端 `$schema` 地址。
 
 ## 🤖 MCP
 
@@ -148,7 +157,7 @@ Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，
 - 健康检查：`GET http://127.0.0.1:17832/health`（无需鉴权）  
 - Tempo 未运行或 MCP 关闭时客户端无法连接  
 
-**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，但**默认不向 AI 暴露**；用户在插件设置中确认后，插件工具会以 `tempo_plugin_*` 一级 MCP 工具提供给外部客户端。旧的 `tempo_list_exposed_plugin_tools` / `tempo_call_plugin_tool` 入口暂时保留兼容。
+**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，并在 Runtime 使用 `tempo.mcpTools.register()` 注册实现；工具**默认不向 AI 暴露**，用户确认后才会以 `tempo_plugin_*` 一级 MCP 工具提供给外部客户端。旧的 `tempo_list_exposed_plugin_tools` / `tempo_call_plugin_tool` 入口暂时保留兼容。
 
 ## 🛠️ 技术栈
 
@@ -173,19 +182,21 @@ Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，
 │   ├── commands/             # 宿主 IPC（launcher / window / plugins / tracker…）
 │   ├── plugins/              # 清单解析、Runtime、Bridge、信任与安装
 │   └── mcp/                  # MCP HTTP 服务
-├── packages/plugin-sdk/
+├── plugin-ui/                # Host 注入的页面 Bridge
+├── plugin-runtime/           # Runtime bootstrap
+├── templates/plugins/        # 独立发布的 UI / Hybrid / Headless 模板源
 └── examples/plugins/         # 示例插件（含 com.example.hello）
 ```
 
 ## 💻 开发
 
 ```bash
-pnpm dev              # Tauri 开发模式
-pnpm run sync:version # 同步 package.json → Cargo/tauri 版本
-pnpm run build        # 类型检查 + 发布构建
+pnpm dev                  # Tauri 开发模式
+pnpm run sync:app-version # 同步 Tempo 应用版本到 Cargo / Tauri
+pnpm run build            # 类型检查 + 发布构建
 ```
 
-版本号以 `package.json` 为唯一来源：`npm version patch|minor|major` 会自动同步 `src-tauri`。
+Tempo 应用版本以根 `package.json` 为唯一来源：`npm version patch|minor|major` 会自动同步 `src-tauri`。插件 API 由 Host 注入，通过 `engines.pluginApi` 维护兼容范围，没有需要同步的独立包版本。
 
 调试：开发模式下可通过 Tauri/WebView 开发者工具查看面板前端；插件 UI 可在对应面板内调试。
 

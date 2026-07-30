@@ -21,7 +21,7 @@ use super::manifest::PluginManifest;
 pub const PROTOCOL: &str = "tempo-plugin";
 
 /// Host-owned bridge script path (not read from the plugin package). Injected into every
-/// plugin HTML document so authors get `window.plugin` without an SDK.
+/// plugin HTML document so authors get `window.tempo` and `window.ipcRenderer` directly.
 pub const BRIDGE_CLIENT_PATH: &str = "__tempo__/client.js";
 pub const BRIDGE_SCA_PATH: &str = "__tempo__/structured-clone.js";
 
@@ -147,7 +147,7 @@ fn is_reserved_host_path(rel_path: &str) -> bool {
     rel_path == BRIDGE_CLIENT_PATH || rel_path.starts_with("__tempo__/")
 }
 
-/// Insert the host bridge as the first script so `window.plugin` exists before plugin code runs.
+/// Insert the host bridge first so injected globals exist before plugin code runs.
 fn inject_bridge_script(html: &[u8]) -> Vec<u8> {
     if html
         .windows(BRIDGE_SCRIPT_TAG.len())

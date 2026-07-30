@@ -26,7 +26,6 @@ import { api } from "@/lib/api";
 import { messageOf } from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
 import type {
   EditablePluginCommand,
-  EditablePluginHook,
   EditablePluginMcpTool,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
 import type { PluginDevLogEvent } from "@/types";
@@ -39,7 +38,6 @@ export type ContributionVerifyContext = {
 
 export type ContributionVerifyTarget =
   | { kind: "command"; item: EditablePluginCommand }
-  | { kind: "hook"; item: EditablePluginHook }
   | { kind: "mcp"; item: EditablePluginMcpTool };
 
 function formatLogs(logs: PluginDevLogEvent[]) {
@@ -52,8 +50,6 @@ function targetTitle(target: ContributionVerifyTarget) {
   switch (target.kind) {
     case "command":
       return target.item.title || target.item.id || "Command";
-    case "hook":
-      return target.item.event;
     case "mcp":
       return target.item.name;
   }
@@ -62,11 +58,9 @@ function targetTitle(target: ContributionVerifyTarget) {
 function targetDescription(target: ContributionVerifyTarget) {
   switch (target.kind) {
     case "command":
-      return "验证对外 Command（contributes.commands / Action·Hook·MCP）。对内 UI↔Runtime 请用 tempo.ipc，由插件 UI 自测。使用默认参数 {}，输出见下方日志。";
-    case "hook":
-      return "验证对外 Hook → Command。使用默认 Payload {}，输出见下方日志。";
+      return "验证对外 Command（contributes.commands / Action）。MCP Tool 使用独立的 tempo.mcpTools.register，UI 与 Runtime 私有通信使用 ipcRenderer / ipcMain。这里使用默认参数 {}。";
     case "mcp":
-      return null;
+      return "验证 Manifest 声明的 MCP Tool 与 Runtime 中同名 tempo.mcpTools.register handler。这里使用默认参数 {}，并执行输入输出 Schema 校验。";
   }
 }
 
@@ -135,13 +129,6 @@ export function ContributionVerifyDialog({
             defaults,
           );
           break;
-        case "hook":
-          await api.simulatePluginDevHook(
-            context.projectId,
-            target.item.event,
-            defaults,
-          );
-          break;
         case "mcp":
           await api.runPluginDevMcpTool(
             context.projectId,
@@ -175,39 +162,25 @@ export function ContributionVerifyDialog({
           ) : null}
         </DialogHeader>
         <DialogContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6">
-          {target.kind !== "mcp" ? (
+          {target.kind === "command" ? (
             <FieldGroup>
-              {target.kind === "command" ? (
-                <div className="plugin-dev-form-grid plugin-dev-form-grid--2">
-                  <Field>
-                    <FieldLabel>Command ID</FieldLabel>
-                    <Input value={target.item.id} readOnly />
-                  </Field>
-                  <Field>
-                    <FieldLabel>标题</FieldLabel>
-                    <Input value={target.item.title} readOnly />
-                  </Field>
-                  <Field>
-                    <FieldLabel>可见性</FieldLabel>
-                    <Input
-                      value={target.item.visibility ?? "private"}
-                      readOnly
-                    />
-                  </Field>
-                </div>
-              ) : null}
-              {target.kind === "hook" ? (
-                <div className="plugin-dev-form-grid plugin-dev-form-grid--2">
-                  <Field>
-                    <FieldLabel>事件</FieldLabel>
-                    <Input value={target.item.event} readOnly />
-                  </Field>
-                  <Field>
-                    <FieldLabel>Command</FieldLabel>
-                    <Input value={target.item.command} readOnly />
-                  </Field>
-                </div>
-              ) : null}
+              <div className="plugin-dev-form-grid plugin-dev-form-grid--2">
+                <Field>
+                  <FieldLabel>Command ID</FieldLabel>
+                  <Input value={target.item.id} readOnly />
+                </Field>
+                <Field>
+                  <FieldLabel>标题</FieldLabel>
+                  <Input value={target.item.title} readOnly />
+                </Field>
+                <Field>
+                  <FieldLabel>可见性</FieldLabel>
+                  <Input
+                    value={target.item.visibility ?? "private"}
+                    readOnly
+                  />
+                </Field>
+              </div>
             </FieldGroup>
           ) : null}
           {!context.connected ? (

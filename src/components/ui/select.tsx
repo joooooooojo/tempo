@@ -7,12 +7,12 @@ import { ChevronDownIcon, CheckIcon, ChevronUpIcon, SearchIcon } from "lucide-re
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 
-type SelectRootProps<Value = any, Multiple extends boolean | undefined = false> =
+type SelectRootProps<Value = unknown, Multiple extends boolean | undefined = false> =
   SelectPrimitive.Root.Props<Value, Multiple>
 
 const SelectOpenContext = React.createContext(false)
 
-function Select<Value = any, Multiple extends boolean | undefined = false>({
+function Select<Value = unknown, Multiple extends boolean | undefined = false>({
   onOpenChange,
   ...props
 }: SelectRootProps<Value, Multiple>) {

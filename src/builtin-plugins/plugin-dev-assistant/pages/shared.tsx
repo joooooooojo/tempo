@@ -84,7 +84,6 @@ export function normalizePreferences(
     uiStaticRoot: value.uiStaticRoot ?? "",
     runtimeDevEntry: value.runtimeDevEntry ?? "",
     autoReconnectRuntime: value.autoReconnectRuntime ?? true,
-    receiveRealHooks: value.receiveRealHooks ?? false,
     useProductionData: value.useProductionData ?? false,
   };
 }

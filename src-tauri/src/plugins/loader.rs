@@ -1,7 +1,7 @@
 //! Declarative plugin contribution loader (design §6.2, §9).
 //!
 //! Scanning/enabling only reads `manifest.json` and registers declarative contributes; it
-//! never executes plugin code. Runtime activation is always lazy (first `runtime.*`/command
+//! never executes plugin code. Runtime activation is always lazy (first private IPC/Command
 //! call, or an explicit `onStartup` activation event) and is handled by `supervisor.rs`.
 
 use std::collections::HashMap;

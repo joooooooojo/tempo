@@ -34,7 +34,7 @@ pub mod codes {
 }
 
 /// Host Bridge API semver (design §7.2) — independent from the Tempo product version.
-pub const HOST_API_VERSION: &str = "1.5.0";
+pub const HOST_API_VERSION: &str = "1.0.0";
 
 /// Max single-message size (design §7): 1 MiB.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -146,7 +146,7 @@ fn payload_too_large(params: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// Shared Runtime command boundary for actions, hooks, and MCP (not UI).
+/// Shared Runtime Command boundary for Actions (not UI or MCP Tools).
 pub async fn invoke_runtime_command(
     host: &Arc<PluginHost>,
     plugin_id: &str,
@@ -172,6 +172,32 @@ pub async fn invoke_runtime_command(
         .await
 }
 
+/// Runtime-only MCP Tool boundary. Tool handlers use `tempo.mcpTools.register`.
+pub async fn invoke_runtime_mcp_tool(
+    host: &Arc<PluginHost>,
+    plugin_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    timeout: Duration,
+) -> Result<Value, RpcError> {
+    if tool_name.trim().is_empty() {
+        return Err(RpcError::new(
+            codes::INVALID_REQUEST,
+            "missing MCP tool name",
+        ));
+    }
+    if payload_too_large(&arguments) {
+        return Err(RpcError::new(
+            codes::PAYLOAD_TOO_LARGE,
+            "request payload exceeds 1 MiB",
+        ));
+    }
+    let _guard = acquire_slot(host, plugin_id)?;
+    host.supervisor
+        .call_mcp_tool(plugin_id, tool_name, arguments, timeout)
+        .await
+}
+
 /// Private UI ↔ Runtime `ipc.invoke` (`ipc.invoke.*`). SCA envelope is opaque to the host.
 pub async fn invoke_runtime_ipc(
     host: &Arc<PluginHost>,
@@ -181,10 +207,7 @@ pub async fn invoke_runtime_ipc(
     timeout: Duration,
 ) -> Result<Value, RpcError> {
     if channel.trim().is_empty() {
-        return Err(RpcError::new(
-            codes::INVALID_REQUEST,
-            "missing ipc channel",
-        ));
+        return Err(RpcError::new(codes::INVALID_REQUEST, "missing ipc channel"));
     }
     if payload_too_large(&args) {
         return Err(RpcError::new(
@@ -206,10 +229,7 @@ pub async fn send_runtime_ipc(
     args: Value,
 ) -> Result<Value, RpcError> {
     if channel.trim().is_empty() {
-        return Err(RpcError::new(
-            codes::INVALID_REQUEST,
-            "missing ipc channel",
-        ));
+        return Err(RpcError::new(codes::INVALID_REQUEST, "missing ipc channel"));
     }
     if payload_too_large(&args) {
         return Err(RpcError::new(
@@ -223,7 +243,7 @@ pub async fn send_runtime_ipc(
 }
 
 /// UI / Runtime Host entry. UI may use `ipc.invoke.*` / `ipc.send.*` and Host methods —
-/// never `runtime.*` (commands are for Action/Hook/MCP via [`invoke_runtime_command`]).
+/// never external Commands (those are for Actions via [`invoke_runtime_command`]).
 pub async fn dispatch(
     app: &AppHandle,
     host: &Arc<PluginHost>,
@@ -238,7 +258,7 @@ pub async fn dispatch(
     if method.starts_with("runtime.") {
         return Err(RpcError::new(
             codes::FORBIDDEN,
-            "UI cannot invoke runtime commands; use ipc.invoke for private UI↔Runtime IPC",
+            "UI cannot invoke Runtime Commands; use ipcRenderer.invoke for private UI↔Runtime IPC",
         ));
     }
 
@@ -250,7 +270,7 @@ pub async fn dispatch(
         return send_runtime_ipc(host, &ctx.plugin_id, channel, params).await;
     }
 
-    // Legacy Host API 1.4 alias
+    // Legacy IPC method alias kept while the plugin architecture is still in development.
     if let Some(channel) = method.strip_prefix("rpc.") {
         return invoke_runtime_ipc(host, &ctx.plugin_id, channel, params, DEFAULT_TIMEOUT).await;
     }
@@ -578,6 +598,7 @@ pub fn broadcast_theme_change(app: &AppHandle, host: &PluginHost, theme: &str) {
             "plugin-runtime-event",
             json!({
                 "pluginId": plugin_id,
+                "source": "platform",
                 "viewInstanceId": target_view,
                 "subscriptionId": subscription_id,
                 "event": "theme.changed",
