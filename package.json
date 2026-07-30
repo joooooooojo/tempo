@@ -1,7 +1,7 @@
 {
   "name": "tempo",
   "private": true,
-  "version": "2.0.1",
+  "version": "2.2.0",
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/guard-rust-target.mjs && tauri dev",

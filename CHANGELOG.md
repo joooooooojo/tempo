@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-30
+
 ### Feat
 
 - 插件 API 改为 Host 直接注入：UI 使用 `window.tempo` / `window.ipcRenderer` 并遵循 WebView 生命周期；Runtime 使用 `globalThis.tempo` / `globalThis.ipcMain` 与 `onMounted` / `onUnmounted`。
@@ -11,7 +13,25 @@
 - `tempo.events` 在 UI 与 Runtime 同时支持 `on`、`once`、`off`、批量清理和监听状态查询；通用事件监听与设置、主题订阅相互隔离。
 - 插件开发助手新增 UI、Hybrid、Headless 三套 Vite 模板，构建后的 `dist` 可直接导入 Tempo。
 - 插件模板与 Manifest Schema 改为独立远端发布：创建项目时选择最新兼容版本、校验 SHA-256 并缓存，模板更新不再要求升级 Tempo。
-- 移除旧插件 API 包及其版本同步，插件只通过 `engines.pluginApi` 声明 Host API 兼容范围。
+- 插件开发助手的项目切换菜单支持二次确认后移除项目记录，并明确不会删除本地文件；当前项目仅使用背景色标识。
+
+### Fix
+
+- 修复跟随系统主题时界面没有及时同步的问题，并分离 macOS 货架窗口与主面板的外观状态。
+- 修复 macOS 首次请求通知权限导致主面板失焦的问题，并支持通过本地 `.env` 配置应用签名。
+- 隐藏 Windows 下插件 Runtime 启动时短暂出现的 Node.js 控制台窗口。
+
+### Breaking Changes
+
+- 移除 `@tempo/plugin-sdk`、`definePlugin`、`createPluginClient` 和旧版 SDK 包装层；插件入口改为直接使用宿主注入的全局 API。
+- 移除 Manifest `hooks` 配置和 Hook 到 Command 的旧路由；平台广播统一由 UI 或 Runtime 的 `tempo.events` 监听。
+- UI 与 Runtime 私有通信统一为 Electron 风格的 `ipcRenderer` / `ipcMain`，不再与平台事件或 Commands 共用命名空间。
+
+### Docs / Chore
+
+- 文档站点重组为用户指南、插件开发指南和 API 参考，补充插件生命周期、三类插件差异、Commands / Actions / MCP Tools 关系与完整 Host API 说明。
+- 三套模板声明文件移除所有显式 `any`，为上下文、Action、IPC、事件、设置、Commands 和 MCP Tools 提供明确类型；模板构建会拒绝包含 `any` 的声明文件。
+- Tempo 应用版本升至 **2.2.0**；插件 Host API 与远程模板版本继续独立维护为 **1.0.0**。
 
 ## [2.0.1] - 2026-07-29
 

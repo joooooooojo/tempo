@@ -5500,7 +5500,7 @@ dependencies = [
 
 [[package]]
 name = "tempo"
-version = "2.0.1"
+version = "2.2.0"
 dependencies = [
  "active-win-pos-rs",
  "appkit-nsworkspace-bindings",
