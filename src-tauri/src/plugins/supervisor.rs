@@ -728,11 +728,16 @@ fn apply_minimal_plugin_runtime_env(command: &mut tokio::process::Command) {
 /// flag or force a new visible console).
 fn prevent_plugin_runtime_console_window(command: &mut tokio::process::Command) {
     #[cfg(windows)]
-    {
-        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
-        command.creation_flags(CREATE_NO_WINDOW.0);
-    }
+    prevent_windows_console_window(command.as_std_mut());
     let _ = command;
+}
+
+#[cfg(windows)]
+fn prevent_windows_console_window(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    command.creation_flags(CREATE_NO_WINDOW.0);
 }
 
 fn encode_frame(value: &Value) -> Result<Vec<u8>, String> {
@@ -1110,7 +1115,15 @@ fn kill_process_tree(pid: u32) {
 
 #[cfg(windows)]
 fn kill_process_tree(pid: u32) {
-    let _ = std::process::Command::new("taskkill")
+    // `taskkill.exe` is itself a console-subsystem application. Reconnect always passes
+    // through this cleanup path, so spawning it without CREATE_NO_WINDOW causes the short
+    // console flash even though the Node Runtime process is already hidden.
+    let mut command = std::process::Command::new("taskkill");
+    command
         .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    prevent_windows_console_window(&mut command);
+    let _ = command.status();
 }
