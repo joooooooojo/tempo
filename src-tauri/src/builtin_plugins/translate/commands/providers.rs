@@ -208,7 +208,7 @@ pub(super) fn hmac_sha256_hex(key: &[u8], data: &[u8]) -> String {
     hex::encode(hmac_sha256(key, data))
 }
 
-/// Tencent Cloud TC3-HMAC-SHA256 for TMT TextTranslate.
+/// Non-streaming Hunyuan ChatTranslations (compare / test / plain translate).
 pub(super) async fn translate_tencent(
     client: &reqwest::Client,
     creds: &TranslateProviderCreds,
@@ -216,19 +216,160 @@ pub(super) async fn translate_tencent(
     from: &str,
     to: &str,
 ) -> Result<TranslateResult, String> {
+    let (req, payload) = build_hunyuan_request(client, creds, text, from, to, false)?;
+    let resp = req
+        .body(payload)
+        .send()
+        .await
+        .map_err(|e| format!("混元翻译请求失败: {e}"))?;
+    let status = resp.status();
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("混元翻译响应解析失败: {e}"))?;
+    if let Some(err) = parse_hunyuan_error(&body) {
+        return Err(err);
+    }
+    if !status.is_success() {
+        return Err(format!("混元翻译 HTTP {}", status.as_u16()));
+    }
+    let translated = body
+        .pointer("/Response/Choices/0/Message/Content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "混元翻译未返回译文".to_string())?
+        .to_string();
+    Ok(TranslateResult {
+        provider: "tencent".into(),
+        text: translated,
+        detected_from: None,
+        error: None,
+    })
+}
+
+/// Streaming Hunyuan ChatTranslations (single-engine UI typewriter).
+pub(super) async fn translate_tencent_stream<F>(
+    client: &reqwest::Client,
+    creds: &TranslateProviderCreds,
+    text: &str,
+    from: &str,
+    to: &str,
+    mut on_delta: F,
+) -> Result<TranslateResult, String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    let (req, payload) = build_hunyuan_request(client, creds, text, from, to, true)?;
+    let mut resp = req
+        .header("Accept", "text/event-stream")
+        .body(payload)
+        .send()
+        .await
+        .map_err(|e| format!("混元翻译请求失败: {e}"))?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    // Non-SSE JSON error / unexpected payload
+    if content_type.contains("application/json") {
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("混元翻译响应解析失败: {e}"))?;
+        return Err(parse_hunyuan_error(&body).unwrap_or_else(|| {
+            if !status.is_success() {
+                format!("混元翻译 HTTP {}", status.as_u16())
+            } else {
+                "混元翻译未返回流式译文".into()
+            }
+        }));
+    }
+
+    let mut byte_buf: Vec<u8> = Vec::new();
+    let mut buffer = String::new();
+    let mut translated = String::new();
+
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("混元翻译流读取失败: {e}"))?
+    {
+        byte_buf.extend_from_slice(&chunk);
+        let valid_up_to = match std::str::from_utf8(&byte_buf) {
+            Ok(s) => s.len(),
+            Err(err) => err.valid_up_to(),
+        };
+        if valid_up_to == 0 {
+            continue;
+        }
+        let piece = std::str::from_utf8(&byte_buf[..valid_up_to])
+            .expect("valid_up_to marks a UTF-8 prefix");
+        buffer.push_str(piece);
+        byte_buf.drain(..valid_up_to);
+
+        for data in drain_sse_data_events(&mut buffer) {
+            if data == "[DONE]" {
+                continue;
+            }
+            let body: Value = serde_json::from_str(&data)
+                .map_err(|e| format!("混元翻译流解析失败: {e}"))?;
+            if let Some(err) = parse_hunyuan_error(&body) {
+                return Err(err);
+            }
+            let delta = body
+                .pointer("/Response/Choices/0/Delta/Content")
+                .or_else(|| body.pointer("/Choices/0/Delta/Content"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !delta.is_empty() {
+                translated.push_str(delta);
+                on_delta(delta)?;
+            }
+        }
+    }
+
+    if translated.is_empty() {
+        return Err("混元翻译未返回译文".into());
+    }
+
+    Ok(TranslateResult {
+        provider: "tencent".into(),
+        text: translated,
+        detected_from: None,
+        error: None,
+    })
+}
+
+fn build_hunyuan_request(
+    client: &reqwest::Client,
+    creds: &TranslateProviderCreds,
+    text: &str,
+    from: &str,
+    to: &str,
+    stream: bool,
+) -> Result<(reqwest::RequestBuilder, String), String> {
     let secret_id = field(creds, "secretId")?;
     let secret_key = field(creds, "secretKey")?;
     let region = creds
         .fields
         .get("region")
         .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    let model = creds
+        .fields
+        .get("model")
+        .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .unwrap_or("ap-guangzhou");
+        .unwrap_or("hunyuan-translation");
 
-    let host = "tmt.tencentcloudapi.com";
-    let service = "tmt";
-    let action = "TextTranslate";
-    let version = "2018-03-21";
+    let host = "hunyuan.tencentcloudapi.com";
+    let service = "hunyuan";
+    let action = "ChatTranslations";
+    let version = "2023-09-01";
     let algorithm = "TC3-HMAC-SHA256";
     let timestamp = now_secs();
     // TC3 CredentialScope 的 Date 必须是 UTC 日期（与 X-TC-Timestamp 一致）
@@ -238,13 +379,16 @@ pub(super) async fn translate_tencent(
         .map(|dt| dt.format("%Y-%m-%d").to_string())
         .unwrap_or_else(|| "1970-01-01".into());
 
-    let payload = json!({
-        "SourceText": text,
-        "Source": from,
+    let mut payload = json!({
+        "Model": model,
+        "Stream": stream,
+        "Text": text,
         "Target": to,
-        "ProjectId": 0,
-    })
-    .to_string();
+    });
+    if !from.is_empty() && from != "auto" {
+        payload["Source"] = json!(from);
+    }
+    let payload = payload.to_string();
 
     let hashed_payload = sha256_hex(payload.as_bytes());
     let canonical_headers = format!(
@@ -270,43 +414,70 @@ pub(super) async fn translate_tencent(
         "{algorithm} Credential={secret_id}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
     );
 
-    let resp = client
+    let mut req = client
         .post(format!("https://{host}"))
         .header("Authorization", authorization)
         .header("Content-Type", "application/json; charset=utf-8")
         .header("Host", host)
         .header("X-TC-Action", action)
         .header("X-TC-Timestamp", timestamp.to_string())
-        .header("X-TC-Version", version)
-        .header("X-TC-Region", region)
-        .body(payload)
-        .send()
-        .await
-        .map_err(|e| format!("腾讯请求失败: {e}"))?;
+        .header("X-TC-Version", version);
+    if let Some(region) = region {
+        req = req.header("X-TC-Region", region);
+    }
+    Ok((req, payload))
+}
 
-    let body: Value = resp.json().await.map_err(|e| format!("腾讯响应解析失败: {e}"))?;
-    if let Some(err) = body.pointer("/Response/Error") {
+fn parse_hunyuan_error(body: &Value) -> Option<String> {
+    if let Some(err) = body
+        .pointer("/Response/Error")
+        .filter(|v| v.is_object())
+    {
         let msg = err
             .get("Message")
             .and_then(|v| v.as_str())
             .unwrap_or("未知错误");
         let code = err.get("Code").and_then(|v| v.as_str()).unwrap_or("?");
-        return Err(format!("腾讯错误 {code}: {msg}"));
+        return Some(format!("混元翻译错误 {code}: {msg}"));
     }
-    let translated = body
-        .pointer("/Response/TargetText")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "腾讯未返回译文".to_string())?
-        .to_string();
-    Ok(TranslateResult {
-        provider: "tencent".into(),
-        text: translated,
-        detected_from: body
-            .pointer("/Response/Source")
+    if let Some(err) = body
+        .pointer("/Response/ErrorMsg")
+        .filter(|v| v.is_object())
+    {
+        let msg = err
+            .get("Msg")
+            .or_else(|| err.get("Message"))
             .and_then(|v| v.as_str())
-            .map(str::to_string),
-        error: None,
-    })
+            .unwrap_or("未知错误");
+        return Some(format!("混元翻译错误: {msg}"));
+    }
+    None
+}
+
+fn drain_sse_data_events(buffer: &mut String) -> Vec<String> {
+    let mut events = Vec::new();
+    loop {
+        let sep = if let Some(i) = buffer.find("\r\n\r\n") {
+            (i, 4)
+        } else if let Some(i) = buffer.find("\n\n") {
+            (i, 2)
+        } else {
+            break;
+        };
+        let raw = buffer[..sep.0].to_string();
+        *buffer = buffer[sep.0 + sep.1..].to_string();
+        let mut data_lines = Vec::new();
+        for line in raw.lines() {
+            let line = line.trim_end_matches('\r');
+            if let Some(rest) = line.strip_prefix("data:") {
+                data_lines.push(rest.trim_start().to_string());
+            }
+        }
+        if !data_lines.is_empty() {
+            events.push(data_lines.join("\n"));
+        }
+    }
+    events
 }
 
 pub(super) async fn translate_deepl(

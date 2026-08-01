@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   ArrowLeftRight,
   Copy,
@@ -41,12 +42,12 @@ import {
   PROVIDERS,
   providerName,
   TARGET_LANGS,
-  TRANSLATE_DEBOUNCE_MS,
 } from "@/builtin-plugins/translate/pages/translateConstants";
 
 
 export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
   const [config, setConfig] = useState<TranslateConfig>(emptyConfig);
+  const [configReady, setConfigReady] = useState(false);
   const [source, setSource] = useState(() => initialTranslateText?.trim() ?? "");
   const [from, setFrom] = useState("auto");
   const [to, setTo] = useState("zh");
@@ -63,9 +64,16 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
   const [savingConfig, setSavingConfig] = useState(false);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const resultRef = useRef<HTMLTextAreaElement>(null);
+  const sourceTextRef = useRef(source);
   const translateRequestId = useRef(0);
-  /** Skip auto-translate while IME composition is in progress (拼音选词等). */
+  /** External inject waiting for config before auto-translate. */
+  const pendingAutoTextRef = useRef<string | null>(
+    initialTranslateText?.trim() ? initialTranslateText.trim() : null,
+  );
+  /** Skip Enter-to-translate while IME composition is in progress. */
   const [imeComposing, setImeComposing] = useState(false);
+
+  sourceTextRef.current = source;
 
   useEffect(() => {
     const el = sourceRef.current;
@@ -100,8 +108,10 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
       setFrom(next.defaultSourceLang || "auto");
       setTo(next.defaultTargetLang || "zh");
       setCompareMode(next.compareMode);
+      setConfigReady(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
+      setConfigReady(true);
     }
   }, []);
 
@@ -115,7 +125,7 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
         const creds = config.providers[p.id];
         if (!creds?.enabled) return false;
         return p.fields
-          .filter((f) => f.key !== "region")
+          .filter((f) => f.key !== "region" && f.key !== "model")
           .every((f) => (creds.fields[f.key] ?? "").trim().length > 0);
       }),
     [config]
@@ -138,7 +148,7 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
       for (const p of PROVIDERS) {
         const creds = nextDraft.providers[p.id] ?? { enabled: false, fields: {} };
         const hasKeys = p.fields
-          .filter((f) => f.key !== "region")
+          .filter((f) => f.key !== "region" && f.key !== "model")
           .every((f) => (creds.fields[f.key] ?? "").trim().length > 0);
         nextDraft.providers[p.id] = {
           ...creds,
@@ -185,8 +195,8 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
   };
 
   const runTranslate = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const text = source.trim();
+    async (options?: { silent?: boolean; text?: string }) => {
+      const text = (options?.text ?? sourceTextRef.current).trim();
       if (!text) {
         if (!options?.silent) toast.error("请输入原文");
         setResult(null);
@@ -215,6 +225,36 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
             defaultTargetLang: to,
             compareMode: true,
           });
+        } else if (provider === "tencent") {
+          setResult({ provider: "tencent", text: "" });
+          const res = await api.translateTextStream(provider, text, from, to, (event) => {
+            if (requestId !== translateRequestId.current) return;
+            if (event.type === "delta") {
+              setResult((prev) => ({
+                provider: "tencent",
+                text: `${prev?.text ?? ""}${event.text}`,
+                detectedFrom: prev?.detectedFrom,
+                error: null,
+              }));
+            } else if (event.type === "done") {
+              setResult({
+                provider: "tencent",
+                text: event.text,
+                error: null,
+              });
+            } else if (event.type === "error") {
+              setResult(null);
+            }
+          });
+          if (requestId !== translateRequestId.current) return;
+          setResult(res);
+          await api.updateTranslateConfig({
+            ...config,
+            defaultProvider: provider,
+            defaultSourceLang: from,
+            defaultTargetLang: to,
+            compareMode: false,
+          });
         } else {
           const res = await api.translateText(provider, text, from, to);
           if (requestId !== translateRequestId.current) return;
@@ -234,27 +274,66 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
         if (requestId === translateRequestId.current) setLoading(false);
       }
     },
-    [compareMode, config, configuredProviders, from, provider, source, to]
+    [compareMode, config, configuredProviders, from, provider, to]
+  );
+
+  /** Apply externally injected text; auto-translate when content actually changes. */
+  const applyExternalText = useCallback(
+    (raw: string, options?: { translate?: boolean }) => {
+      const text = raw.trim();
+      if (!text) return false;
+      if (text === sourceTextRef.current.trim()) return false;
+      setSource(text);
+      sourceTextRef.current = text;
+      if (options?.translate !== false) {
+        if (configReady) {
+          pendingAutoTextRef.current = null;
+          void runTranslate({ silent: true, text });
+        } else {
+          pendingAutoTextRef.current = text;
+        }
+      }
+      return true;
+    },
+    [configReady, runTranslate],
   );
 
   useEffect(() => {
-    if (imeComposing) return;
+    if (!configReady) return;
+    const pending = pendingAutoTextRef.current;
+    if (!pending) return;
+    pendingAutoTextRef.current = null;
+    void runTranslate({ silent: true, text: pending });
+  }, [configReady, runTranslate]);
 
-    const text = source.trim();
-    if (!text) {
-      translateRequestId.current += 1;
-      setLoading(false);
-      setResult(null);
-      setCompareResults([]);
-      return;
-    }
+  useEffect(() => {
+    const text = initialTranslateText?.trim();
+    if (!text) return;
+    applyExternalText(text);
+  }, [initialTranslateText, applyExternalText]);
 
-    const timer = window.setTimeout(() => {
-      void runTranslate({ silent: true });
-    }, TRANSLATE_DEBOUNCE_MS);
-
-    return () => window.clearTimeout(timer);
-  }, [source, from, to, provider, compareMode, configuredProviders, runTranslate, imeComposing]);
+  useEffect(() => {
+    let disposed = false;
+    const unlisten = listen("main-panel:open", () => {
+      void (async () => {
+        try {
+          const page = await api.getClipboardHistory(undefined, 1, 0);
+          if (disposed) return;
+          const entry = page.entries[0];
+          if (!entry || entry.kind !== "text") return;
+          const text = (entry.content ?? "").trim();
+          if (!text) return;
+          applyExternalText(text);
+        } catch {
+          /* ignore clipboard read errors */
+        }
+      })();
+    });
+    return () => {
+      disposed = true;
+      void unlisten.then((fn) => fn());
+    };
+  }, [applyExternalText]);
 
   const copyText = async (text: string) => {
     try {
@@ -355,15 +434,30 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
                 ref={sourceRef}
                 value={source}
                 rows={1}
-                onChange={(e) => setSource(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSource(next);
+                  if (!next.trim()) {
+                    translateRequestId.current += 1;
+                    setLoading(false);
+                    setResult(null);
+                    setCompareResults([]);
+                  }
+                }}
                 onCompositionStart={() => setImeComposing(true)}
                 onCompositionEnd={() => setImeComposing(false)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.shiftKey) return;
+                  if (e.nativeEvent.isComposing || imeComposing) return;
+                  e.preventDefault();
+                  void runTranslate();
+                }}
                 className={cn(
                   "block w-full resize-none overflow-hidden border-0 bg-transparent px-3 pt-3 pb-3",
                   "min-h-full! text-[13px] leading-6 text-foreground outline-none",
                   "focus-visible:ring-2 focus-visible:ring-primary/20"
                 )}
-                placeholder="输入要翻译的文本…"
+                placeholder="输入要翻译的文本…（Enter 翻译，Shift+Enter 换行）"
               />
             </ScrollArea>
           </div>
@@ -394,7 +488,11 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
                   ref={resultRef}
                   readOnly
                   rows={1}
-                  value={result?.text ?? ""}
+                  value={
+                    loading && provider === "tencent"
+                      ? `${result?.text ?? ""}▍`
+                      : (result?.text ?? "")
+                  }
                   className={cn(
                     "block w-full resize-none overflow-hidden border-0 bg-transparent px-3 pt-3 pb-3",
                     "min-h-full! text-[13px] leading-6 text-foreground outline-none"

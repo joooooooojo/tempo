@@ -279,6 +279,11 @@ export interface TranslateResult {
   error?: string | null;
 }
 
+export type TranslateStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "done"; text: string }
+  | { type: "error"; message: string };
+
 export interface RuntimeInstallProgress {
   phase: string;
   message: string;

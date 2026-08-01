@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AppUsage,
   ClipboardEntry,
@@ -38,6 +38,7 @@ import type {
   TerminatePortProcessRequest,
   TranslateConfig,
   TranslateResult,
+  TranslateStreamEvent,
   WeeklyReport,
 } from "@/types";
 
@@ -416,6 +417,23 @@ export const api = {
     invoke<TranslateConfig>("update_translate_config", { config }),
   translateText: (provider: string, text: string, from: string, to: string) =>
     invoke<TranslateResult>("translate_text", { provider, text, from, to }),
+  translateTextStream: (
+    provider: string,
+    text: string,
+    from: string,
+    to: string,
+    onEvent: (event: TranslateStreamEvent) => void,
+  ) => {
+    const channel = new Channel<TranslateStreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<TranslateResult>("translate_text_stream", {
+      provider,
+      text,
+      from,
+      to,
+      onEvent: channel,
+    });
+  },
   translateCompare: (providers: string[], text: string, from: string, to: string) =>
     invoke<TranslateResult[]>("translate_compare", { providers, text, from, to }),
   testTranslateProvider: (provider: string) =>

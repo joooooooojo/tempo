@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::db::AppState;
+use tauri::ipc::Channel;
 
 use super::providers::*;
 use super::support::*;
@@ -46,6 +47,81 @@ pub async fn translate_text(
         return Err(err.clone());
     }
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn translate_text_stream(
+    state: tauri::State<'_, AppState>,
+    provider: String,
+    text: String,
+    from: String,
+    to: String,
+    on_event: Channel<TranslateStreamEvent>,
+) -> Result<TranslateResult, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("请输入要翻译的文本".into());
+    }
+    let creds = {
+        let conn = state.db.lock();
+        let cfg = load_config(&conn);
+        cfg.providers
+            .get(&provider)
+            .cloned()
+            .ok_or_else(|| format!("未找到引擎配置: {provider}"))?
+    };
+
+    if provider != "tencent" {
+        let result = translate_one(&provider, &creds, &text, &from, &to).await;
+        if let Some(err) = &result.error {
+            let _ = on_event.send(TranslateStreamEvent::Error {
+                message: err.clone(),
+            });
+            return Err(err.clone());
+        }
+        let _ = on_event.send(TranslateStreamEvent::Delta {
+            text: result.text.clone(),
+        });
+        let _ = on_event.send(TranslateStreamEvent::Done {
+            text: result.text.clone(),
+        });
+        return Ok(result);
+    }
+
+    let client = http_client().await?;
+    let from_mapped = map_lang(&provider, &from);
+    let to_mapped = map_lang(&provider, &to);
+    let on_event_delta = on_event.clone();
+    let result = translate_tencent_stream(
+        &client,
+        &creds,
+        &text,
+        &from_mapped,
+        &to_mapped,
+        |delta| {
+            on_event_delta
+                .send(TranslateStreamEvent::Delta {
+                    text: delta.to_string(),
+                })
+                .map_err(|e| format!("推送流事件失败: {e}"))
+        },
+    )
+    .await;
+
+    match result {
+        Ok(r) => {
+            let _ = on_event.send(TranslateStreamEvent::Done {
+                text: r.text.clone(),
+            });
+            Ok(r)
+        }
+        Err(e) => {
+            let _ = on_event.send(TranslateStreamEvent::Error {
+                message: e.clone(),
+            });
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]

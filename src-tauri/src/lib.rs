@@ -442,6 +442,7 @@ pub fn run() {
             builtin_plugins::translate::get_translate_config,
             builtin_plugins::translate::update_translate_config,
             builtin_plugins::translate::translate_text,
+            builtin_plugins::translate::translate_text_stream,
             builtin_plugins::translate::translate_compare,
             builtin_plugins::translate::test_translate_provider,
             auxiliary_windows::show_clipboard_picker,

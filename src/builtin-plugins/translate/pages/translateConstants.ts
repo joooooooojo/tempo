@@ -23,11 +23,12 @@ export const PROVIDERS: Array<{
   },
   {
     id: "tencent",
-    name: "腾讯翻译",
+    name: "混元翻译",
     fields: [
       { key: "secretId", label: "SecretId" },
       { key: "secretKey", label: "SecretKey", secret: true },
-      { key: "region", label: "地域（默认 ap-guangzhou）" },
+      { key: "model", label: "模型（默认 hunyuan-translation）" },
+      { key: "region", label: "地域（可选）" },
     ],
   },
   {
@@ -57,8 +58,6 @@ export const LANGS = [
 export const TARGET_LANGS = LANGS.filter((l) => l.value !== "auto");
 
 export const PROVIDER_ITEMS = PROVIDERS.map((p) => ({ value: p.id, label: p.name }));
-
-export const TRANSLATE_DEBOUNCE_MS = 600;
 
 export function providerName(id: string) {
   return PROVIDERS.find((p) => p.id === id)?.name ?? id;

@@ -9,6 +9,8 @@
 - 插件 Manifest 新增 `platforms` 字段，可声明适用宿主（macOS / Windows）；Linux 已预留但暂未支持，开发助手中置灰不可选。未声明时视为支持当前已发布平台。
 - 内置插件编辑页支持 ⌘S / Ctrl+S 快捷保存（Hosts、短语、翻译配置、待办编辑、插件开发助手）。
 - Hosts 重构：移除公共配置与内置环境种子；配置支持本地（空白/导入文件）与远程（URL + 自动刷新）；可同时激活多个配置写入系统 hosts。
+- 腾讯翻译升级为混元翻译（`ChatTranslations` / `hunyuan-translation`），沿用原 SecretId / SecretKey 配置；单引擎时 SSE 流式打字机显示，多引擎对比仍为非流式。
+- 聚合翻译：外部注入 / 面板重开时剪贴板首条文本可自动填充并翻译；手动输入需点击「翻译」或按 Enter（Shift+Enter 换行）。
 
 ### Fix
 

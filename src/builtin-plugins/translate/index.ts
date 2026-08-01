@@ -8,7 +8,7 @@ export { TranslatePage } from "@/builtin-plugins/translate/pages/TranslatePage";
 export const translateApp: TempoApp = reactApp({
   id: "translate",
   name: "聚合翻译",
-  keywords: ["translate", "翻译", "有道", "deepl"],
+  keywords: ["translate", "翻译", "有道", "deepl", "混元", "腾讯"],
   icon: lucideIcon(Languages),
   component: TranslatePage,
 });

@@ -52,3 +52,11 @@ pub struct TranslateResult {
     pub detected_from: Option<String>,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TranslateStreamEvent {
+    Delta { text: String },
+    Done { text: String },
+    Error { message: String },
+}

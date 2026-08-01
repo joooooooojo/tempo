@@ -57,8 +57,7 @@ pub(super) fn map_lang(provider: &str, lang: &str) -> String {
     let lang = lang.trim();
     if lang.is_empty() || lang == "auto" {
         return match provider {
-            "google" | "deepl" => String::new(),
-            "tencent" => "auto".into(),
+            "google" | "deepl" | "tencent" => String::new(),
             _ => "auto".into(),
         };
     }
@@ -88,7 +87,7 @@ pub(super) fn map_lang(provider: &str, lang: &str) -> String {
 
 pub(super) async fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))
 }
