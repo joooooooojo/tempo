@@ -383,13 +383,22 @@ export const api = {
   // Tools — Hosts
   getHostsWorkspace: () => invoke<HostsWorkspace>("get_hosts_workspace"),
   authorizeHostsWrite: () => invoke<HostsWorkspace>("authorize_hosts_write"),
-  saveHostsPublic: (content: string) => invoke<HostsWorkspace>("save_hosts_public", { content }),
-  saveHostsProfile: (name: string, content: string, id?: string | null) =>
-    invoke<HostsProfile>("save_hosts_profile", { id: id ?? null, name, content }),
+  saveHostsProfile: (args: {
+    id?: string | null;
+    name: string;
+    kind?: "local" | "remote";
+    content?: string | null;
+    remoteUrl?: string | null;
+    refreshIntervalSecs?: number | null;
+    importPath?: string | null;
+  }) => invoke<HostsProfile>("save_hosts_profile", { args }),
   deleteHostsProfile: (id: string) => invoke<HostsWorkspace>("delete_hosts_profile", { id }),
-  activateHostsProfile: (id?: string | null) =>
-    invoke<HostsWorkspace>("activate_hosts_profile", { id: id ?? null }),
+  setHostsProfileActive: (id: string, active: boolean) =>
+    invoke<HostsWorkspace>("set_hosts_profile_active", { id, active }),
   getHostsProfileContent: (id: string) => invoke<string>("get_hosts_profile_content", { id }),
+  openHostsFileLocation: () => invoke<void>("open_hosts_file_location"),
+  refreshHostsRemoteProfile: (id: string) =>
+    invoke<HostsWorkspace>("refresh_hosts_remote_profile", { id }),
   applyHosts: () => invoke<HostsWorkspace>("apply_hosts"),
   flushDns: () => invoke<void>("flush_dns"),
   listHostsBackups: () => invoke<HostsBackup[]>("list_hosts_backups"),

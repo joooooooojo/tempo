@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SAVE_SHORTCUT_LABEL } from "@/hooks/useSaveShortcut";
 import { PluginDevSection } from "@/builtin-plugins/plugin-dev-assistant/components/PluginDevSection";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { cn } from "@/lib/utils";
@@ -314,7 +315,13 @@ export function RuntimeWorkspace({
           <span>{connected ? "已连接到 Tempo" : "未连接到 Tempo"}</span>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          <Button size="lg" variant="outline" onClick={onSave} disabled={busy}>
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={onSave}
+            disabled={busy}
+            title={`保存设置（${SAVE_SHORTCUT_LABEL}）`}
+          >
             <Save data-icon="inline-start" />
             保存设置
           </Button>

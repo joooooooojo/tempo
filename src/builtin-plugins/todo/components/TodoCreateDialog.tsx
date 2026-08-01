@@ -2,6 +2,7 @@ import {
   type ClipboardEvent,
   type FormEvent,
   type ReactNode,
+  useRef,
 } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import type { TodoImageInput } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { SAVE_SHORTCUT_LABEL, useSaveShortcut } from "@/hooks/useSaveShortcut";
 import {
   clipboardHasImages,
   insertTextAtSelection,
@@ -70,6 +72,8 @@ type TodoCreateFormPanelProps = Omit<TodoCreateDialogProps, "open" | "onOpenChan
   cancelElement?: ReactNode;
   layout?: "dialog" | "window";
   onCancel?: () => void;
+  /** When false, ⌘S / Ctrl+S is not listened (e.g. dialog closed but still mounted). */
+  shortcutActive?: boolean;
 };
 
 export function TodoCreateDialog({
@@ -122,6 +126,7 @@ export function TodoCreateDialog({
           contentPlaceholder={contentPlaceholder}
           submitLabel={submitLabel}
           bodyExtra={bodyExtra}
+          shortcutActive={open}
           titleElement={<DialogTitle className="text-[20px] font-bold">{heading}</DialogTitle>}
           cancelElement={
             <DialogClose asChild>
@@ -167,6 +172,7 @@ export function TodoCreateFormPanel({
   cancelElement,
   bodyExtra,
   layout = "dialog",
+  shortcutActive = true,
   onCancel,
   onTitleChange,
   onContentChange,
@@ -180,6 +186,14 @@ export function TodoCreateFormPanel({
   onSubmit,
 }: TodoCreateFormPanelProps) {
   const isWindowLayout = layout === "window";
+  const formRef = useRef<HTMLFormElement>(null);
+  const canSubmit = !saving && Boolean(todoTitle.trim());
+
+  useSaveShortcut(() => formRef.current?.requestSubmit(), {
+    active: shortcutActive,
+    enabled: canSubmit,
+  });
+
   const handleContentPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!clipboardHasImages(event)) return;
 
@@ -227,7 +241,12 @@ export function TodoCreateFormPanel({
           </Button>
         )}
       </DialogHeader>
-      <form className="flex min-h-0 flex-1 flex-col overflow-hidden" autoComplete="off" onSubmit={onSubmit}>
+      <form
+        ref={formRef}
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        autoComplete="off"
+        onSubmit={onSubmit}
+      >
         <DialogContent
           className={cn(
             "no-scrollbar flex flex-col gap-4",
@@ -285,7 +304,12 @@ export function TodoCreateFormPanel({
                 取消
               </Button>
             )}
-            <Button type="submit" className="h-10 min-w-28" disabled={saving || !todoTitle.trim()}>
+            <Button
+              type="submit"
+              className="h-10 min-w-28"
+              disabled={!canSubmit}
+              title={`${submitLabel}（${SAVE_SHORTCUT_LABEL}）`}
+            >
               {submitLabel}
             </Button>
           </div>

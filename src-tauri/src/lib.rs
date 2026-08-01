@@ -209,6 +209,7 @@ pub fn run() {
             commands::launcher::restore_launcher_index_snapshot(&state);
             commands::start_tracker(app.handle().clone(), state.clone());
             builtin_plugins::clipboard::watcher::start_clipboard_watcher(app.handle().clone(), state.clone());
+            builtin_plugins::hosts::start_remote_refresh_scheduler(app.handle().clone());
             app.manage(state.clone());
             app.manage(Mutex::new(ShortcutActionMap::default()));
             let mcp_controller = mcp::McpController::new();
@@ -428,11 +429,12 @@ pub fn run() {
             builtin_plugins::settings::builtin_open_data_dir,
             builtin_plugins::hosts::get_hosts_workspace,
             builtin_plugins::hosts::authorize_hosts_write,
-            builtin_plugins::hosts::save_hosts_public,
             builtin_plugins::hosts::save_hosts_profile,
             builtin_plugins::hosts::delete_hosts_profile,
-            builtin_plugins::hosts::activate_hosts_profile,
+            builtin_plugins::hosts::set_hosts_profile_active,
             builtin_plugins::hosts::get_hosts_profile_content,
+            builtin_plugins::hosts::open_hosts_file_location,
+            builtin_plugins::hosts::refresh_hosts_remote_profile,
             builtin_plugins::hosts::apply_hosts,
             builtin_plugins::hosts::flush_dns,
             builtin_plugins::hosts::list_hosts_backups,

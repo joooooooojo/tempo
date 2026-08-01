@@ -15,6 +15,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { SAVE_SHORTCUT_LABEL } from "@/hooks/useSaveShortcut";
 import type { EditablePluginManifest } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
 import {
   ActionEditor,
@@ -248,7 +249,12 @@ export function ManifestWorkspace({
             <Trash2 data-icon="inline-start" />
             移除记录
           </Button>
-          <Button size="lg" onClick={onSave} disabled={busy}>
+          <Button
+            size="lg"
+            onClick={onSave}
+            disabled={busy}
+            title={`保存 Manifest（${SAVE_SHORTCUT_LABEL}）`}
+          >
             {busy ? (
               <Spinner data-icon="inline-start" />
             ) : (

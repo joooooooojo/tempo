@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api";
+import { useSaveShortcut } from "@/hooks/useSaveShortcut";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { mirrorPluginDevLogToConsole } from "@/lib/pluginDevLog";
 import {
@@ -274,7 +275,7 @@ export function PluginDevAssistantPage() {
   };
 
   const saveManifest = async () => {
-    if (!detail) return;
+    if (!detail || busy) return;
     setBusy(true);
     try {
       const next = await api.writePluginDevManifest(
@@ -310,6 +311,17 @@ export function PluginDevAssistantPage() {
     if (showToast) toast.success("连接设置已保存");
     return next;
   };
+
+  useSaveShortcut(
+    () => {
+      if (workspaceTab === "manifest") void saveManifest();
+      else void savePreferences();
+    },
+    {
+      active: Boolean(detail),
+      enabled: !busy && (workspaceTab !== "runtime" || Boolean(preferences)),
+    },
+  );
 
   const connect = async () => {
     if (!detail) return;

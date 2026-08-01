@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SAVE_SHORTCUT_LABEL, useSaveShortcut } from "@/hooks/useSaveShortcut";
 import { cn } from "@/lib/utils";
 import type { TranslateConfig, TranslateProviderId, TranslateResult } from "@/types";
 import {
@@ -127,6 +128,7 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
   };
 
   const saveConfig = async () => {
+    if (savingConfig) return;
     setSavingConfig(true);
     try {
       const nextDraft: TranslateConfig = {
@@ -154,6 +156,11 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
       setSavingConfig(false);
     }
   };
+
+  useSaveShortcut(() => void saveConfig(), {
+    active: configOpen,
+    enabled: !savingConfig,
+  });
 
   const testProvider = async () => {
     setTesting(true);
@@ -552,7 +559,11 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
               {testing ? <Loader2 className="size-3.5 animate-spin" /> : null}
               测试连通
             </Button>
-            <Button onClick={() => void saveConfig()} disabled={savingConfig}>
+            <Button
+              onClick={() => void saveConfig()}
+              disabled={savingConfig}
+              title={`保存（${SAVE_SHORTCUT_LABEL}）`}
+            >
               {savingConfig ? <Loader2 className="size-3.5 animate-spin" /> : null}
               保存
             </Button>

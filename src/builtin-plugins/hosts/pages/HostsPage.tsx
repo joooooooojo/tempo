@@ -1,7 +1,12 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
+  Cloud,
+  FileText,
+  FolderOpen,
   History,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -10,32 +15,49 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
+import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SAVE_SHORTCUT_LABEL, useSaveShortcut } from "@/hooks/useSaveShortcut";
 import type { HostsBackup, HostsProfile, HostsWorkspace } from "@/types";
-import { HostsDialogs } from "@/builtin-plugins/hosts/pages/HostsDialogs";
+import {
+  EMPTY_CREATE_DRAFT,
+  HostsDialogs,
+  type CreateHostsDraft,
+} from "@/builtin-plugins/hosts/pages/HostsDialogs";
 
-type EditorTarget = "system" | "public" | { profileId: string };
+type EditorTarget = "system" | { profileId: string };
 
 function sameTarget(a: EditorTarget, b: EditorTarget) {
-  if (a === b) return true;
-  return typeof a !== "string" && typeof b !== "string" && a.profileId === b.profileId;
+  if (a === "system" || b === "system") return a === b;
+  return a.profileId === b.profileId;
+}
+
+function formatFetchedAt(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 export function HostsPage() {
   const [workspace, setWorkspace] = useState<HostsWorkspace | null>(null);
-  const [editorTarget, setEditorTarget] = useState<EditorTarget>("public");
+  const [editorTarget, setEditorTarget] = useState<EditorTarget>("system");
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
   const [backups, setBackups] = useState<HostsBackup[]>([]);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<"create" | "edit">("create");
+  const [formDraft, setFormDraft] = useState<CreateHostsDraft>(EMPTY_CREATE_DRAFT);
   const [backupOpen, setBackupOpen] = useState(false);
-  const [profileName, setProfileName] = useState("");
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const editorViewportRef = useRef<HTMLDivElement>(null);
   const contentCache = useRef(new Map<string, string>());
   const editorTargetRef = useRef(editorTarget);
   const dirtyRef = useRef(dirty);
@@ -46,9 +68,20 @@ export function HostsPage() {
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
+    const viewport = editorViewportRef.current;
+    const scrollTop = viewport?.scrollTop ?? 0;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
+    if (viewport) viewport.scrollTop = scrollTop;
   }, [content, editorTarget, loading]);
+
+  const selectedProfile: HostsProfile | null =
+    typeof editorTarget !== "string"
+      ? (workspace?.profiles.find((p) => p.id === editorTarget.profileId) ?? null)
+      : null;
+  const isRemote = selectedProfile?.kind === "remote";
+  const isSystem = editorTarget === "system";
+  const readOnly = isSystem || isRemote;
 
   const prefetchProfileContents = useCallback(async (profiles: HostsProfile[]) => {
     await Promise.all(
@@ -60,20 +93,24 @@ export function HostsPage() {
         } catch {
           /* ignore prefetch errors */
         }
-      })
+      }),
     );
   }, []);
 
   const applyWorkspace = useCallback((next: HostsWorkspace, keepTarget?: EditorTarget) => {
     setWorkspace(next);
-    const target = keepTarget ?? "public";
+    const target = keepTarget ?? "system";
     setEditorTarget(target);
     if (target === "system") {
       setContent(next.systemContent);
-    } else if (target === "public") {
-      setContent(next.publicContent);
+      setDirty(false);
+      return;
     }
-    setDirty(false);
+    const cached = contentCache.current.get(target.profileId);
+    if (cached !== undefined) {
+      setContent(cached);
+      setDirty(false);
+    }
   }, []);
 
   const refreshBackups = useCallback(async () => {
@@ -86,7 +123,7 @@ export function HostsPage() {
       try {
         const next = await api.getHostsWorkspace();
         contentCache.current.clear();
-        const target = keepTarget ?? "public";
+        const target = keepTarget ?? editorTargetRef.current;
         if (typeof target !== "string") {
           setWorkspace(next);
           try {
@@ -96,10 +133,10 @@ export function HostsPage() {
             setContent(text);
             setDirty(false);
           } catch {
-            applyWorkspace(next, "public");
+            applyWorkspace(next, "system");
           }
         } else {
-          applyWorkspace(next, target);
+          applyWorkspace(next, "system");
         }
         void prefetchProfileContents(next.profiles);
         await refreshBackups();
@@ -109,11 +146,27 @@ export function HostsPage() {
         setLoading(false);
       }
     },
-    [applyWorkspace, prefetchProfileContents, refreshBackups]
+    [applyWorkspace, prefetchProfileContents, refreshBackups],
   );
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen("hosts-changed", () => {
+      if (cancelled || dirtyRef.current) return;
+      void load(editorTargetRef.current);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [load]);
 
   const switchTo = (target: EditorTarget, nextContent: string) => {
@@ -129,13 +182,17 @@ export function HostsPage() {
     if (sameTarget(editorTargetRef.current, "system")) return;
     if (dirtyRef.current && !confirm("当前编辑未保存，切换将丢弃修改。继续？")) return;
     switchTo("system", workspace.systemContent);
-  };
-
-  const openPublic = () => {
-    if (!workspace) return;
-    if (sameTarget(editorTargetRef.current, "public")) return;
-    if (dirtyRef.current && !confirm("当前编辑未保存，切换将丢弃修改。继续？")) return;
-    switchTo("public", workspace.publicContent);
+    void (async () => {
+      try {
+        const next = await api.getHostsWorkspace();
+        setWorkspace(next);
+        if (!sameTarget(editorTargetRef.current, "system") || dirtyRef.current) return;
+        setContent(next.systemContent);
+        setDirty(false);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+      }
+    })();
   };
 
   const openProfile = (profile: HostsProfile) => {
@@ -175,27 +232,21 @@ export function HostsPage() {
   };
 
   const saveCurrent = async () => {
-    if (!workspace || editorTarget === "system") return;
+    if (!workspace || editorTarget === "system" || !selectedProfile) return;
+    if (saving || !dirty || selectedProfile.kind !== "local") return;
     setSaving(true);
     try {
-      if (editorTarget === "public") {
-        const next = await api.saveHostsPublic(content);
-        applyWorkspace(next, "public");
-        toast.success("公共配置已保存并应用到系统");
-      } else {
-        const profileId = editorTarget.profileId;
-        const profile = workspace.profiles.find((p) => p.id === profileId);
-        const name = profile?.name ?? "未命名";
-        const saved = await api.saveHostsProfile(name, content, profileId);
-        contentCache.current.set(saved.id, content);
-        const next = await api.getHostsWorkspace();
-        applyWorkspace(next, { profileId: saved.id });
-        setContent(content);
-        setDirty(false);
-        toast.success(
-          saved.active ? "自定义配置已保存并同步到系统" : "自定义配置已保存（未激活，未改系统）"
-        );
-      }
+      const saved = await api.saveHostsProfile({
+        id: selectedProfile.id,
+        name: selectedProfile.name,
+        kind: "local",
+        content,
+      });
+      contentCache.current.set(saved.id, content);
+      const next = await api.getHostsWorkspace();
+      setWorkspace(next);
+      setDirty(false);
+      toast.success(saved.active ? "已保存并同步到系统" : "已保存（未激活，未改系统）");
       await refreshBackups();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
@@ -204,67 +255,150 @@ export function HostsPage() {
     }
   };
 
-  const createProfile = async () => {
-    const name = profileName.trim();
-    if (!name) {
-      toast.error("请输入配置名称");
-      return;
-    }
+  useSaveShortcut(() => void saveCurrent(), {
+    enabled: Boolean(workspace) && !saving && dirty && !readOnly,
+  });
+
+  const syncRemote = async () => {
+    if (!selectedProfile || selectedProfile.kind !== "remote") return;
+    setSyncing(true);
     try {
-      const saved = await api.saveHostsProfile(name, "# 自定义 hosts\n", null);
-      contentCache.current.set(saved.id, "# 自定义 hosts\n");
-      setCreateOpen(false);
-      setProfileName("");
-      const next = await api.getHostsWorkspace();
+      const next = await api.refreshHostsRemoteProfile(selectedProfile.id);
+      const text = await api.getHostsProfileContent(selectedProfile.id);
+      contentCache.current.set(selectedProfile.id, text);
       setWorkspace(next);
-      setEditorTarget({ profileId: saved.id });
-      setContent("# 自定义 hosts\n");
+      setContent(text);
       setDirty(false);
-      toast.success("已创建自定义配置");
+      toast.success("远程 hosts 已同步");
+      await refreshBackups();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
+      void load(editorTargetRef.current);
+    } finally {
+      setSyncing(false);
     }
   };
 
-  const activate = async (profileId: string | null) => {
-    const label = profileId
-      ? workspace?.profiles.find((p) => p.id === profileId)?.name ?? "该配置"
-      : "仅公共配置";
-    if (!confirm(`激活「${label}」并写入系统 hosts（公共 + 激活配置）？`)) return;
+  const openCreateForm = () => {
+    setFormMode("create");
+    setFormDraft(EMPTY_CREATE_DRAFT);
+    setFormOpen(true);
+  };
+
+  const openEditForm = () => {
+    if (!selectedProfile) return;
+    setFormMode("edit");
+    setFormDraft({
+      kind: selectedProfile.kind === "remote" ? "remote" : "local",
+      name: selectedProfile.name,
+      localMode: "blank",
+      importPath: "",
+      remoteUrl: selectedProfile.remoteUrl ?? "",
+      refreshIntervalSecs: selectedProfile.refreshIntervalSecs ?? 0,
+    });
+    setFormOpen(true);
+  };
+
+  const submitForm = async () => {
+    const name = formDraft.name.trim();
+    if (!name) {
+      toast.error("请输入标题");
+      return;
+    }
     setSaving(true);
     try {
-      if (dirty) {
-        if (editorTarget === "public") {
-          await api.saveHostsPublic(content);
-        } else if (typeof editorTarget !== "string") {
-          const profile = workspace?.profiles.find((p) => p.id === editorTarget.profileId);
-          if (profile) {
-            await api.saveHostsProfile(profile.name, content, profile.id);
-            contentCache.current.set(profile.id, content);
-          }
+      if (formMode === "edit") {
+        if (!selectedProfile) return;
+        await api.saveHostsProfile({
+          id: selectedProfile.id,
+          name,
+          kind: selectedProfile.kind,
+          remoteUrl:
+            selectedProfile.kind === "remote" ? formDraft.remoteUrl.trim() : undefined,
+          refreshIntervalSecs:
+            selectedProfile.kind === "remote" ? formDraft.refreshIntervalSecs : undefined,
+        });
+        setFormOpen(false);
+        const next = await api.getHostsWorkspace();
+        setWorkspace(next);
+        toast.success("已更新配置");
+        return;
+      }
+
+      const saved =
+        formDraft.kind === "remote"
+          ? await api.saveHostsProfile({
+              name,
+              kind: "remote",
+              remoteUrl: formDraft.remoteUrl.trim(),
+              refreshIntervalSecs: formDraft.refreshIntervalSecs,
+              content: "",
+            })
+          : await api.saveHostsProfile({
+              name,
+              kind: "local",
+              content:
+                formDraft.localMode === "blank" ? "# 自定义 hosts\n" : undefined,
+              importPath:
+                formDraft.localMode === "file" ? formDraft.importPath : undefined,
+            });
+
+      if (formDraft.kind === "remote") {
+        try {
+          await api.refreshHostsRemoteProfile(saved.id);
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? `已创建，但首次同步失败：${error.message}`
+              : "已创建，但首次同步失败",
+          );
         }
       }
-      const next = await api.activateHostsProfile(profileId);
-      const keep =
-        editorTarget === "public"
-          ? "public"
-          : typeof editorTarget !== "string"
-            ? { profileId: editorTarget.profileId }
-            : "public";
-      if (keep === "public") {
-        applyWorkspace(next, "public");
-      } else {
-        setWorkspace(next);
-        const text =
-          contentCache.current.get(keep.profileId) ??
-          (await api.getHostsProfileContent(keep.profileId));
-        contentCache.current.set(keep.profileId, text);
-        setEditorTarget(keep);
-        setContent(text);
-        setDirty(false);
+
+      setFormOpen(false);
+      setFormDraft(EMPTY_CREATE_DRAFT);
+      const text = await api.getHostsProfileContent(saved.id);
+      contentCache.current.set(saved.id, text);
+      const next = await api.getHostsWorkspace();
+      setWorkspace(next);
+      switchTo({ profileId: saved.id }, text);
+      toast.success("已添加配置");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (profile: HostsProfile, active: boolean) => {
+    const label = active ? "激活" : "取消激活";
+    if (
+      !confirm(
+        `${label}「${profile.name}」？系统 hosts 将写入「原有内容 + 所有已激活配置」。`,
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    try {
+      if (dirty && typeof editorTarget !== "string" && editorTarget.profileId === profile.id) {
+        if (profile.kind === "local") {
+          await api.saveHostsProfile({
+            id: profile.id,
+            name: profile.name,
+            kind: "local",
+            content,
+          });
+          contentCache.current.set(profile.id, content);
+        }
+      }
+      const next = await api.setHostsProfileActive(profile.id, active);
+      setWorkspace(next);
+      if (editorTarget === "system") {
+        setContent(next.systemContent);
       }
       await refreshBackups();
-      toast.success(profileId ? `已激活「${label}」` : "已取消自定义配置，系统仅保留公共部分");
+      toast.success(active ? `已激活「${profile.name}」` : `已取消激活「${profile.name}」`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -275,7 +409,7 @@ export function HostsPage() {
   const deleteProfile = async (profile: HostsProfile) => {
     if (
       !confirm(
-        `删除自定义配置「${profile.name}」？${profile.active ? "（当前已激活，删除后系统将只保留公共配置）" : ""}`
+        `删除配置「${profile.name}」？${profile.active ? "（当前已激活，删除后将从系统 hosts 移除）" : ""}`,
       )
     ) {
       return;
@@ -284,7 +418,7 @@ export function HostsPage() {
       const next = await api.deleteHostsProfile(profile.id);
       contentCache.current.delete(profile.id);
       if (typeof editorTarget !== "string" && editorTarget.profileId === profile.id) {
-        applyWorkspace(next, "public");
+        applyWorkspace(next, "system");
       } else {
         setWorkspace(next);
       }
@@ -305,11 +439,12 @@ export function HostsPage() {
   };
 
   const restoreBackup = async (backup: HostsBackup) => {
-    if (!confirm("恢复该备份将覆盖公共/激活配置并写回系统，继续？")) return;
+    if (!confirm("恢复该备份将覆盖当前激活集合并写回系统，继续？")) return;
     setSaving(true);
     try {
       const next = await api.restoreHostsBackup(backup.id);
-      applyWorkspace(next, "public");
+      contentCache.current.clear();
+      applyWorkspace(next, "system");
       await refreshBackups();
       setBackupOpen(false);
       toast.success("已从备份恢复");
@@ -320,19 +455,23 @@ export function HostsPage() {
     }
   };
 
-  let editingLabel = "自定义配置";
-  if (editorTarget === "system") {
-    editingLabel = "系统 hosts";
-  } else if (editorTarget === "public") {
-    editingLabel = "公共配置";
-  } else {
-    editingLabel =
-      workspace?.profiles.find((p) => p.id === editorTarget.profileId)?.name ?? "自定义配置";
-  }
+  const pickImportFile = async () => {
+    try {
+      const selected = await openNativeFileDialog({
+        multiple: false,
+        title: "选择 hosts 文件",
+      });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (!path) return;
+      setFormDraft((prev) => ({ ...prev, importPath: path, localMode: "file" }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
 
-  const isSystem = editorTarget === "system";
-  const isPublic = editorTarget === "public";
-  const readOnly = isSystem;
+  let editingLabel = "配置";
+  if (isSystem) editingLabel = "系统 hosts";
+  else if (selectedProfile) editingLabel = selectedProfile.name;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -342,7 +481,11 @@ export function HostsPage() {
             首次写入需要管理员权限。点击「一键授权」后将授予当前用户对 hosts 的修改权限，之后可直接保存。
           </p>
           <Button size="sm" onClick={() => void authorize()} disabled={authorizing}>
-            {authorizing ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
+            {authorizing ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ShieldCheck className="size-3.5" />
+            )}
             一键授权
           </Button>
         </div>
@@ -355,7 +498,7 @@ export function HostsPage() {
               type="button"
               className={cn(
                 "mb-1 w-full rounded-lg px-2.5 py-2 text-left text-[12px]",
-                isSystem ? "bg-foreground/8" : "hover:bg-foreground/5"
+                isSystem ? "bg-foreground/8" : "hover:bg-foreground/5",
               )}
               onClick={openSystem}
               title={workspace?.path}
@@ -363,27 +506,6 @@ export function HostsPage() {
               <div className="font-medium">系统 hosts</div>
               <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
                 {workspace?.path || "只读查看当前文件"}
-              </div>
-            </button>
-
-            <div className="my-1.5 border-t border-border/60" />
-
-            <button
-              type="button"
-              className={cn(
-                "mb-1 flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[12px]",
-                isPublic ? "bg-foreground/8" : "hover:bg-foreground/5"
-              )}
-              onClick={openPublic}
-            >
-              <span
-                className="hosts-active-pulse"
-                title="始终生效"
-                aria-label="公共配置始终生效"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">公共 hosts</div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">始终写入系统</div>
               </div>
             </button>
 
@@ -398,44 +520,55 @@ export function HostsPage() {
                   role="button"
                   tabIndex={0}
                   className={cn(
-                    "group mb-1 flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-[12px]",
+                    "group mb-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[12px]",
                     "cursor-pointer outline-none transition-colors",
-                    selected ? "bg-foreground/8" : "hover:bg-foreground/5"
+                    selected ? "bg-foreground/8" : "hover:bg-foreground/5",
                   )}
                   onClick={() => openProfile(profile)}
-                  onDoubleClick={(e) => {
-                    e.preventDefault();
-                    void activate(profile.id);
-                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") openProfile(profile);
                   }}
-                  title="单击选中编辑，双击激活并写入系统"
                 >
-                  {profile.active ? (
-                    <span
-                      className="hosts-active-pulse shrink-0"
-                      title="已激活"
-                      aria-label="已激活"
-                    />
-                  ) : (
-                    <span className="size-2 shrink-0" aria-hidden />
-                  )}
+                  <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
+                    {profile.active ? (
+                      <span
+                        className="hosts-active-pulse"
+                        title="已激活"
+                        aria-label="已激活"
+                      />
+                    ) : profile.kind === "remote" ? (
+                      <Cloud className="size-3.5 text-muted-foreground/70" />
+                    ) : (
+                      <FileText className="size-3.5 text-muted-foreground/70" />
+                    )}
+                  </span>
                   <div className="min-w-0 flex-1 truncate text-left">
-                    <span className="font-medium">{profile.name}</span>
+                    <div className="truncate font-medium leading-5">{profile.name}</div>
+                    <div className="truncate text-[10px] leading-4 text-muted-foreground">
+                      {profile.kind === "remote" ? "远程" : "本地"}
+                    </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-6 shrink-0 opacity-0 group-hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteProfile(profile);
-                    }}
-                    title="删除"
+                  <div
+                    className="shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
                   >
-                    <Trash2 className="size-3" />
-                  </Button>
+                    <Switch
+                      size="sm"
+                      checked={profile.active}
+                      disabled={saving}
+                      aria-label={profile.active ? "取消激活" : "激活"}
+                      title={profile.active ? "取消激活" : "激活"}
+                      className={cn(
+                        "h-4 w-7 rounded-full bg-foreground/8",
+                        "data-checked:bg-emerald-500/85",
+                        "[&_[data-slot=switch-thumb]]:size-3 [&_[data-slot=switch-thumb]]:rounded-full",
+                        "[&_[data-slot=switch-thumb]]:shadow-none [&_[data-slot=switch-thumb]]:bg-white",
+                        "[&_[data-slot=switch-thumb]]:data-checked:translate-x-[14px]",
+                      )}
+                      onCheckedChange={(checked) => void toggleActive(profile, checked)}
+                    />
+                  </div>
                 </div>
               );
             })}
@@ -445,15 +578,12 @@ export function HostsPage() {
               className={cn(
                 "mt-0.5 flex w-full items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[12px]",
                 "border border-dashed border-border/80 text-muted-foreground",
-                "hover:border-foreground/30 hover:bg-foreground/5 hover:text-foreground"
+                "hover:border-foreground/30 hover:bg-foreground/5 hover:text-foreground",
               )}
-              onClick={() => {
-                setProfileName("");
-                setCreateOpen(true);
-              }}
+              onClick={openCreateForm}
             >
               <Plus className="size-3.5" />
-              添加自定义配置
+              添加配置
             </button>
           </ScrollArea>
         </aside>
@@ -464,18 +594,24 @@ export function HostsPage() {
               {readOnly ? "正在查看：" : "正在编辑："}
               {editingLabel}
             </div>
-            {workspace?.managed === false && !isSystem && (
-              <span className="rounded-md bg-muted px-2 py-1 text-[10px] text-muted-foreground">
-                系统尚未写入分区标记；保存后将建立「公共 / 自定义」分区，便于下次解析
+            {selectedProfile?.kind === "remote" && selectedProfile.lastFetchError ? (
+              <span className="truncate text-[11px] text-destructive">
+                {selectedProfile.lastFetchError}
               </span>
-            )}
+            ) : selectedProfile?.kind === "remote" && selectedProfile.lastFetchedAt ? (
+              <span className="truncate text-[11px] text-muted-foreground">
+                上次同步 {formatFetchedAt(selectedProfile.lastFetchedAt)}
+              </span>
+            ) : null}
           </div>
+
           <ScrollArea
             className={cn(
               "min-h-0 flex-1 rounded-lg border border-border/60",
-              readOnly ? "bg-muted/40" : "bg-background/50"
+              readOnly ? "bg-muted/40" : "bg-background/50",
             )}
             viewportClassName="p-0"
+            viewportRef={editorViewportRef}
           >
             <textarea
               ref={editorRef}
@@ -491,7 +627,7 @@ export function HostsPage() {
               className={cn(
                 "block w-full resize-none overflow-hidden border-0 bg-transparent px-3 pt-3 pb-8",
                 "font-mono text-[12px] leading-5 text-foreground outline-none min-h-full!",
-                readOnly && "cursor-default text-muted-foreground"
+                readOnly && "cursor-default text-muted-foreground",
               )}
               placeholder="# hosts 内容"
             />
@@ -507,23 +643,64 @@ export function HostsPage() {
           </Button>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => void load(editorTarget)} disabled={loading}>
-            <RefreshCw className={cn(loading && "animate-spin")} />
-            刷新
-          </Button>
-          <Button onClick={() => void saveCurrent()} disabled={saving || !dirty || readOnly}>
-            {saving ? <Loader2 className="animate-spin" /> : <Save />}
-            保存
-          </Button>
+          {selectedProfile ? (
+            <Button
+              variant="outline"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={saving}
+              onClick={() => void deleteProfile(selectedProfile)}
+            >
+              <Trash2 />
+              删除
+            </Button>
+          ) : null}
+          {isSystem ? (
+            <Button
+              variant="outline"
+              disabled={!workspace?.path}
+              onClick={() => {
+                void api.openHostsFileLocation().catch((error) =>
+                  toast.error(error instanceof Error ? error.message : String(error)),
+                );
+              }}
+            >
+              <FolderOpen />
+              打开文件位置
+            </Button>
+          ) : selectedProfile ? (
+            <>
+              <Button variant="outline" disabled={saving} onClick={openEditForm}>
+                <Pencil />
+                编辑
+              </Button>
+              {isRemote ? (
+                <Button disabled={syncing || saving} onClick={() => void syncRemote()}>
+                  {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  立即同步
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => void saveCurrent()}
+                  disabled={saving || !dirty || readOnly}
+                  title={`保存（${SAVE_SHORTCUT_LABEL}）`}
+                >
+                  {saving ? <Loader2 className="animate-spin" /> : <Save />}
+                  保存
+                </Button>
+              )}
+            </>
+          ) : null}
         </div>
       </footer>
 
       <HostsDialogs
-        createOpen={createOpen}
-        onCreateOpenChange={setCreateOpen}
-        profileName={profileName}
-        onProfileNameChange={setProfileName}
-        onCreate={() => void createProfile()}
+        formOpen={formOpen}
+        onFormOpenChange={setFormOpen}
+        formMode={formMode}
+        draft={formDraft}
+        onDraftChange={setFormDraft}
+        onPickImportFile={() => void pickImportFile()}
+        onSubmit={() => void submitForm()}
         saving={saving}
         backupOpen={backupOpen}
         onBackupOpenChange={setBackupOpen}

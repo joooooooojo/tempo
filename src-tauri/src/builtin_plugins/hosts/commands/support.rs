@@ -3,9 +3,11 @@ use chrono::Local;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use super::types::*;
+
+pub(super) const HOSTS_CHANGED_EVENT: &str = "hosts-changed";
 
 pub(super) fn hosts_path() -> PathBuf {
     #[cfg(windows)]
@@ -53,6 +55,11 @@ pub(super) fn validate_hosts_content(content: &str) -> Result<(), String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        // Inline comments are common in hosts files (and used to disable entries).
+        let line = line.split('#').next().unwrap_or(line).trim();
+        if line.is_empty() {
+            continue;
+        }
         let mut parts = line.split_whitespace();
         let Some(ip) = parts.next() else {
             continue;
@@ -60,14 +67,10 @@ pub(super) fn validate_hosts_content(content: &str) -> Result<(), String> {
         if !looks_like_ip(ip) {
             return Err(format!("第 {} 行：无效 IP「{}」", index + 1, ip));
         }
-        let hostnames: Vec<_> = parts.collect();
-        if hostnames.is_empty() {
+        // Hostnames are intentionally not format-checked: users often leave broken /
+        // commented-style names to keep a mapping from taking effect.
+        if parts.next().is_none() {
             return Err(format!("第 {} 行：缺少主机名", index + 1));
-        }
-        for host in hostnames {
-            if !looks_like_hostname(host) {
-                return Err(format!("第 {} 行：无效主机名「{}」", index + 1, host));
-            }
         }
     }
     Ok(())
@@ -78,15 +81,6 @@ pub(super) fn looks_like_ip(value: &str) -> bool {
         return true;
     }
     value.parse::<std::net::Ipv6Addr>().is_ok()
-}
-
-pub(super) fn looks_like_hostname(value: &str) -> bool {
-    if value.is_empty() || value.len() > 253 {
-        return false;
-    }
-    value
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_')
 }
 
 pub(super) fn preview_text(content: &str) -> String {
@@ -100,24 +94,27 @@ pub(super) fn preview_text(content: &str) -> String {
     }
 }
 
+pub(super) fn new_profile_id() -> String {
+    format!("p-{}", Local::now().format("%Y%m%d%H%M%S%3f"))
+}
+
 /// Parse Tempo-managed sections from a system hosts file.
 ///
-/// Format:
+/// New format:
 /// ```text
-/// # >>> TEMPO:PUBLIC:BEGIN
-/// ...public...
-/// # <<< TEMPO:PUBLIC:END
+/// <preamble>
 /// # >>> TEMPO:PROFILE:BEGIN id=<id>
 /// ...profile...
 /// # <<< TEMPO:PROFILE:END
 /// ```
+///
+/// Legacy PUBLIC markers are still recognized for migration.
 pub(super) fn parse_system_hosts(content: &str) -> ParsedSystemHosts {
     let lines: Vec<&str> = content.lines().collect();
     let mut public_start: Option<usize> = None;
     let mut public_end: Option<usize> = None;
-    let mut profile_start: Option<usize> = None;
-    let mut profile_end: Option<usize> = None;
-    let mut profile_id: Option<String> = None;
+    let mut profile_ranges: Vec<(usize, usize, String)> = Vec::new();
+    let mut open_profile: Option<(usize, String)> = None;
 
     for (idx, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -126,104 +123,116 @@ pub(super) fn parse_system_hosts(content: &str) -> ParsedSystemHosts {
         } else if trimmed == MARK_PUBLIC_END {
             public_end = Some(idx);
         } else if let Some(rest) = trimmed.strip_prefix(MARK_PROFILE_BEGIN_PREFIX) {
-            profile_start = Some(idx);
-            profile_id = rest
+            let id = rest
                 .split_whitespace()
                 .find_map(|part| part.strip_prefix("id="))
-                .map(|s| s.to_string());
+                .unwrap_or("")
+                .to_string();
+            open_profile = Some((idx, id));
         } else if trimmed == MARK_PROFILE_END {
-            profile_end = Some(idx);
+            if let Some((start, id)) = open_profile.take() {
+                if !id.is_empty() {
+                    profile_ranges.push((start, idx, id));
+                }
+            }
         }
     }
 
-    let managed = public_start.is_some() && public_end.is_some();
+    let has_legacy_public = public_start.is_some() && public_end.is_some();
+    let has_profiles = !profile_ranges.is_empty();
+    let managed = has_legacy_public || has_profiles;
+
     if !managed {
         return ParsedSystemHosts {
             managed: false,
-            public: normalize_section(content),
-            profile_id: None,
-            profile_content: String::new(),
+            preamble: normalize_section(content),
+            profiles: Vec::new(),
+            legacy_public: String::new(),
         };
     }
 
-    let ps = public_start.unwrap();
-    let pe = public_end.unwrap();
-    let public = if pe > ps + 1 {
-        lines[ps + 1..pe].join("\n")
+    let legacy_public = if has_legacy_public {
+        let ps = public_start.unwrap();
+        let pe = public_end.unwrap();
+        if pe > ps + 1 {
+            normalize_section(&lines[ps + 1..pe].join("\n"))
+        } else {
+            String::new()
+        }
     } else {
         String::new()
     };
 
-    let mut profile_content = String::new();
-    if let (Some(p_start), Some(p_end)) = (profile_start, profile_end) {
-        if p_end > p_start + 1 {
-            profile_content = lines[p_start + 1..p_end].join("\n");
+    let profiles: Vec<(String, String)> = profile_ranges
+        .iter()
+        .map(|(start, end, id)| {
+            let body = if *end > *start + 1 {
+                normalize_section(&lines[*start + 1..*end].join("\n"))
+            } else {
+                String::new()
+            };
+            (id.clone(), body)
+        })
+        .collect();
+
+    let mut skipped = vec![false; lines.len()];
+    if has_legacy_public {
+        let ps = public_start.unwrap();
+        let pe = public_end.unwrap();
+        for i in ps..=pe {
+            skipped[i] = true;
         }
-    } else {
-        profile_id = None;
+    }
+    for (start, end, _) in &profile_ranges {
+        for i in *start..=*end {
+            skipped[i] = true;
+        }
     }
 
-    // Content outside Tempo markers (e.g. manual edits) is merged into public
-    // so it is not lost on the next apply. Tempo banner comments are ignored.
     let mut outside: Vec<&str> = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if Some(i) == public_start {
-            i = pe + 1;
+    for (i, line) in lines.iter().enumerate() {
+        if skipped[i] {
             continue;
         }
-        if profile_start == Some(i) {
-            if let Some(p_end) = profile_end {
-                i = p_end + 1;
-                continue;
-            }
-        }
-        let trimmed = lines[i].trim();
+        let trimmed = line.trim();
         let is_tempo_banner = trimmed.starts_with("# Managed by Tempo")
             || trimmed.starts_with("# >>> TEMPO:")
             || trimmed.starts_with("# <<< TEMPO:");
         if !trimmed.is_empty() && !is_tempo_banner {
-            outside.push(lines[i]);
+            outside.push(*line);
         }
-        i += 1;
     }
+
     let outside_text = normalize_section(&outside.join("\n"));
-    let public = if outside_text.is_empty() {
-        normalize_section(&public)
-    } else if public.trim().is_empty() {
+    // Legacy PUBLIC body is folded into preamble so it is not lost before migration apply.
+    let preamble = if outside_text.is_empty() {
+        legacy_public.clone()
+    } else if legacy_public.is_empty() {
         outside_text
     } else {
-        normalize_section(&format!("{outside_text}\n\n{}", normalize_section(&public)))
+        normalize_section(&format!("{outside_text}\n\n{legacy_public}"))
     };
 
     ParsedSystemHosts {
         managed: true,
-        public,
-        profile_id,
-        profile_content: normalize_section(&profile_content),
+        preamble,
+        profiles,
+        legacy_public,
     }
 }
 
-pub(super) fn compose_system_hosts(
-    public: &str,
-    active_id: Option<&str>,
-    profile_content: Option<&str>,
-) -> String {
+pub(super) fn compose_system_hosts(preamble: &str, profiles: &[(String, String)]) -> String {
     let mut out = String::new();
     out.push_str(
-        "# Managed by Tempo. Keep the marker lines so public/custom sections can be parsed.\n",
+        "# Managed by Tempo. Keep the marker lines so profile sections can be parsed.\n",
     );
-    out.push_str(MARK_PUBLIC_BEGIN);
-    out.push('\n');
-    let public = normalize_section(public);
-    if !public.is_empty() {
-        out.push_str(&public);
+    let preamble = normalize_section(preamble);
+    if !preamble.is_empty() {
+        out.push_str(&preamble);
         out.push('\n');
     }
-    out.push_str(MARK_PUBLIC_END);
-    out.push('\n');
 
-    if let (Some(id), Some(body)) = (active_id, profile_content) {
+    for (id, body) in profiles {
         let body = normalize_section(body);
         out.push('\n');
         out.push_str(&format!("{MARK_PROFILE_BEGIN_PREFIX} id={id}\n"));
@@ -271,52 +280,14 @@ pub(super) fn save_profiles_meta(dir: &Path, meta: &ProfilesFile) -> Result<(), 
     fs::write(path, raw).map_err(|e| format!("保存方案列表失败: {e}"))
 }
 
-pub(super) fn read_public_file(dir: &Path) -> Result<String, String> {
-    let path = dir.join(PUBLIC_FILE);
-    if !path.exists() {
-        return Ok(String::new());
-    }
-    fs::read_to_string(path).map_err(|e| format!("读取公共配置失败: {e}"))
-}
-
-pub(super) fn write_public_file(dir: &Path, content: &str) -> Result<(), String> {
-    let path = dir.join(PUBLIC_FILE);
-    fs::write(path, normalize_section(content)).map_err(|e| format!("保存公共配置失败: {e}"))
-}
-
 pub(super) fn read_profile_file(dir: &Path, id: &str) -> Result<String, String> {
     let path = dir.join("profiles").join(format!("{id}.hosts"));
-    fs::read_to_string(path).map_err(|e| format!("读取自定义配置失败: {e}"))
+    fs::read_to_string(path).map_err(|e| format!("读取配置失败: {e}"))
 }
 
 pub(super) fn write_profile_file(dir: &Path, id: &str, content: &str) -> Result<(), String> {
     let path = dir.join("profiles").join(format!("{id}.hosts"));
-    fs::write(path, normalize_section(content)).map_err(|e| format!("保存自定义配置失败: {e}"))
-}
-
-/// Seed the three default environments once. Deleted profiles are never recreated.
-pub(super) fn ensure_default_profiles(dir: &Path, state: &mut HostsState) -> Result<(), String> {
-    if state.defaults_seeded {
-        return Ok(());
-    }
-
-    let mut meta = load_profiles_meta(dir)?;
-    if meta.profiles.is_empty() {
-        let now = Local::now().to_rfc3339();
-        for &(id, name) in DEFAULT_PROFILES {
-            write_profile_file(dir, id, &format!("# {name}\n"))?;
-            meta.profiles.push(ProfileMeta {
-                id: id.to_string(),
-                name: name.to_string(),
-                updated_at: now.clone(),
-            });
-        }
-        save_profiles_meta(dir, &meta)?;
-    }
-
-    state.defaults_seeded = true;
-    save_state(dir, state)?;
-    Ok(())
+    fs::write(path, normalize_section(content)).map_err(|e| format!("保存配置失败: {e}"))
 }
 
 pub(super) fn create_backup(app: &AppHandle, source: &str, content: &str) -> Result<String, String> {
@@ -386,7 +357,6 @@ pub(super) fn grant_write_permission(path: &Path) -> Result<(), String> {
     };
 
     let path_str = path.to_string_lossy();
-    // cmd.exe + icacls/attrib are always present; elevate via ShellExecute "runas" (no PowerShell).
     let parameters =
         format!("/d /c icacls \"{path_str}\" /grant \"{account}:(M)\" && attrib -R \"{path_str}\"");
 
@@ -503,55 +473,207 @@ pub(super) fn flush_dns_cache() -> Result<(), String> {
     }
 }
 
-/// First launch: treat current system hosts as public config (or parse markers).
-pub(super) fn ensure_initialized(app: &AppHandle) -> Result<(), String> {
-    let dir = tools_hosts_dir(app)?;
-    let mut state = load_state(&dir);
-    let public_path = dir.join(PUBLIC_FILE);
-    if state.initialized && public_path.exists() {
+fn normalize_active_ids(meta: &ProfilesFile, ids: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in ids {
+        if meta.profiles.iter().any(|p| &p.id == id) && !out.iter().any(|x| x == id) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+/// Migrate v1 (public + single active) → v2 (multi-active, no public).
+pub(super) fn ensure_migrated_v2(dir: &Path, state: &mut HostsState) -> Result<(), String> {
+    if state.migrated_v2 {
+        // Still fold legacy single id if somehow present.
+        if let Some(id) = state.active_profile_id.take() {
+            if !state.active_profile_ids.iter().any(|x| x == &id) {
+                state.active_profile_ids.push(id);
+                save_state(dir, state)?;
+            }
+        }
         return Ok(());
     }
 
-    let path = hosts_path();
-    let system = if path.exists() {
-        read_hosts_content(&path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let parsed = parse_system_hosts(&system);
+    let mut meta = load_profiles_meta(dir)?;
+    let now = Local::now().to_rfc3339();
 
-    if !public_path.exists() {
-        write_public_file(&dir, &parsed.public)?;
+    if let Some(id) = state.active_profile_id.take() {
+        if !state.active_profile_ids.iter().any(|x| x == &id) {
+            state.active_profile_ids.push(id);
+        }
     }
 
-    // If system already has a Tempo profile section, sync it into storage.
-    if let Some(id) = parsed.profile_id.clone() {
-        let profile_path = dir.join("profiles").join(format!("{id}.hosts"));
-        if !profile_path.exists() {
-            write_profile_file(&dir, &id, &parsed.profile_content)?;
-            let mut meta = load_profiles_meta(&dir)?;
-            if !meta.profiles.iter().any(|p| p.id == id) {
-                meta.profiles.push(ProfileMeta {
-                    id: id.clone(),
-                    name: format!("配置 {id}"),
-                    updated_at: Local::now().to_rfc3339(),
-                });
-                save_profiles_meta(&dir, &meta)?;
+    let public_path = dir.join(PUBLIC_FILE);
+    if public_path.exists() {
+        let public = fs::read_to_string(&public_path).unwrap_or_default();
+        let public = normalize_section(&public);
+        if !public.is_empty() {
+            let already = meta.profiles.iter().any(|p| p.name == "原公共配置");
+            if !already {
+                let id = new_profile_id();
+                write_profile_file(dir, &id, &public)?;
+                meta.profiles.insert(
+                    0,
+                    ProfileMeta {
+                        id: id.clone(),
+                        name: "原公共配置".into(),
+                        updated_at: now.clone(),
+                        kind: HostsProfileKind::Local,
+                        remote_url: None,
+                        refresh_interval_secs: 0,
+                        last_fetched_at: None,
+                        last_fetch_error: None,
+                    },
+                );
+                if !state.active_profile_ids.iter().any(|x| x == &id) {
+                    state.active_profile_ids.insert(0, id);
+                }
+                save_profiles_meta(dir, &meta)?;
             }
         }
-        state.active_profile_id = Some(id);
+        let _ = fs::remove_file(&public_path);
     }
 
+    // Ensure every profile has a kind (serde default covers this on load).
+    for profile in &mut meta.profiles {
+        if profile.kind == HostsProfileKind::Remote && profile.remote_url.is_none() {
+            profile.kind = HostsProfileKind::Local;
+        }
+    }
+    save_profiles_meta(dir, &meta)?;
+
+    state.active_profile_ids = normalize_active_ids(&meta, &state.active_profile_ids);
+    state.migrated_v2 = true;
+    state.defaults_seeded = true; // never seed env-* going forward
     state.initialized = true;
-    save_state(&dir, &state)?;
+    save_state(dir, state)?;
     Ok(())
+}
+
+pub(super) fn ensure_initialized(app: &AppHandle) -> Result<(), String> {
+    let dir = tools_hosts_dir(app)?;
+    let mut state = load_state(&dir);
+
+    if !state.initialized {
+        let path = hosts_path();
+        let system = if path.exists() {
+            read_hosts_content(&path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let parsed = parse_system_hosts(&system);
+
+        // Sync any profile sections already on disk into storage.
+        if !parsed.profiles.is_empty() {
+            let mut meta = load_profiles_meta(&dir)?;
+            let now = Local::now().to_rfc3339();
+            for (id, body) in &parsed.profiles {
+                let profile_path = dir.join("profiles").join(format!("{id}.hosts"));
+                if !profile_path.exists() {
+                    write_profile_file(&dir, id, body)?;
+                }
+                if !meta.profiles.iter().any(|p| &p.id == id) {
+                    meta.profiles.push(ProfileMeta {
+                        id: id.clone(),
+                        name: format!("配置 {id}"),
+                        updated_at: now.clone(),
+                        kind: HostsProfileKind::Local,
+                        remote_url: None,
+                        refresh_interval_secs: 0,
+                        last_fetched_at: None,
+                        last_fetch_error: None,
+                    });
+                }
+                if !state.active_profile_ids.iter().any(|x| x == id) {
+                    state.active_profile_ids.push(id.clone());
+                }
+            }
+            save_profiles_meta(&dir, &meta)?;
+        }
+
+        // Bootstrap public.hosts only so v2 migration can pick it up for existing installs.
+        let public_path = dir.join(PUBLIC_FILE);
+        if !public_path.exists() && !parsed.legacy_public.is_empty() {
+            fs::write(&public_path, &parsed.legacy_public)
+                .map_err(|e| format!("写入临时公共配置失败: {e}"))?;
+        } else if !public_path.exists()
+            && !state.migrated_v2
+            && !parsed.managed
+            && !parsed.preamble.is_empty()
+        {
+            // Unmanaged system hosts: leave as preamble on first apply; no public file.
+        }
+
+        state.initialized = true;
+        save_state(&dir, &state)?;
+    }
+
+    ensure_migrated_v2(&dir, &mut state)?;
+    Ok(())
+}
+
+pub(super) fn reconcile_active_profiles(
+    dir: &Path,
+    state: &mut HostsState,
+    meta: &mut ProfilesFile,
+    parsed: &ParsedSystemHosts,
+) -> Result<Vec<String>, String> {
+    // Prefer ids embedded in the system file when present; otherwise keep state.
+    let from_system: Vec<String> = parsed
+        .profiles
+        .iter()
+        .map(|(id, _)| id.clone())
+        .filter(|id| {
+            dir.join("profiles").join(format!("{id}.hosts")).exists()
+                || meta.profiles.iter().any(|p| &p.id == id)
+                || parsed
+                    .profiles
+                    .iter()
+                    .any(|(pid, body)| pid == id && !body.is_empty())
+        })
+        .collect();
+
+    for (id, body) in &parsed.profiles {
+        let profile_path = dir.join("profiles").join(format!("{id}.hosts"));
+        if !profile_path.exists() {
+            write_profile_file(dir, id, body)?;
+        }
+        if !meta.profiles.iter().any(|p| &p.id == id) {
+            meta.profiles.push(ProfileMeta {
+                id: id.clone(),
+                name: format!("配置 {id}"),
+                updated_at: Local::now().to_rfc3339(),
+                kind: HostsProfileKind::Local,
+                remote_url: None,
+                refresh_interval_secs: 0,
+                last_fetched_at: None,
+                last_fetch_error: None,
+            });
+            save_profiles_meta(dir, meta)?;
+        }
+    }
+
+    let resolved = if parsed.managed && !from_system.is_empty() {
+        from_system
+    } else {
+        normalize_active_ids(meta, &state.active_profile_ids)
+    };
+
+    if state.active_profile_ids != resolved {
+        state.active_profile_ids = resolved.clone();
+        state.initialized = true;
+        save_state(dir, state)?;
+    }
+
+    Ok(resolved)
 }
 
 pub(super) fn build_workspace(app: &AppHandle) -> Result<HostsWorkspace, String> {
     ensure_initialized(app)?;
     let dir = tools_hosts_dir(app)?;
     let mut state = load_state(&dir);
-    ensure_default_profiles(&dir, &mut state)?;
     let mut meta = load_profiles_meta(&dir)?;
     let path = hosts_path();
     let system_content = if path.exists() {
@@ -561,21 +683,12 @@ pub(super) fn build_workspace(app: &AppHandle) -> Result<HostsWorkspace, String>
     };
     let parsed = parse_system_hosts(&system_content);
     let writable = is_writable(&path);
-    let public_content = read_public_file(&dir)?;
-
-    // System hosts markers are the source of truth for what is currently applied.
-    // Reconcile state.json so the active indicator survives restarts / refresh.
-    let active_profile_id = reconcile_active_profile(&dir, &mut state, &mut meta, &parsed)?;
+    let active_profile_ids = reconcile_active_profiles(&dir, &mut state, &mut meta, &parsed)?;
 
     let profiles = meta
         .profiles
-        .into_iter()
-        .map(|p| HostsProfile {
-            active: active_profile_id.as_ref() == Some(&p.id),
-            id: p.id,
-            name: p.name,
-            updated_at: p.updated_at,
-        })
+        .iter()
+        .map(|p| p.to_public(&active_profile_ids))
         .collect();
 
     Ok(HostsWorkspace {
@@ -583,90 +696,38 @@ pub(super) fn build_workspace(app: &AppHandle) -> Result<HostsWorkspace, String>
         writable,
         authorized: writable,
         managed: parsed.managed,
-        public_content,
-        active_profile_id,
+        active_profile_ids,
         profiles,
         system_content,
     })
 }
 
-/// Prefer the profile id embedded in the system hosts file; fall back to state.json.
-/// Always write the resolved id back to state so UI activation persists.
-pub(super) fn reconcile_active_profile(
-    dir: &Path,
-    state: &mut HostsState,
-    meta: &mut ProfilesFile,
-    parsed: &ParsedSystemHosts,
-) -> Result<Option<String>, String> {
-    let from_system = parsed.profile_id.as_ref().and_then(|id| {
-        let file_exists = dir.join("profiles").join(format!("{id}.hosts")).exists();
-        let in_meta = meta.profiles.iter().any(|p| &p.id == id);
-        if file_exists || in_meta || !parsed.profile_content.is_empty() {
-            Some(id.clone())
-        } else {
-            None
-        }
-    });
-
-    let from_state = state
-        .active_profile_id
-        .clone()
-        .filter(|id| meta.profiles.iter().any(|p| &p.id == id));
-
-    // Applied system content wins; otherwise keep last saved activation.
-    let resolved = from_system.or(from_state);
-
-    if let Some(ref id) = resolved {
-        // Ensure profile content + meta exist when recovered from system markers.
-        let profile_path = dir.join("profiles").join(format!("{id}.hosts"));
-        if !profile_path.exists() {
-            write_profile_file(dir, id, &parsed.profile_content)?;
-        }
-        if !meta.profiles.iter().any(|p| &p.id == id) {
-            meta.profiles.push(ProfileMeta {
-                id: id.clone(),
-                name: format!("配置 {id}"),
-                updated_at: Local::now().to_rfc3339(),
-            });
-            save_profiles_meta(dir, meta)?;
-        }
-    }
-
-    if state.active_profile_id != resolved {
-        state.active_profile_id = resolved.clone();
-        state.initialized = true;
-        save_state(dir, state)?;
-    }
-
-    Ok(resolved)
-}
-
 pub(super) fn apply_composed(app: &AppHandle, source: &str) -> Result<HostsWorkspace, String> {
     let dir = tools_hosts_dir(app)?;
     let state = load_state(&dir);
-    let public = read_public_file(&dir)?;
-    validate_hosts_content(&public)?;
-
-    let active_id = state.active_profile_id.clone();
-    let profile_body = if let Some(ref id) = active_id {
-        let body = read_profile_file(&dir, id)?;
-        validate_hosts_content(&body)?;
-        Some(body)
-    } else {
-        None
-    };
-
-    let composed = compose_system_hosts(&public, active_id.as_deref(), profile_body.as_deref());
-
+    let meta = load_profiles_meta(&dir)?;
     let path = hosts_path();
     let previous = if path.exists() {
         read_hosts_content(&path).unwrap_or_default()
     } else {
         String::new()
     };
+    let parsed = parse_system_hosts(&previous);
+    let preamble = parsed.preamble;
+
+    let active_ids = normalize_active_ids(&meta, &state.active_profile_ids);
+    let mut sections: Vec<(String, String)> = Vec::new();
+    for id in &active_ids {
+        let body = read_profile_file(&dir, id)?;
+        validate_hosts_content(&body)?;
+        sections.push((id.clone(), body));
+    }
+
+    let composed = compose_system_hosts(&preamble, &sections);
     create_backup(app, source, &previous)?;
     write_system_hosts_raw(&path, &composed)?;
     let _ = flush_dns_cache();
-    build_workspace(app)
+    let workspace = build_workspace(app)?;
+    let _ = app.emit(HOSTS_CHANGED_EVENT, ());
+    Ok(workspace)
 }
-

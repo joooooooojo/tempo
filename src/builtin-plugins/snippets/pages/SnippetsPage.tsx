@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SAVE_SHORTCUT_LABEL, useSaveShortcut } from "@/hooks/useSaveShortcut";
 import {
   Table,
   TableBody,
@@ -166,6 +167,7 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
   };
 
   const saveEditor = async () => {
+    if (saving) return;
     const title = editor.title.trim();
     const content = editor.content.trim();
     const tags = splitTags(editor.tags);
@@ -194,6 +196,11 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
       setSaving(false);
     }
   };
+
+  useSaveShortcut(() => void saveEditor(), {
+    active: editorOpen,
+    enabled: !saving,
+  });
 
   const createGroup = async () => {
     const name = newGroupName.trim();
@@ -574,7 +581,12 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
               <Button className="h-9" variant="outline" onClick={() => setEditorOpen(false)}>
                 取消
               </Button>
-              <Button className="h-9" disabled={saving} onClick={() => void saveEditor()}>
+              <Button
+                className="h-9"
+                disabled={saving}
+                onClick={() => void saveEditor()}
+                title={`保存（${SAVE_SHORTCUT_LABEL}）`}
+              >
                 保存
               </Button>
             </div>

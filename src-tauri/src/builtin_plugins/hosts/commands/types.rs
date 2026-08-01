@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 pub(super) const MAX_BACKUPS: usize = 20;
 pub(super) const PROFILES_META: &str = "profiles.json";
 pub(super) const STATE_FILE: &str = "state.json";
@@ -11,12 +10,13 @@ pub(super) const MARK_PUBLIC_END: &str = "# <<< TEMPO:PUBLIC:END";
 pub(super) const MARK_PROFILE_BEGIN_PREFIX: &str = "# >>> TEMPO:PROFILE:BEGIN";
 pub(super) const MARK_PROFILE_END: &str = "# <<< TEMPO:PROFILE:END";
 
-/// Built-in custom environments seeded on first use.
-pub(super) const DEFAULT_PROFILES: &[(&str, &str)] = &[
-    ("env-dev", "开发环境"),
-    ("env-test", "测试环境"),
-    ("env-prod", "生产环境"),
-];
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HostsProfileKind {
+    #[default]
+    Local,
+    Remote,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,10 +24,9 @@ pub struct HostsWorkspace {
     pub path: String,
     pub writable: bool,
     pub authorized: bool,
-    /// Whether the on-disk system hosts contains Tempo section markers.
+    /// Whether the on-disk system hosts contains Tempo profile markers.
     pub managed: bool,
-    pub public_content: String,
-    pub active_profile_id: Option<String>,
+    pub active_profile_ids: Vec<String>,
     pub profiles: Vec<HostsProfile>,
     /// Exact content currently on the system hosts file.
     pub system_content: String,
@@ -40,6 +39,15 @@ pub struct HostsProfile {
     pub name: String,
     pub updated_at: String,
     pub active: bool,
+    pub kind: HostsProfileKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_url: Option<String>,
+    #[serde(default)]
+    pub refresh_interval_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_fetched_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_fetch_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,14 +61,19 @@ pub struct HostsBackup {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(super) struct HostsState {
+    #[serde(default)]
+    pub(super) active_profile_ids: Vec<String>,
+    /// Legacy single-active field retained only for migration from v1 state.json.
     #[serde(default, alias = "activeProfileId")]
     pub(super) active_profile_id: Option<String>,
-    /// True after we have bootstrapped public.hosts at least once.
     #[serde(default)]
     pub(super) initialized: bool,
-    /// True after the three default environments were seeded once (or skipped for existing installs).
+    /// Legacy seed flag; no longer used after v2.
     #[serde(default)]
     pub(super) defaults_seeded: bool,
+    /// True after public→profile migration and multi-active upgrade.
+    #[serde(default)]
+    pub(super) migrated_v2: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,12 +86,41 @@ pub(super) struct ProfileMeta {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) updated_at: String,
+    #[serde(default)]
+    pub(super) kind: HostsProfileKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) remote_url: Option<String>,
+    #[serde(default)]
+    pub(super) refresh_interval_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last_fetched_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last_fetch_error: Option<String>,
+}
+
+impl ProfileMeta {
+    pub(super) fn to_public(&self, active_ids: &[String]) -> HostsProfile {
+        HostsProfile {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            updated_at: self.updated_at.clone(),
+            active: active_ids.iter().any(|id| id == &self.id),
+            kind: self.kind,
+            remote_url: self.remote_url.clone(),
+            refresh_interval_secs: self.refresh_interval_secs,
+            last_fetched_at: self.last_fetched_at.clone(),
+            last_fetch_error: self.last_fetch_error.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct ParsedSystemHosts {
     pub(super) managed: bool,
-    pub(super) public: String,
-    pub(super) profile_id: Option<String>,
-    pub(super) profile_content: String,
+    /// Non-Tempo content preserved across applies.
+    pub(super) preamble: String,
+    /// Profile sections found in the system file (id, body).
+    pub(super) profiles: Vec<(String, String)>,
+    /// Legacy PUBLIC section body (migration aid).
+    pub(super) legacy_public: String,
 }

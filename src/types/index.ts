@@ -208,17 +208,23 @@ export interface HostsWorkspace {
   writable: boolean;
   authorized: boolean;
   managed: boolean;
-  publicContent: string;
-  activeProfileId?: string | null;
+  activeProfileIds: string[];
   profiles: HostsProfile[];
   systemContent: string;
 }
+
+export type HostsProfileKind = "local" | "remote";
 
 export interface HostsProfile {
   id: string;
   name: string;
   updatedAt: string;
   active: boolean;
+  kind: HostsProfileKind;
+  remoteUrl?: string | null;
+  refreshIntervalSecs?: number;
+  lastFetchedAt?: string | null;
+  lastFetchError?: string | null;
 }
 
 export interface HostsBackup {
