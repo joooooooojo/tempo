@@ -1,0 +1,648 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://joooooooojo.github.io/tempo/plugin-assets/releases/1.0.1/plugin-manifest.schema.json",
+  "title": "Tempo Plugin Manifest",
+  "description": "Structural schema for Tempo manifestVersion 1 plugin packages. Command references, duplicate ids and package file existence are additionally validated by Tempo during import.",
+  "type": "object",
+  "required": [
+    "manifestVersion",
+    "id",
+    "name",
+    "version",
+    "engines"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "manifestVersion": {
+      "const": 1,
+      "description": "Tempo plugin manifest format version."
+    },
+    "id": {
+      "$ref": "#/$defs/pluginId"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plugin package version. Package contents are immutable for the same id/version."
+    },
+    "engines": {
+      "$ref": "#/$defs/engines"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "ui",
+        "headless",
+        "hybrid"
+      ],
+      "description": "Classification only; actual behavior is inferred from contributes and main."
+    },
+    "author": {
+      "type": "string"
+    },
+    "publisher": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "homepage": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "macos",
+          "windows",
+          "linux"
+        ]
+      },
+      "uniqueItems": true,
+      "minItems": 1,
+      "default": [
+        "macos",
+        "windows"
+      ],
+      "description": "Host operating systems this plugin supports. Omit or leave unset for all currently supported platforms (macos, windows). linux is reserved for a future Tempo host and is not selectable in the editor yet."
+    },
+    "main": {
+      "$ref": "#/$defs/relativePath",
+      "description": "Optional Node Runtime entry within the plugin package (.js or .mjs). Required when no apps are contributed."
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "filesystem",
+          "network",
+          "process",
+          "clipboard",
+          "system"
+        ]
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Disclosure metadata, not a Runtime sandbox boundary."
+    },
+    "activationEvents": {
+      "type": "array",
+      "items": {
+        "const": "onStartup"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "contributes": {
+      "$ref": "#/$defs/contributes"
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "main"
+          ],
+          "properties": {
+            "main": true
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "contributes"
+          ],
+          "properties": {
+            "contributes": {
+              "type": "object",
+              "required": [
+                "apps"
+              ],
+              "properties": {
+                "apps": {
+                  "type": "array",
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "activationEvents"
+        ],
+        "properties": {
+          "activationEvents": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "required": [
+          "main"
+        ],
+        "properties": {
+          "main": true
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "pluginId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^(?!(?:builtin|tempo)(?:\\.|$))[a-z0-9]+(?:\\.[a-z0-9-]+)+$",
+      "description": "Lowercase reverse-DNS id. The builtin and tempo namespaces are reserved."
+    },
+    "localId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*//)(?!.*:)(?!.*\\\\).+$",
+      "description": "Package-relative path using forward slashes."
+    },
+    "engines": {
+      "type": "object",
+      "required": [
+        "tempo",
+        "pluginApi"
+      ],
+      "properties": {
+        "tempo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pluginApi": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "contributes": {
+      "type": "object",
+      "properties": {
+        "apps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/app"
+          },
+          "default": []
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action"
+          },
+          "default": []
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command"
+          },
+          "default": []
+        },
+        "mcpTools": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/mcpTool"
+          },
+          "default": []
+        },
+        "settings": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/setting"
+          },
+          "default": [],
+          "description": "Host-rendered settings shown in Tempo Settings → Plugins → 插件配置."
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "setting": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "title",
+        "default"
+      ],
+      "additionalProperties": false,
+      "description": "Host-rendered setting row. v1 controls: switch / select / multiselect / input.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "switch",
+            "select",
+            "multiselect",
+            "input"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "default": true,
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/settingOption"
+          }
+        },
+        "placeholder": {
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    },
+    "settingOption": {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "app": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "entry"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "icon": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "entry": {
+          "const": "index.html"
+        },
+        "windowMode": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "standalone"
+          ],
+          "default": "normal"
+        },
+        "rect": {
+          "$ref": "#/$defs/rect"
+        },
+        "sessionVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "rect": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "$ref": "#/$defs/width"
+        },
+        "height": {
+          "$ref": "#/$defs/height"
+        },
+        "x": {
+          "$ref": "#/$defs/position"
+        },
+        "y": {
+          "$ref": "#/$defs/position"
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "percentageSize": {
+      "type": "string",
+      "pattern": "^(?:100(?:\\.0+)?|[1-9][0-9]?(?:\\.[0-9]+)?)%$"
+    },
+    "percentagePosition": {
+      "type": "string",
+      "pattern": "^(?:100(?:\\.0+)?|[0-9]|[1-9][0-9](?:\\.[0-9]+)?|[0-9](?:\\.[0-9]+)?)%$"
+    },
+    "width": {
+      "default": 800,
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 320,
+          "maximum": 4096
+        },
+        {
+          "$ref": "#/$defs/percentageSize"
+        }
+      ]
+    },
+    "height": {
+      "default": 580,
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 240,
+          "maximum": 2160
+        },
+        {
+          "$ref": "#/$defs/percentageSize"
+        }
+      ]
+    },
+    "position": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "#/$defs/percentagePosition"
+        },
+        {
+          "type": "string",
+          "pattern": "^[Cc][Ee][Nn][Tt][Ee][Rr]$"
+        }
+      ]
+    },
+    "action": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "app"
+          ],
+          "not": {
+            "required": [
+              "command"
+            ]
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "not": {
+            "required": [
+              "app"
+            ]
+          }
+        }
+      ],
+      "not": {
+        "required": [
+          "accepts",
+          "requiresQuery"
+        ]
+      },
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "icon": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "requiresQuery": {
+          "type": "boolean",
+          "description": "Deprecated compatibility field. Use accepts instead. Both true and false map to [text]."
+        },
+        "accepts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image",
+              "file"
+            ]
+          },
+          "default": [
+            "text"
+          ],
+          "description": "Input kinds for which this action is recommended and can run."
+        },
+        "titleTemplate": {
+          "type": "string"
+        },
+        "app": {
+          "$ref": "#/$defs/localId",
+          "description": "Manifest-local app id to open with the action invocation in params."
+        },
+        "command": {
+          "$ref": "#/$defs/localId",
+          "description": "Manifest-local Runtime command id to invoke with the action invocation."
+        }
+      },
+      "additionalProperties": false
+    },
+    "command": {
+      "type": "object",
+      "required": [
+        "id",
+        "title"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "public"
+          ],
+          "default": "private"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpTool": {
+      "type": "object",
+      "required": [
+        "name",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/localId"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/mcpObjectSchema",
+          "description": "JSON Schema for tool arguments. Prefer a non-empty description on each properties.* entry for MCP / AI clients (optional, not required)."
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/mcpObjectSchema",
+          "description": "JSON Schema for tool results. Prefer a non-empty description on each properties.* entry (optional, not required)."
+        },
+        "annotations": {
+          "$ref": "#/$defs/mcpToolAnnotations"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpObjectSchema": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/mcpPropertySchema"
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        }
+      },
+      "additionalProperties": true,
+      "default": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "mcpPropertySchema": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional human-readable parameter description for MCP clients / AI tool callers. Recommended for both inputSchema and outputSchema properties."
+        }
+      },
+      "additionalProperties": true
+    },
+    "mcpToolAnnotations": {
+      "type": "object",
+      "properties": {
+        "readOnlyHint": {
+          "type": "boolean"
+        },
+        "destructiveHint": {
+          "type": "boolean"
+        },
+        "idempotentHint": {
+          "type": "boolean"
+        },
+        "openWorldHint": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
