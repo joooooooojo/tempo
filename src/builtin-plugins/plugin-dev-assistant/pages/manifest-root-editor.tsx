@@ -24,6 +24,7 @@ import {
   type EditablePluginManifest,
   type PluginCapability,
   type PluginKind,
+  type PluginPlatform,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
 import { KIND_ITEMS } from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
 
@@ -34,6 +35,23 @@ const CAPABILITY_ITEMS = [
   { value: "clipboard", label: "剪贴板" },
   { value: "system", label: "系统" },
 ] as const;
+
+const PLATFORM_ITEMS = [
+  { value: "macos", label: "macOS" },
+  { value: "windows", label: "Windows" },
+  {
+    value: "linux",
+    label: "Linux",
+    disabled: true,
+    disabledHint: "Tempo 尚未支持 Linux 宿主",
+  },
+] as const;
+
+const DEFAULT_PLATFORMS: PluginPlatform[] = ["macos", "windows"];
+
+function selectablePlatforms(values: readonly PluginPlatform[]): PluginPlatform[] {
+  return values.filter((value) => value === "macos" || value === "windows");
+}
 
 function setOptionalString(
   target: Record<string, unknown>,
@@ -305,6 +323,38 @@ export function ManifestRootEditor({
             </div>
           ) : null}
         </FieldGroup>
+      </PluginDevSection>
+
+      <PluginDevSection
+        title="适用平台"
+        description="声明插件可运行的宿主操作系统；未选择时视为 macOS 与 Windows"
+      >
+        <ToggleListField<PluginPlatform>
+          options={PLATFORM_ITEMS}
+          values={
+            manifest.platforms?.length
+              ? selectablePlatforms(manifest.platforms)
+              : DEFAULT_PLATFORMS
+          }
+          requireOne
+          onChange={(values) =>
+            onUpdate((next) => {
+              const nextPlatforms = selectablePlatforms(values);
+              if (
+                nextPlatforms.length === DEFAULT_PLATFORMS.length &&
+                DEFAULT_PLATFORMS.every((platform) =>
+                  nextPlatforms.includes(platform),
+                )
+              ) {
+                delete next.platforms;
+              } else if (nextPlatforms.length > 0) {
+                next.platforms = nextPlatforms;
+              } else {
+                delete next.platforms;
+              }
+            })
+          }
+        />
       </PluginDevSection>
 
       <PluginDevSection

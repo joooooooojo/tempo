@@ -60,6 +60,17 @@
       "uniqueItems": true,
       "default": []
     },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["macos", "windows", "linux"]
+      },
+      "uniqueItems": true,
+      "minItems": 1,
+      "default": ["macos", "windows"],
+      "description": "Host operating systems this plugin supports. Omit or leave unset for all currently supported platforms (macos, windows). linux is reserved for a future Tempo host and is not selectable in the editor yet."
+    },
     "main": {
       "$ref": "#/$defs/relativePath",
       "description": "Optional Node Runtime entry within the plugin package (.js or .mjs). Required when no apps are contributed."

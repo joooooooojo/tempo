@@ -5,6 +5,7 @@ export type PluginCapability =
   | "process"
   | "clipboard"
   | "system";
+export type PluginPlatform = "macos" | "windows" | "linux";
 export type RectValue = number | string;
 
 export interface EditableAppRect {
@@ -85,6 +86,7 @@ export interface EditablePluginManifest {
   repository?: string;
   license?: string;
   categories?: string[];
+  platforms?: PluginPlatform[];
   capabilities?: PluginCapability[];
   activationEvents?: Array<"onStartup">;
   engines: {

@@ -6,8 +6,8 @@
       "minPluginApi": "1.0.0",
       "manifestSchema": {
         "url": "releases/1.0.0/plugin-manifest.schema.json",
-        "sha256": "294b0c5dc327835c8171f843d0fc88d3d2604ea78eac42ea0ca7622fcb697fec",
-        "size": 14292
+        "sha256": "322d10eb6977c64267b78bf70392d6964dd01ccbd3d27e9a8ac6f8e5a769d06a",
+        "size": 14753
       },
       "templates": {
         "ui": {

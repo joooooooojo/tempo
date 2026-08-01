@@ -144,6 +144,8 @@ export interface ToggleOption<T extends string> {
   value: T;
   label: string;
   description?: string;
+  disabled?: boolean;
+  disabledHint?: string;
 }
 
 export function ToggleListField<T extends string>({
@@ -168,20 +170,37 @@ export function ToggleListField<T extends string>({
       <div className="plugin-dev-toggle-grid">
         {options.map((option) => {
           const checked = values.includes(option.value);
+          const disabled =
+            Boolean(option.disabled) ||
+            (requireOne && checked && values.length === 1);
           return (
-            <Field key={option.value} orientation="horizontal" className="items-center">
-              <FieldLabel className="flex-1 font-normal">{option.label}</FieldLabel>
+            <Field
+              key={option.value}
+              orientation="horizontal"
+              className="items-center"
+              data-disabled={disabled || undefined}
+            >
+              <div className="min-w-0 flex-1">
+                <FieldLabel className="font-normal">{option.label}</FieldLabel>
+                {option.disabled && option.disabledHint ? (
+                  <FieldDescription>{option.disabledHint}</FieldDescription>
+                ) : option.description ? (
+                  <FieldDescription>{option.description}</FieldDescription>
+                ) : null}
+              </div>
               <Switch
                 checked={checked}
-                disabled={requireOne && checked && values.length === 1}
+                disabled={disabled}
                 aria-label={option.label}
-                onCheckedChange={(nextChecked) =>
+                title={option.disabled ? option.disabledHint : undefined}
+                onCheckedChange={(nextChecked) => {
+                  if (option.disabled) return;
                   onChange(
                     nextChecked
                       ? [...values, option.value]
                       : values.filter((value) => value !== option.value),
-                  )
-                }
+                  );
+                }}
               />
             </Field>
           );

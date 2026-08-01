@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Feat
+
+- 插件 Manifest 新增 `platforms` 字段，可声明适用宿主（macOS / Windows）；Linux 已预留但暂未支持，开发助手中置灰不可选。未声明时视为支持当前已发布平台。
+
 ### Fix
 
 - 修复 Windows 下插件开发助手连接或重连 Runtime 时，进程树清理命令短暂弹出控制台窗口的问题。

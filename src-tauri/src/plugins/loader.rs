@@ -13,7 +13,7 @@ use tauri::AppHandle;
 
 use super::host::{DevelopmentPlugin, DevelopmentUiSource, PluginHost, PluginRegistryEntry};
 use super::ids::runtime_id;
-use super::manifest::{ActionInputKind, AppRect, PluginManifest, PluginWindowMode};
+use super::manifest::{ActionInputKind, AppRect, PluginManifest, PluginWindowMode, current_host_platform};
 use super::paths::packages_dir;
 use super::trust::list_installed_plugins;
 use super::ui::{plugin_entry_url, plugin_hash_of, plugin_icon_url};
@@ -207,6 +207,15 @@ pub fn scan_enabled_contributions(
                 continue;
             }
         };
+        if !manifest.supports_platform(current_host_platform()) {
+            tracing::info!(
+                plugin_id = %row.id,
+                platforms = ?manifest.platforms,
+                host = current_host_platform(),
+                "skip plugin: unsupported host platform"
+            );
+            continue;
+        }
 
         let package_hash = row.package_hash.clone().unwrap_or_default();
         let plugin_hash = plugin_hash_of(&row.id);
@@ -315,6 +324,9 @@ pub fn plugins_needing_startup(
         let Ok(manifest) = PluginManifest::parse_str(&raw) else {
             continue;
         };
+        if !manifest.supports_platform(current_host_platform()) {
+            continue;
+        }
         if manifest.main.is_some()
             && manifest
                 .activation_events

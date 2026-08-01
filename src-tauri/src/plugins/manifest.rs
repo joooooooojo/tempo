@@ -8,6 +8,22 @@ use super::ids::{is_valid_local_id, is_valid_plugin_id};
 
 pub const MANIFEST_VERSION: u32 = 1;
 
+/// Allowed `platforms[]` values in manifestVersion 1.
+pub const PLUGIN_PLATFORMS: &[&str] = &["macos", "windows", "linux"];
+
+/// Current Tempo host OS key used by `platforms[]` / [`PluginManifest::supports_platform`].
+pub fn current_host_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    }
+}
+
 /// Fixed UI document at the package root (must sit beside `manifest.json`).
 pub const UI_ENTRY_FILE: &str = "index.html";
 
@@ -47,6 +63,10 @@ pub struct PluginManifest {
     pub license: Option<String>,
     #[serde(default)]
     pub categories: Vec<String>,
+    /// Host OS targets this plugin declares support for (`macos` / `windows` / `linux`).
+    /// Empty means all currently supported Tempo hosts (macos + windows).
+    #[serde(default)]
+    pub platforms: Vec<String>,
     /// Relative path to the Node Runtime entry within the plugin package (`.js` / `.mjs`).
     /// Required for headless (no `apps[]`) plugins; optional for pure UI packages.
     #[serde(default)]
@@ -547,6 +567,18 @@ impl PluginManifest {
         if self.engines.plugin_api.trim().is_empty() {
             return Err("engines.pluginApi is required".into());
         }
+        let mut platforms = std::collections::HashSet::new();
+        for platform in &self.platforms {
+            if !PLUGIN_PLATFORMS.contains(&platform.as_str()) {
+                return Err(format!(
+                    "unsupported platform `{platform}`; expected one of {}",
+                    PLUGIN_PLATFORMS.join(", ")
+                ));
+            }
+            if !platforms.insert(platform.as_str()) {
+                return Err(format!("duplicate platform: {platform}"));
+            }
+        }
         let mut activation_events = std::collections::HashSet::new();
         for event in &self.activation_events {
             if event != "onStartup" {
@@ -724,6 +756,15 @@ impl PluginManifest {
         Ok(())
     }
 
+    /// Returns true when this plugin should run on `host` (`macos` / `windows` / `linux`).
+    /// An empty `platforms` list means all currently supported hosts.
+    pub fn supports_platform(&self, host: &str) -> bool {
+        if self.platforms.is_empty() {
+            return host == "macos" || host == "windows";
+        }
+        self.platforms.iter().any(|platform| platform == host)
+    }
+
     pub fn mcp_toolset_fingerprint(&self) -> Result<String, String> {
         let mut tools = self.contributes.mcp_tools.clone();
         tools.sort_by(|left, right| left.name.cmp(&right.name));
@@ -852,6 +893,41 @@ mod tests {
         assert!(m.has_ui());
         assert_eq!(m.contributes.apps[0].entry, UI_ENTRY_FILE);
         assert_eq!(m.main.as_deref(), Some("main.mjs"));
+        assert!(m.platforms.is_empty());
+        assert!(m.supports_platform("macos"));
+        assert!(m.supports_platform("windows"));
+        assert!(!m.supports_platform("linux"));
+    }
+
+    #[test]
+    fn validates_platforms_field() {
+        let raw = r#"{
+          "manifestVersion": 1,
+          "id": "com.example.hello",
+          "name": "Hello",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "platforms": ["macos", "windows"],
+          "contributes": {
+            "apps": [{ "id": "main", "name": "Hello", "entry": "index.html" }]
+          }
+        }"#;
+        let m = PluginManifest::parse_str(raw).unwrap();
+        assert_eq!(m.platforms, vec!["macos", "windows"]);
+        assert!(m.supports_platform("macos"));
+        assert!(!m.supports_platform("linux"));
+
+        let invalid = raw.replace(
+            r#""platforms": ["macos", "windows"]"#,
+            r#""platforms": ["android"]"#,
+        );
+        assert!(PluginManifest::parse_str(&invalid).is_err());
+
+        let duplicate = raw.replace(
+            r#""platforms": ["macos", "windows"]"#,
+            r#""platforms": ["macos", "macos"]"#,
+        );
+        assert!(PluginManifest::parse_str(&duplicate).is_err());
     }
 
     #[test]

@@ -112,12 +112,17 @@ settings[] ----------------> Tempo 渲染设置界面
 | `kind` | 否 | `ui`、`hybrid`、`headless`，仅用于分类 |
 | `main` | 条件 | Runtime 的包内 `.js` 或 `.mjs` 相对路径 |
 | `activationEvents` | 否 | 当前只支持 `onStartup`；需要 `main` |
+| `platforms` | 否 | 适用宿主：`macos`、`windows`、`linux`；省略表示当前已支持的平台（macOS + Windows） |
 | `capabilities` | 否 | 插件能力用途说明 |
 | `contributes` | 否 | Apps、Commands、Actions、MCP Tools、Settings |
 
 `author`、`publisher`、`description`、`homepage`、`repository`、`license`、`categories` 是可选展示信息。
 
 插件至少需要一个 App 或一个 Runtime `main`。`kind` 不决定运行方式：有 Apps 无 main 是 UI，两者都有是 Hybrid，只有 main 是 Headless。
+
+::: warning platforms
+`linux` 已预留在 schema 中，但 Tempo 宿主尚未支持。开发助手里 Linux 选项会置灰；手写 `platforms: ["linux"]` 可通过校验，但当前无法在 Linux 上运行。
+:::
 
 ::: warning capabilities 不是沙箱
 `filesystem`、`network`、`process`、`clipboard`、`system` 用于向用户说明用途，不会限制 Runtime 的真实 Node 权限。带 `main` 的插件仍需用户信任。
