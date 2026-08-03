@@ -616,6 +616,9 @@
   font-size: 12px;
 }
 
+.plugin-dev-verify__args-editor {
+  field-sizing: fixed;
+}
 
 .plugin-dev-test-form {
   display: flex;
