@@ -22,6 +22,7 @@ pub struct LauncherApp {
     pub keywords: Vec<String>,
     pub icon_data_url: Option<String>,
     pub pinned: bool,
+    pub pinned_at: Option<String>,
     pub last_used_at: Option<String>,
     pub use_count: i64,
 }
@@ -93,6 +94,7 @@ pub struct MainPanelSearchMatch {
 #[derive(Clone, Default)]
 struct LauncherUsage {
     pinned: bool,
+    pinned_at: Option<String>,
     last_used_at: Option<String>,
     use_count: i64,
 }
@@ -526,7 +528,6 @@ pub fn launch_indexed_app(state: tauri::State<AppState>, id: String) -> Result<(
     Ok(())
 }
 
-/// Launch a filesystem target without attaching it to Tempo's process tree, console, or job.
 fn launch_target_detached(target: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -637,6 +638,7 @@ pub fn record_launcher_usage(state: tauri::State<AppState>, id: String) -> Resul
 pub struct LauncherUsageItem {
     pub id: String,
     pub pinned: bool,
+    pub pinned_at: Option<String>,
     pub last_used_at: Option<String>,
     pub use_count: i64,
 }
@@ -648,10 +650,12 @@ pub fn get_launcher_usage(state: tauri::State<AppState>) -> Vec<LauncherUsageIte
         .map(|(id, usage)| LauncherUsageItem {
             id,
             pinned: usage.pinned,
+            pinned_at: usage.pinned_at,
             last_used_at: usage.last_used_at,
             use_count: usage.use_count,
         })
         .collect::<Vec<_>>();
+    // Recent order is usage-only — pinning must not reshuffle this list.
     items.sort_by(|left, right| {
         parse_usage_timestamp(right.last_used_at.as_deref())
             .cmp(&parse_usage_timestamp(left.last_used_at.as_deref()))
@@ -694,7 +698,14 @@ pub fn set_launcher_app_pinned(
     id: String,
     pinned: bool,
 ) -> Result<(), String> {
-    if !launcher_cache().read().iter().any(|record| record.id == id) {
+    let id = id.trim().to_string();
+    if id.is_empty() {
+        return Err("无效的应用标识".into());
+    }
+    let is_launcher_app = launcher_cache().read().iter().any(|record| record.id == id);
+    let is_plugin_or_builtin =
+        id.starts_with("plugin:") || id.starts_with("builtin:");
+    if !is_launcher_app && !is_plugin_or_builtin {
         return Err("应用索引已失效，请刷新后重试".into());
     }
 
@@ -729,11 +740,23 @@ fn hydrate_launcher_apps(
         right
             .pinned
             .cmp(&left.pinned)
-            .then_with(|| right.last_used_at.cmp(&left.last_used_at))
+            .then_with(|| {
+                launcher_activity_timestamp(right).cmp(&launcher_activity_timestamp(left))
+            })
             .then_with(|| right.use_count.cmp(&left.use_count))
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
     apps
+}
+
+fn launcher_activity_timestamp(app: &LauncherApp) -> Option<chrono::DateTime<chrono::Utc>> {
+    [
+        parse_usage_timestamp(app.pinned_at.as_deref()),
+        parse_usage_timestamp(app.last_used_at.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
 }
 
 fn launcher_app_from_record(record: &LauncherRecord, usage: Option<&LauncherUsage>) -> LauncherApp {
@@ -747,6 +770,7 @@ fn launcher_app_from_record(record: &LauncherRecord, usage: Option<&LauncherUsag
         keywords: record.keywords.clone(),
         icon_data_url,
         pinned: usage.is_some_and(|item| item.pinned),
+        pinned_at: usage.and_then(|item| item.pinned_at.clone()),
         last_used_at: usage.and_then(|item| item.last_used_at.clone()),
         use_count: usage.map_or(0, |item| item.use_count),
     }
@@ -793,6 +817,7 @@ fn load_launcher_usage_from_db(state: &AppState) -> HashMap<String, LauncherUsag
             row.get::<_, String>(0)?,
             LauncherUsage {
                 pinned: pinned_at.is_some(),
+                pinned_at,
                 last_used_at: row.get(2)?,
                 use_count: row.get(3)?,
             },

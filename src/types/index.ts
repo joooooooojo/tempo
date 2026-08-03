@@ -13,6 +13,7 @@ export interface LauncherApp {
   keywords: string[];
   icon_data_url?: string | null;
   pinned: boolean;
+  pinned_at?: string | null;
   last_used_at?: string | null;
   use_count: number;
 }
@@ -20,6 +21,7 @@ export interface LauncherApp {
 export interface LauncherUsageItem {
   id: string;
   pinned: boolean;
+  pinned_at?: string | null;
   last_used_at?: string | null;
   use_count: number;
 }
