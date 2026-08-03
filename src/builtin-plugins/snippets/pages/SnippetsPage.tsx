@@ -428,7 +428,7 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
                 </div>
               </DialogHeader>
 
-              <DialogContent className="flex flex-col gap-4 overflow-hidden">
+              <DialogContent scrollable={false} className="flex flex-col gap-4 overflow-hidden">
                 {detailSnippet.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {detailSnippet.tags.map((tag) => (
@@ -509,7 +509,7 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
           <DialogHeader>
             <DialogTitle>{editor.id ? "编辑短语" : "新建短语"}</DialogTitle>
           </DialogHeader>
-          <DialogContent className="flex flex-col gap-4 overflow-hidden py-4">
+          <DialogContent scrollable={false} className="flex flex-col gap-4 overflow-hidden py-4">
             <div className="grid shrink-0 gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="snippet-title">标题</Label>

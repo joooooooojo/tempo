@@ -3,6 +3,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { X } from "lucide-react"
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
@@ -72,7 +73,8 @@ function DialogPanel({
         data-slot="dialog-panel"
         data-nested={showOverlay ? undefined : "true"}
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 overflow-hidden rounded-xl bg-popover p-0 text-sm text-popover-foreground ring-1 ring-foreground/10 animation-duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // max-h gives DialogContent's ScrollArea a definite flex budget to scroll against.
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[min(760px,calc(100vh-2rem))] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 overflow-hidden rounded-xl bg-popover p-0 text-sm text-popover-foreground ring-1 ring-foreground/10 animation-duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           !showOverlay && "dialog-nested z-[70]",
           className
         )}
@@ -127,14 +129,79 @@ function DialogHeader({
   )
 }
 
+type DialogContentProps = React.ComponentProps<"div"> & {
+  /**
+   * Wrap body in ScrollArea (no native scrollbar). Needs a bounded panel height
+   * (DialogPanel default max-h) so the area can scroll. Set false when the body
+   * manages its own layout/scroll (e.g. image preview, nested editors).
+   */
+  scrollable?: boolean
+  scrollAreaLabel?: string
+}
+
 /** Dialog body — between header and footer. */
-function DialogContent({ className, ...props }: React.ComponentProps<"div">) {
+function DialogContent({
+  className,
+  children,
+  scrollable = true,
+  scrollAreaLabel = "对话框内容",
+  ...props
+}: DialogContentProps) {
+  const shellRef = React.useRef<HTMLDivElement>(null)
+  const [scrollHeight, setScrollHeight] = React.useState<number | undefined>()
+
+  React.useLayoutEffect(() => {
+    if (!scrollable) {
+      setScrollHeight(undefined)
+      return
+    }
+    const shell = shellRef.current
+    if (!shell) return
+
+    const update = () => {
+      const next = Math.floor(shell.clientHeight)
+      setScrollHeight((current) => (current === next ? current : next))
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(shell)
+    return () => observer.disconnect()
+  }, [scrollable])
+
+  if (!scrollable) {
+    return (
+      <div
+        ref={shellRef}
+        data-slot="dialog-content"
+        className={cn("min-h-0 flex-1 overflow-hidden px-6 py-5", className)}
+        {...props}
+      >
+        {children}
+      </div>
+    )
+  }
+
   return (
     <div
+      ref={shellRef}
       data-slot="dialog-content"
-      className={cn("min-h-0 flex-1 overflow-y-auto px-6 py-5", className)}
+      className="min-h-0 flex-1 overflow-hidden"
       {...props}
-    />
+    >
+      <ScrollArea
+        className="w-full"
+        style={
+          scrollHeight && scrollHeight > 0
+            ? { height: scrollHeight }
+            : { height: "100%" }
+        }
+        scrollbars="vertical"
+        viewportClassName="no-scrollbar"
+        aria-label={scrollAreaLabel}
+      >
+        <div className={cn("px-6 py-5", className)}>{children}</div>
+      </ScrollArea>
+    </div>
   )
 }
 

@@ -248,6 +248,7 @@ export function TodoCreateFormPanel({
         onSubmit={onSubmit}
       >
         <DialogContent
+          scrollable={false}
           className={cn(
             "no-scrollbar flex flex-col gap-4",
             isWindowLayout && "gap-3.5 px-5"

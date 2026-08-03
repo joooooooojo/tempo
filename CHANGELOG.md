@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fix
+
+- Dialog 内容区默认使用 ScrollArea（隐藏原生滚动条）；面板提供 max-h，内容区按可用高度测量后可滚动；需要自管滚动的对话框可设 `scrollable={false}`。
+
 ## [2.2.1] - 2026-08-01
 
 ### Feat

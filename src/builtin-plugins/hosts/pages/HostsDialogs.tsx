@@ -238,7 +238,7 @@ export function HostsDialogs({
           <DialogHeader>
             <DialogTitle>备份记录</DialogTitle>
           </DialogHeader>
-          <DialogContent className="max-h-[min(420px,55vh)] space-y-1.5 overflow-y-auto px-4 py-3">
+          <DialogContent className="space-y-1.5 !px-4 !py-3">
             {backups.length === 0 ? (
               <p className="py-6 text-center text-[12px] text-muted-foreground">暂无备份</p>
             ) : (

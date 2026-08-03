@@ -77,7 +77,7 @@ export function SnippetMoreSettings({
             <DialogTitle>更多配置</DialogTitle>
           </DialogHeader>
 
-          <DialogContent className="no-scrollbar flex max-h-[min(380px,60vh)] flex-col gap-5">
+          <DialogContent className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
               <Label>分组</Label>
               <Select

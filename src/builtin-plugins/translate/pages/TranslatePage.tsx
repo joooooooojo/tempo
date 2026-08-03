@@ -569,7 +569,7 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
           <DialogHeader>
             <DialogTitle>翻译密钥配置</DialogTitle>
           </DialogHeader>
-          <DialogContent className="flex max-h-[70vh] min-h-0 flex-col gap-3 overflow-hidden">
+          <DialogContent scrollable={false} className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
             <div className="flex shrink-0 flex-wrap gap-1">
               {PROVIDERS.map((p) => (
                 <button

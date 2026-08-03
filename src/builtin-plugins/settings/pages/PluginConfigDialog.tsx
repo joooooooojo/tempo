@@ -172,7 +172,7 @@ export function PluginConfigDialog({
         <DialogHeader>
           <DialogTitle>插件配置{titleName ? ` · ${titleName}` : ""}</DialogTitle>
         </DialogHeader>
-        <DialogContent className="plugin-config-dialog__body min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-4">
+        <DialogContent className="plugin-config-dialog__body space-y-6 !px-5 !py-4">
           {loading ? (
             <p className="py-10 text-center text-[13px] text-muted-foreground">加载中…</p>
           ) : (

@@ -762,7 +762,7 @@ export function TodoPage() {
                   </span>
                 </DialogTitle>
               </DialogHeader>
-              <DialogContent className="p-0">
+              <DialogContent scrollable={false} className="p-0">
                 <ScrollArea className="h-full" aria-label="待办详情">
                   <div className="px-6 py-5">
                     <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
