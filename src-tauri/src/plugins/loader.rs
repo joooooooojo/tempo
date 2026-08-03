@@ -20,11 +20,17 @@ use super::ui::{plugin_entry_url, plugin_hash_of, plugin_icon_url};
 
 /// Prefer the contribution's own icon; otherwise reuse the first app/action icon in the package
 /// (same fallback as the settings plugin list) so launcher tiles stay visible after connect.
-fn contribution_icon_url(
-    plugin_hash: &str,
+pub fn resolve_contribution_icon_relative_path(
     icon: Option<&String>,
     manifest: &PluginManifest,
 ) -> Option<String> {
+    contribution_icon_relative_path(icon, manifest).cloned()
+}
+
+fn contribution_icon_relative_path<'a>(
+    icon: Option<&'a String>,
+    manifest: &'a PluginManifest,
+) -> Option<&'a String> {
     icon.or_else(|| {
         manifest
             .contributes
@@ -39,7 +45,15 @@ fn contribution_icon_url(
             .iter()
             .find_map(|action| action.icon.as_ref())
     })
-    .map(|path| plugin_icon_url(plugin_hash, path))
+}
+
+fn contribution_icon_url(
+    plugin_hash: &str,
+    icon: Option<&String>,
+    manifest: &PluginManifest,
+) -> Option<String> {
+    contribution_icon_relative_path(icon, manifest)
+        .map(|path| plugin_icon_url(plugin_hash, path))
 }
 
 #[derive(Debug, Clone, Serialize)]

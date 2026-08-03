@@ -16,4 +16,5 @@ pub mod storage;
 pub mod supervisor;
 pub mod trust;
 pub mod ui;
+pub mod window_icons;
 pub mod windows;

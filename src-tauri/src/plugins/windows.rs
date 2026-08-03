@@ -22,6 +22,7 @@ use super::package::verify_package_hash;
 use super::paths::packages_dir;
 use super::trust::{ensure_plugin_tables, get_installed_plugin};
 use super::ui;
+use super::window_icons;
 
 const WINDOW_LABEL_PREFIX: &str = "plugin-window-";
 pub const DEFAULT_APP_WINDOW_HEIGHT: f64 = 580.0;
@@ -88,7 +89,7 @@ pub async fn open_plugin_window(
         return Err(format!("invalid app id: {}", args.app_id));
     }
 
-    let (title, rect) = if let Some(development) = host.development_plugin(&args.plugin_id) {
+    let (title, rect, package_root, manifest) = if let Some(development) = host.development_plugin(&args.plugin_id) {
         let contribution = development
             .manifest
             .contributes
@@ -100,7 +101,12 @@ pub async fn open_plugin_window(
             return Err("plugin app windowMode is not standalone".into());
         }
         contribution.rect.validate()?;
-        (contribution.name.clone(), contribution.rect.clone())
+        (
+            contribution.name.clone(),
+            contribution.rect.clone(),
+            development.root_path.clone(),
+            development.manifest.clone(),
+        )
     } else {
         let conn = state.db.lock();
         ensure_plugin_tables(&conn)?;
@@ -128,7 +134,12 @@ pub async fn open_plugin_window(
             return Err("plugin package hash is unknown; re-import required".into());
         }
         verify_package_hash(&install_path, &package_hash)?;
-        (contribution.name.clone(), contribution.rect.clone())
+        (
+            contribution.name.clone(),
+            contribution.rect.clone(),
+            install_path,
+            manifest,
+        )
     };
 
     let plugin_id = args.plugin_id.clone();
@@ -202,6 +213,14 @@ pub async fn open_plugin_window(
         crate::logging::debug_if_err(window.destroy(), "destroy unsized plugin window");
         return Err(error.to_string());
     }
+
+    window_icons::apply_standalone_window_icon(
+        &app,
+        &window,
+        &package_root,
+        &manifest,
+        &app_id,
+    );
 
     let event_app = app.clone();
     let event_host = host.inner().clone();
