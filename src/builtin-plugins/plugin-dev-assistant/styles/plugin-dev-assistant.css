@@ -368,16 +368,14 @@
 }
 
 .plugin-dev-string-list,
-.plugin-dev-option-list,
-.plugin-dev-schema-list {
+.plugin-dev-option-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
 .plugin-dev-string-list__row,
-.plugin-dev-option-list__row,
-.plugin-dev-schema-list__row {
+.plugin-dev-option-list__row {
   display: grid;
   align-items: center;
   gap: 8px;
@@ -391,11 +389,34 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
 }
 
+/* MCP schema fields: one card + divided rows (todo-list visual language) */
+.plugin-dev-schema-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  background: hsl(var(--card));
+  box-shadow: 0 0 0 1px hsl(var(--foreground) / 0.1);
+}
+
 .plugin-dev-schema-list__row {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
   grid-template-areas:
     "name type required remove"
     "description description description description";
   grid-template-columns: minmax(0, 1fr) 8rem auto auto;
+  transition: background-color 150ms ease;
+}
+
+.plugin-dev-schema-list__row + .plugin-dev-schema-list__row {
+  border-top: 1px solid hsl(var(--border) / 0.45);
+}
+
+.plugin-dev-schema-list__row:hover {
+  background: hsl(var(--foreground) / 0.03);
 }
 
 .plugin-dev-schema-list__name {
@@ -594,6 +615,7 @@
   color: hsl(var(--muted-foreground));
   font-size: 12px;
 }
+
 
 .plugin-dev-test-form {
   display: flex;
