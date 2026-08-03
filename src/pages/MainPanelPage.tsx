@@ -6,10 +6,23 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isBlurHideSuppressed } from "@/lib/blurHideGuard";
+import {
+  isBlurHideSuppressed,
+  isDevtoolsBlurHideSuppressed,
+  setContextMenuBlurHideSuppressed,
+  setDevtoolsBlurHideSuppressed,
+} from "@/lib/blurHideGuard";
+import {
+  openLauncherContextMenu,
+  usageIdForContextTarget,
+  type LauncherContextMenuAction,
+  type LauncherContextMenuClosed,
+  type LauncherContextMenuTarget,
+} from "@/lib/launcherContextMenu";
 import {
   LoaderCircle,
   Pin,
@@ -30,6 +43,7 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   listVisibleQuickActions,
   quickActionUsageId,
+  subscribeQuickActions,
 } from "@/apps/actions/registry";
 import { AppIconView } from "@/apps/icon";
 import { BuiltinAppNavigationProvider } from "@/apps/navigation";
@@ -74,6 +88,7 @@ import {
   shouldInlineClipboardText,
   type MainPanelClipboardChip,
 } from "@/builtin-plugins/clipboard";
+import { syncClipboardUrlBrowserActions } from "@/builtin-plugins/clipboard/actions";
 import { cn } from "@/lib/utils";
 import type {
   MainPanelClipboardSeed,
@@ -155,6 +170,30 @@ function builtinUsageId(appId: string) {
   return `${BUILTIN_USAGE_PREFIX}${appId}`;
 }
 
+/** Pinned column order: latest of pin time and last use wins (manual pin or open). */
+function launcherActivityMs(
+  pinnedAt?: string | null,
+  lastUsedAt?: string | null,
+): number {
+  const pin = pinnedAt ? Date.parse(pinnedAt) : Number.NaN;
+  const used = lastUsedAt ? Date.parse(lastUsedAt) : Number.NaN;
+  const pinMs = Number.isFinite(pin) ? pin : 0;
+  const usedMs = Number.isFinite(used) ? used : 0;
+  return Math.max(pinMs, usedMs);
+}
+
+function pluginUsageId(appId: string) {
+  return `${PLUGIN_USAGE_PREFIX}${appId}`;
+}
+
+function contributionUsageId(app: BuiltinApp) {
+  return app.source === "plugin" ? pluginUsageId(app.id) : builtinUsageId(app.id);
+}
+
+type PinnedEntry =
+  | { key: string; kind: "app"; app: LauncherApp }
+  | { key: string; kind: "contribution"; app: BuiltinApp; usageId: string };
+
 export function MainPanelPage() {
   const [mode, setMode] = useState<MainPanelMode>("search");
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
@@ -168,6 +207,7 @@ export function MainPanelPage() {
   const [loading, setLoading] = useState(true);
   const [recentExpanded, setRecentExpanded] = useState(false);
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
+  const [quickActionsRevision, setQuickActionsRevision] = useState(0);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [matchedSearchApps, setMatchedSearchApps] = useState<SearchAppEntry[]>([]);
   const [searchIndexRevision, setSearchIndexRevision] = useState(0);
@@ -310,6 +350,8 @@ export function MainPanelPage() {
   );
   const builtinAppsRef = useRef(enabledBuiltinApps);
   builtinAppsRef.current = enabledBuiltinApps;
+  const appsRef = useRef(apps);
+  appsRef.current = apps;
 
   useEffect(() => {
     const unsubscribe = subscribeApps(() => setAppsRevision((current) => current + 1));
@@ -530,6 +572,7 @@ export function MainPanelPage() {
     clearMainPanelSession();
     clipboardChipHiddenAtRef.current = null;
     panelVisibleRef.current = false;
+    setDevtoolsBlurHideSuppressed(false);
     dismissClipboardSeed();
     await hideMainPanel();
     resetMainPanelState();
@@ -542,10 +585,12 @@ export function MainPanelPage() {
     if (modeRef.current === "app" && appId) {
       writeMainPanelSession(appId);
       panelVisibleRef.current = false;
+      setDevtoolsBlurHideSuppressed(false);
       await hideMainPanel();
       return;
     }
     markClipboardChipHidden();
+    setDevtoolsBlurHideSuppressed(false);
     await hideMainPanel();
   }, [markClipboardChipHidden]);
 
@@ -658,6 +703,7 @@ export function MainPanelPage() {
         setUsageItems(nextUsage);
         setLoading(nextApps.length === 0);
         setError(null);
+        void syncClipboardUrlBrowserActions();
       } catch (loadError) {
         setError(errorMessage(loadError, "无法读取本机应用"));
         setLoading(false);
@@ -669,6 +715,12 @@ export function MainPanelPage() {
   useEffect(() => {
     pendingRef.current = pendingKey;
   }, [pendingKey]);
+
+  useEffect(() => {
+    return subscribeQuickActions(() => {
+      setQuickActionsRevision((current) => current + 1);
+    });
+  }, []);
 
   useEffect(() => {
     let currentTheme: Settings["theme"] = "system";
@@ -785,6 +837,7 @@ export function MainPanelPage() {
       panelVisibleRef.current = true;
       setOpenRevision((current) => current + 1);
       refreshDisabledBuiltins();
+      void syncClipboardUrlBrowserActions();
       const restored = restoreSessionIfNeeded();
       if (!restored && modeRef.current === "search") {
         setSelectedKey(null);
@@ -853,21 +906,68 @@ export function MainPanelPage() {
     void unlistenIndex.then(() => {
       if (!disposed) void loadApps();
     });
+    // Opening DevTools steals focus; arm suppress before the HWND appears (no polling).
+    let devtoolsStickyUntil = 0;
+    const onDevtoolsShortcut = (event: globalThis.KeyboardEvent) => {
+      if (!import.meta.env.DEV) return;
+      const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+      const openInspector =
+        key === "F12" ||
+        ((event.ctrlKey || event.metaKey) &&
+          event.shiftKey &&
+          (key === "I" || key === "J")) ||
+        (event.metaKey && event.altKey && key === "I");
+      if (openInspector) {
+        setDevtoolsBlurHideSuppressed(true);
+        // Only cover HWND creation race — a long sticky made the first blur after
+        // closing DevTools a no-op, so a second blur was needed to hide.
+        devtoolsStickyUntil = Date.now() + 800;
+      }
+    };
+    window.addEventListener("keydown", onDevtoolsShortcut, true);
+
     void appWindow
       .onFocusChanged(({ payload: focused }) => {
-        // Native file sheets steal focus; suppress blur?hide while they are open (ZTools pattern).
-        if (
-          !focused &&
-          armed &&
-          !pendingRef.current &&
-          !devWindowPinnedRef.current &&
-          !isBlurHideSuppressed()
-        ) {
-          void hidePreservingSession();
+        // Native file sheets steal focus; suppress blur→hide while they are open (ZTools pattern).
+        if (!focused && armed && !pendingRef.current && !devWindowPinnedRef.current) {
+          void (async () => {
+            // DevTools path only when already suppressed (F12 sticky / known open).
+            // Never delay the normal blur→hide path with EnumWindows + sleeps.
+            if (isDevtoolsBlurHideSuppressed()) {
+              let open = false;
+              try {
+                open = await api.isMainPanelDevtoolsOpen();
+              } catch {
+                /* ignore */
+              }
+              if (open) return;
+              // HWND may not exist yet right after F12 — keep panel briefly.
+              if (Date.now() < devtoolsStickyUntil) return;
+              setDevtoolsBlurHideSuppressed(false);
+            }
+            if (isBlurHideSuppressed()) return;
+            await hidePreservingSession();
+          })();
           return;
         }
-        if (focused && modeRef.current === "search") {
-          window.requestAnimationFrame(focusSearchInput);
+        if (focused) {
+          // Closing DevTools usually focuses the panel first — drop suppress so the
+          // next outside click hides immediately (avoid a wasted clear-only blur).
+          if (
+            import.meta.env.DEV &&
+            isDevtoolsBlurHideSuppressed() &&
+            Date.now() >= devtoolsStickyUntil
+          ) {
+            void api
+              .isMainPanelDevtoolsOpen()
+              .then((open) => {
+                if (!open) setDevtoolsBlurHideSuppressed(false);
+              })
+              .catch(() => undefined);
+          }
+          if (modeRef.current === "search") {
+            window.requestAnimationFrame(focusSearchInput);
+          }
         }
       })
       .then((unlisten) => {
@@ -883,6 +983,7 @@ export function MainPanelPage() {
       void unlistenClipboard.then((unlisten) => unlisten());
       void unlistenIndex.then((unlisten) => unlisten());
       unlistenBlur?.();
+      window.removeEventListener("keydown", onDevtoolsShortcut, true);
     };
   }, [
     applyClipboardSeedFromBackend,
@@ -1012,27 +1113,96 @@ export function MainPanelPage() {
       use_count: app.use_count,
     }));
   }, [apps, disabledBuiltinIds, usageItems]);
-  const pinnedApps = useMemo(() => apps.filter((app) => app.pinned), [apps]);
-  // Pinned apps have their own row — keep them out of "最近使用".
-  const recentWithoutPinned = useMemo(
-    () =>
-      recentSource.filter(
-        (entry) => entry.kind === "builtin" || !entry.app.pinned
-      ),
-    [recentSource]
+  const launcherPinnedById = useMemo(
+    () => new Map(apps.map((app) => [app.id, app.pinned])),
+    [apps],
   );
+  const contributionPinnedById = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const usage of usageItems) {
+      if (!usage.pinned) continue;
+      if (usage.id.startsWith(PLUGIN_USAGE_PREFIX)) {
+        map.set(usage.id.slice(PLUGIN_USAGE_PREFIX.length), true);
+      } else if (usage.id.startsWith(BUILTIN_USAGE_PREFIX)) {
+        map.set(usage.id.slice(BUILTIN_USAGE_PREFIX.length), true);
+      }
+    }
+    return map;
+  }, [usageItems]);
+  const contributionPinnedByIdRef = useRef(contributionPinnedById);
+  contributionPinnedByIdRef.current = contributionPinnedById;
+
+  const pinnedEntries = useMemo<PinnedEntry[]>(() => {
+    const usageById = new Map(usageItems.map((item) => [item.id, item]));
+    const entries: Array<PinnedEntry & { activityMs: number }> = [];
+
+    for (const app of apps) {
+      if (!app.pinned) continue;
+      const usage = usageById.get(app.id);
+      entries.push({
+        key: `pinned:${app.id}`,
+        kind: "app",
+        app,
+        activityMs: launcherActivityMs(
+          usage?.pinned_at ?? app.pinned_at,
+          usage?.last_used_at ?? app.last_used_at,
+        ),
+      });
+    }
+
+    for (const usage of usageItems) {
+      if (!usage.pinned) continue;
+      let runtimeAppId: string | null = null;
+      if (usage.id.startsWith(PLUGIN_USAGE_PREFIX)) {
+        runtimeAppId = usage.id.slice(PLUGIN_USAGE_PREFIX.length);
+      } else if (usage.id.startsWith(BUILTIN_USAGE_PREFIX)) {
+        runtimeAppId = usage.id.slice(BUILTIN_USAGE_PREFIX.length);
+      }
+      if (!runtimeAppId || disabledBuiltinIds.has(runtimeAppId)) continue;
+      const app = getBuiltinApp(runtimeAppId);
+      if (!app) continue;
+      entries.push({
+        key: `pinned:contribution:${app.id}`,
+        kind: "contribution",
+        app,
+        usageId: usage.id,
+        activityMs: launcherActivityMs(usage.pinned_at, usage.last_used_at),
+      });
+    }
+
+    entries.sort((left, right) => {
+      if (right.activityMs !== left.activityMs) {
+        return right.activityMs - left.activityMs;
+      }
+      return left.key.localeCompare(right.key);
+    });
+    return entries.map(({ activityMs: _activityMs, ...entry }) => entry);
+  }, [apps, disabledBuiltinIds, usageItems]);
+
+  // Keep pinned items in「最近使用」with unchanged usage order.
   const visibleRecentApps = recentExpanded
-    ? recentWithoutPinned
-    : recentWithoutPinned.slice(0, RECENT_COLLAPSED_COUNT);
-  const visiblePinnedApps = pinnedExpanded
-    ? pinnedApps
-    : pinnedApps.slice(0, PINNED_COLLAPSED_COUNT);
+    ? recentSource
+    : recentSource.slice(0, RECENT_COLLAPSED_COUNT);
+  const visiblePinnedEntries = pinnedExpanded
+    ? pinnedEntries
+    : pinnedEntries.slice(0, PINNED_COLLAPSED_COUNT);
+
+  const hydratedSearchApps = useMemo(
+    () =>
+      matchedSearchApps.map((entry) => {
+        if (entry.kind !== "app") return entry;
+        const pinned = launcherPinnedById.get(entry.app.id);
+        if (pinned === undefined || pinned === entry.app.pinned) return entry;
+        return { ...entry, app: { ...entry.app, pinned } };
+      }),
+    [launcherPinnedById, matchedSearchApps],
+  );
 
   const visibleSearchApps = hasClipboardActionContext
     ? []
     : searchExpanded
-      ? matchedSearchApps
-      : matchedSearchApps.slice(0, SEARCH_COLLAPSED_COUNT);
+      ? hydratedSearchApps
+      : hydratedSearchApps.slice(0, SEARCH_COLLAPSED_COUNT);
 
   const quickActionUsageById = useMemo(() => {
     const map = new Map<
@@ -1074,7 +1244,13 @@ export function MainPanelPage() {
       quickActionUsageById,
       hasClipboardActionContext ? normalizedQuery : ""
     );
-  }, [hasClipboardActionContext, normalizedQuery, quickActionInput, quickActionUsageById]);
+  }, [
+    hasClipboardActionContext,
+    normalizedQuery,
+    quickActionInput,
+    quickActionUsageById,
+    quickActionsRevision,
+  ]);
 
   const showSearchLayout =
     Boolean(normalizedQuery) || quickActionInput.kind !== "none";
@@ -1102,18 +1278,18 @@ export function MainPanelPage() {
         ? { key: entry.key, kind: "builtin" as const, app: entry.app }
         : { key: entry.key, kind: "app" as const, app: entry.app }
     );
-    const pinnedSelections = visiblePinnedApps.map((app) => ({
-      key: `pinned:${app.id}`,
-      kind: "app" as const,
-      app,
-    }));
+    const pinnedSelections = visiblePinnedEntries.map((entry) =>
+      entry.kind === "contribution"
+        ? { key: entry.key, kind: "builtin" as const, app: entry.app }
+        : { key: entry.key, kind: "app" as const, app: entry.app },
+    );
     return [
       ...chunkSelections(pinnedSelections),
       ...chunkSelections(recentSelections),
     ];
   }, [
     showSearchLayout,
-    visiblePinnedApps,
+    visiblePinnedEntries,
     visibleQuickActions,
     visibleRecentApps,
     visibleSearchApps,
@@ -1271,6 +1447,7 @@ export function MainPanelPage() {
               const nextItem = {
                 id: usageId,
                 pinned: existing?.pinned ?? false,
+                pinned_at: existing?.pinned_at ?? null,
                 last_used_at: now,
                 use_count: (existing?.use_count ?? 0) + 1,
               };
@@ -1320,6 +1497,8 @@ export function MainPanelPage() {
       openBuiltinApp,
     ]
   );
+  const executeSelectionRef = useRef(executeSelection);
+  executeSelectionRef.current = executeSelection;
 
   const clearClipboardChip = () => {
     clipboardChipRef.current = null;
@@ -1404,21 +1583,267 @@ export function MainPanelPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [backToSearch, mode]);
 
-  const togglePinned = async (app: LauncherApp) => {
+  const togglePinnedLauncherApp = async (app: LauncherApp) => {
     if (pendingKey) return;
     const nextPinned = !app.pinned;
+    const nextPinnedAt = nextPinned ? new Date().toISOString() : null;
     setApps((current) =>
-      current.map((item) => (item.id === app.id ? { ...item, pinned: nextPinned } : item))
+      current.map((item) =>
+        item.id === app.id
+          ? { ...item, pinned: nextPinned, pinned_at: nextPinnedAt }
+          : item,
+      ),
+    );
+    // Update pin fields in place — do not reorder recent usage.
+    setUsageItems((current) => {
+      const existing = current.find((item) => item.id === app.id);
+      if (existing) {
+        return current.map((item) =>
+          item.id === app.id
+            ? { ...item, pinned: nextPinned, pinned_at: nextPinnedAt }
+            : item,
+        );
+      }
+      if (!nextPinned) return current;
+      return [
+        ...current,
+        {
+          id: app.id,
+          pinned: true,
+          pinned_at: nextPinnedAt,
+          last_used_at: app.last_used_at ?? null,
+          use_count: app.use_count,
+        },
+      ];
+    });
+    setMatchedSearchApps((current) =>
+      current.map((entry) =>
+        entry.kind === "app" && entry.app.id === app.id
+          ? {
+              ...entry,
+              app: {
+                ...entry.app,
+                pinned: nextPinned,
+                pinned_at: nextPinnedAt,
+              },
+            }
+          : entry,
+      ),
     );
     if (!isTauri) return;
     try {
       await api.setLauncherAppPinned(app.id, nextPinned);
     } catch (pinError) {
       setApps((current) =>
-        current.map((item) => (item.id === app.id ? { ...item, pinned: app.pinned } : item))
+        current.map((item) =>
+          item.id === app.id
+            ? { ...item, pinned: app.pinned, pinned_at: app.pinned_at ?? null }
+            : item,
+        ),
+      );
+      setUsageItems((current) =>
+        current.map((item) =>
+          item.id === app.id
+            ? {
+                ...item,
+                pinned: app.pinned,
+                pinned_at: app.pinned_at ?? null,
+              }
+            : item,
+        ),
+      );
+      setMatchedSearchApps((current) =>
+        current.map((entry) =>
+          entry.kind === "app" && entry.app.id === app.id
+            ? {
+                ...entry,
+                app: {
+                  ...entry.app,
+                  pinned: app.pinned,
+                  pinned_at: app.pinned_at ?? null,
+                },
+              }
+            : entry,
+        ),
       );
       setError(errorMessage(pinError, "无法更新固定状态"));
     }
+  };
+
+  const togglePinnedContribution = async (app: BuiltinApp) => {
+    if (pendingKey) return;
+    const usageId = contributionUsageId(app);
+    const currentlyPinned = contributionPinnedById.get(app.id) === true;
+    const nextPinned = !currentlyPinned;
+    const nextPinnedAt = nextPinned ? new Date().toISOString() : null;
+    setUsageItems((current) => {
+      const existing = current.find((item) => item.id === usageId);
+      if (existing) {
+        // Keep list order stable when toggling pin.
+        return current.map((item) =>
+          item.id === usageId
+            ? { ...item, pinned: nextPinned, pinned_at: nextPinnedAt }
+            : item,
+        );
+      }
+      return [
+        ...current,
+        {
+          id: usageId,
+          pinned: nextPinned,
+          pinned_at: nextPinnedAt,
+          last_used_at: null,
+          use_count: 0,
+        },
+      ];
+    });
+    if (!isTauri) return;
+    try {
+      await api.setLauncherAppPinned(usageId, nextPinned);
+    } catch (pinError) {
+      setUsageItems((current) => {
+        const existing = current.find((item) => item.id === usageId);
+        if (existing) {
+          return current.map((item) =>
+            item.id === usageId
+              ? {
+                  ...item,
+                  pinned: currentlyPinned,
+                  pinned_at: currentlyPinned ? item.pinned_at : null,
+                }
+              : item,
+          );
+        }
+        return current.filter((item) => item.id !== usageId);
+      });
+      setError(errorMessage(pinError, "无法更新固定状态"));
+    }
+  };
+  const togglePinnedLauncherAppRef = useRef(togglePinnedLauncherApp);
+  togglePinnedLauncherAppRef.current = togglePinnedLauncherApp;
+  const togglePinnedContributionRef = useRef(togglePinnedContribution);
+  togglePinnedContributionRef.current = togglePinnedContribution;
+
+  useEffect(() => {
+    const onContextMenu = (event: Event) => {
+      event.preventDefault();
+    };
+    document.addEventListener("contextmenu", onContextMenu, true);
+    return () => document.removeEventListener("contextmenu", onContextMenu, true);
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri) return;
+
+    const unlistenAction = listen<LauncherContextMenuAction>(
+      "launcher-context-menu:action",
+      (event) => {
+        const { actionId, target } = event.payload;
+        if (actionId === "open") {
+          if (target.kind === "launcher") {
+            const app = appsRef.current.find((item) => item.id === target.id);
+            if (!app) return;
+            void executeSelectionRef.current({
+              key: `ctx:app:${app.id}`,
+              kind: "app",
+              app,
+            });
+            return;
+          }
+          const app =
+            builtinAppsRef.current.find((item) => item.id === target.id) ??
+            getBuiltinApp(target.id);
+          if (!app) return;
+          void executeSelectionRef.current({
+            key: `ctx:builtin:${app.id}`,
+            kind: "builtin",
+            app,
+          });
+          return;
+        }
+
+        if (actionId === "toggle-pin") {
+          if (target.kind === "launcher") {
+            const app = appsRef.current.find((item) => item.id === target.id);
+            if (app) void togglePinnedLauncherAppRef.current(app);
+            return;
+          }
+          const app =
+            builtinAppsRef.current.find((item) => item.id === target.id) ??
+            getBuiltinApp(target.id);
+          if (app) void togglePinnedContributionRef.current(app);
+          return;
+        }
+
+        if (actionId === "open-location") {
+          void (async () => {
+            try {
+              if (target.kind === "launcher") {
+                await api.revealIndexedApp(target.id);
+              } else if (target.source === "plugin") {
+                const slash = target.id.indexOf("/");
+                const pluginId = slash >= 0 ? target.id.slice(0, slash) : target.id;
+                await api.revealPluginInstallDir(pluginId);
+              } else {
+                return;
+              }
+              await hidePreservingSession();
+            } catch (revealError) {
+              setError(errorMessage(revealError, "无法打开位置"));
+            }
+          })();
+          return;
+        }
+
+        if (actionId === "remove-recent") {
+          void (async () => {
+            try {
+              await api.removeLauncherFromRecent(usageIdForContextTarget(target));
+              const next = await api.getLauncherUsage();
+              setUsageItems(next);
+            } catch (removeError) {
+              setError(errorMessage(removeError, "无法移出列表"));
+            }
+          })();
+          return;
+        }
+      },
+    );
+
+    const unlistenClosed = listen<LauncherContextMenuClosed>(
+      "launcher-context-menu:closed",
+      (event) => {
+        setContextMenuBlurHideSuppressed(false);
+        const reason = event.payload?.reason;
+        if (reason === "blur") {
+          void getCurrentWindow()
+            .isFocused()
+            .then((focused) => {
+              if (!focused) void hidePreservingSession();
+            })
+            .catch(() => undefined);
+          return;
+        }
+        if (reason === "escape" || reason === "dismiss") {
+          void getCurrentWindow().setFocus().catch(() => undefined);
+        }
+      },
+    );
+
+    return () => {
+      void unlistenAction.then((fn) => fn());
+      void unlistenClosed.then((fn) => fn());
+    };
+  }, [hidePreservingSession, isTauri]);
+
+  const openTileContextMenu = (
+    event: ReactMouseEvent,
+    target: LauncherContextMenuTarget,
+  ) => {
+    void openLauncherContextMenu(event, target).catch((menuError) => {
+      setContextMenuBlurHideSuppressed(false);
+      setError(errorMessage(menuError, "无法打开右键菜单"));
+    });
   };
 
   const keepSearchFocused = () => {
@@ -1680,24 +2105,64 @@ export function MainPanelPage() {
                 query={quickActionQuery}
                 selectedKey={selectedKey}
                 pendingKey={pendingKey}
+                contributionPinnedById={contributionPinnedById}
                 onToggleExpanded={() => setSearchExpanded((current) => !current)}
                 onExecute={(selection) => void executeSelection(selection)}
-                onTogglePinned={(app) => void togglePinned(app)}
+                onTogglePinnedLauncher={(app) => void togglePinnedLauncherApp(app)}
+                onTogglePinnedContribution={(app) => void togglePinnedContribution(app)}
+                onContextMenuLauncher={(event, app) =>
+                  openTileContextMenu(event, {
+                    kind: "launcher",
+                    id: app.id,
+                    name: app.name,
+                    pinned: app.pinned,
+                  })
+                }
+                onContextMenuContribution={(event, app, pinned) =>
+                  openTileContextMenu(event, {
+                    kind: "contribution",
+                    id: app.id,
+                    name: app.name,
+                    pinned,
+                    source: app.source,
+                  })
+                }
               />
             ) : (
               <DefaultApps
                 recentApps={visibleRecentApps}
-                recentTotal={recentWithoutPinned.length}
-                pinnedApps={visiblePinnedApps}
-                pinnedTotal={pinnedApps.length}
+                recentTotal={recentSource.length}
+                pinnedEntries={visiblePinnedEntries}
+                pinnedTotal={pinnedEntries.length}
                 recentExpanded={recentExpanded}
                 pinnedExpanded={pinnedExpanded}
                 selectedKey={selectedKey}
                 pendingKey={pendingKey}
+                contributionPinnedById={contributionPinnedById}
                 onToggleRecent={() => setRecentExpanded((current) => !current)}
                 onTogglePinnedSection={() => setPinnedExpanded((current) => !current)}
                 onExecute={(selection) => void executeSelection(selection)}
-                onTogglePinned={(app) => void togglePinned(app)}
+                onTogglePinnedLauncher={(app) => void togglePinnedLauncherApp(app)}
+                onTogglePinnedContribution={(app) => void togglePinnedContribution(app)}
+                onContextMenuLauncher={(event, app, fromRecent) =>
+                  openTileContextMenu(event, {
+                    kind: "launcher",
+                    id: app.id,
+                    name: app.name,
+                    pinned: app.pinned,
+                    fromRecent,
+                  })
+                }
+                onContextMenuContribution={(event, app, pinned, fromRecent) =>
+                  openTileContextMenu(event, {
+                    kind: "contribution",
+                    id: app.id,
+                    name: app.name,
+                    pinned,
+                    source: app.source,
+                    fromRecent,
+                  })
+                }
               />
             )}
             {!showApp && error ? (
@@ -1747,29 +2212,42 @@ function MainPanelAppBarTrailing() {
 function DefaultApps({
   recentApps,
   recentTotal,
-  pinnedApps,
+  pinnedEntries,
   pinnedTotal,
   recentExpanded,
   pinnedExpanded,
   selectedKey,
   pendingKey,
+  contributionPinnedById,
   onToggleRecent,
   onTogglePinnedSection,
   onExecute,
-  onTogglePinned,
+  onTogglePinnedLauncher,
+  onTogglePinnedContribution,
+  onContextMenuLauncher,
+  onContextMenuContribution,
 }: {
   recentApps: RecentEntry[];
   recentTotal: number;
-  pinnedApps: LauncherApp[];
+  pinnedEntries: PinnedEntry[];
   pinnedTotal: number;
   recentExpanded: boolean;
   pinnedExpanded: boolean;
   selectedKey: string | null;
   pendingKey: string | null;
+  contributionPinnedById: Map<string, boolean>;
   onToggleRecent: () => void;
   onTogglePinnedSection: () => void;
   onExecute: (selection: MainPanelSelection) => void;
-  onTogglePinned: (app: LauncherApp) => void;
+  onTogglePinnedLauncher: (app: LauncherApp) => void;
+  onTogglePinnedContribution: (app: BuiltinApp) => void;
+  onContextMenuLauncher: (event: ReactMouseEvent, app: LauncherApp, fromRecent?: boolean) => void;
+  onContextMenuContribution: (
+    event: ReactMouseEvent,
+    app: BuiltinApp,
+    pinned: boolean,
+    fromRecent?: boolean,
+  ) => void;
 }) {
   return (
     <div className="main-panel-sections">
@@ -1783,17 +2261,35 @@ function DefaultApps({
           onToggle={onTogglePinnedSection}
         >
           <div className="main-panel-app-grid">
-            {pinnedApps.map((app) => {
-              const key = `pinned:${app.id}`;
+            {pinnedEntries.map((entry) => {
+              if (entry.kind === "contribution") {
+                return (
+                  <BuiltinTile
+                    key={entry.key}
+                    selectionKey={entry.key}
+                    app={entry.app}
+                    selected={selectedKey === entry.key}
+                    pinned
+                    onExecute={() =>
+                      onExecute({ key: entry.key, kind: "builtin", app: entry.app })
+                    }
+                    onTogglePinned={() => onTogglePinnedContribution(entry.app)}
+                    onContextMenu={(event) =>
+                      onContextMenuContribution(event, entry.app, true, false)
+                    }
+                  />
+                );
+              }
               return (
                 <AppTile
-                  key={key}
-                  selectionKey={key}
-                  app={app}
-                  selected={selectedKey === key}
-                  pending={pendingKey === key}
-                  onExecute={() => onExecute({ key, kind: "app", app })}
-                  onTogglePinned={() => onTogglePinned(app)}
+                  key={entry.key}
+                  selectionKey={entry.key}
+                  app={entry.app}
+                  selected={selectedKey === entry.key}
+                  pending={pendingKey === entry.key}
+                  onExecute={() => onExecute({ key: entry.key, kind: "app", app: entry.app })}
+                  onTogglePinned={() => onTogglePinnedLauncher(entry.app)}
+                  onContextMenu={(event) => onContextMenuLauncher(event, entry.app, false)}
                 />
               );
             })}
@@ -1813,14 +2309,20 @@ function DefaultApps({
           <div className="main-panel-app-grid">
             {recentApps.map((entry) => {
               if (entry.kind === "builtin") {
+                const pinned = contributionPinnedById.get(entry.app.id) === true;
                 return (
                   <BuiltinTile
                     key={entry.key}
                     selectionKey={entry.key}
                     app={entry.app}
                     selected={selectedKey === entry.key}
+                    pinned={pinned}
                     onExecute={() =>
                       onExecute({ key: entry.key, kind: "builtin", app: entry.app })
+                    }
+                    onTogglePinned={() => onTogglePinnedContribution(entry.app)}
+                    onContextMenu={(event) =>
+                      onContextMenuContribution(event, entry.app, pinned, true)
                     }
                   />
                 );
@@ -1833,7 +2335,8 @@ function DefaultApps({
                   selected={selectedKey === entry.key}
                   pending={pendingKey === entry.key}
                   onExecute={() => onExecute({ key: entry.key, kind: "app", app: entry.app })}
-                  onTogglePinned={() => onTogglePinned(entry.app)}
+                  onTogglePinned={() => onTogglePinnedLauncher(entry.app)}
+                  onContextMenu={(event) => onContextMenuLauncher(event, entry.app, true)}
                 />
               );
             })}
@@ -1852,9 +2355,13 @@ function SearchResults({
   query,
   selectedKey,
   pendingKey,
+  contributionPinnedById,
   onToggleExpanded,
   onExecute,
-  onTogglePinned,
+  onTogglePinnedLauncher,
+  onTogglePinnedContribution,
+  onContextMenuLauncher,
+  onContextMenuContribution,
 }: {
   apps: SearchAppEntry[];
   totalAppCount: number;
@@ -1863,9 +2370,13 @@ function SearchResults({
   query: string;
   selectedKey: string | null;
   pendingKey: string | null;
+  contributionPinnedById: Map<string, boolean>;
   onToggleExpanded: () => void;
   onExecute: (selection: MainPanelSelection) => void;
-  onTogglePinned: (app: LauncherApp) => void;
+  onTogglePinnedLauncher: (app: LauncherApp) => void;
+  onTogglePinnedContribution: (app: BuiltinApp) => void;
+  onContextMenuLauncher: (event: ReactMouseEvent, app: LauncherApp) => void;
+  onContextMenuContribution: (event: ReactMouseEvent, app: BuiltinApp, pinned: boolean) => void;
 }) {
   const hasResults = totalAppCount > 0 || quickActions.length > 0;
 
@@ -1889,14 +2400,20 @@ function SearchResults({
           <div className="main-panel-app-grid">
             {apps.map((entry) => {
               if (entry.kind === "builtin") {
+                const pinned = contributionPinnedById.get(entry.app.id) === true;
                 return (
                   <BuiltinTile
                     key={entry.key}
                     selectionKey={entry.key}
                     app={entry.app}
                     selected={selectedKey === entry.key}
+                    pinned={pinned}
                     onExecute={() =>
                       onExecute({ key: entry.key, kind: "builtin", app: entry.app })
+                    }
+                    onTogglePinned={() => onTogglePinnedContribution(entry.app)}
+                    onContextMenu={(event) =>
+                      onContextMenuContribution(event, entry.app, pinned)
                     }
                   />
                 );
@@ -1911,7 +2428,8 @@ function SearchResults({
                   onExecute={() =>
                     onExecute({ key: entry.key, kind: "app", app: entry.app })
                   }
-                  onTogglePinned={() => onTogglePinned(entry.app)}
+                  onTogglePinned={() => onTogglePinnedLauncher(entry.app)}
+                  onContextMenu={(event) => onContextMenuLauncher(event, entry.app)}
                 />
               );
             })}
@@ -1963,9 +2481,22 @@ function QuickActionTiles({
             title={validationError ?? action.title?.(query) ?? action.name}
             onClick={() => onExecute({ key, kind: "action", action })}
           >
-            <span className="main-panel-action-icon">
+            <span
+              className={cn(
+                "main-panel-action-icon",
+                action.iconStyle === "app" && "main-panel-action-icon--app",
+              )}
+            >
               {pending ? (
                 <LoaderCircle className="main-panel-inline-loader" aria-hidden="true" />
+              ) : action.iconStyle === "app" ? (
+                <AppIcon
+                  name={action.appIconName ?? action.name}
+                  iconDataUrl={action.icon.type === "file" ? action.icon.url : null}
+                  className="size-8"
+                  fallback="application"
+                  fallbackClassName="bg-muted text-muted-foreground"
+                />
               ) : (
                 <AppIconView icon={action.icon} />
               )}
@@ -2015,18 +2546,25 @@ function BuiltinTile({
   selectionKey,
   app,
   selected,
+  pinned = false,
   onExecute,
+  onTogglePinned,
+  onContextMenu,
 }: {
   selectionKey: string;
   app: BuiltinApp;
   selected: boolean;
+  pinned?: boolean;
   onExecute: () => void;
+  onTogglePinned?: () => void;
+  onContextMenu?: (event: ReactMouseEvent) => void;
 }) {
   return (
     <div
       className="main-panel-app-tile-wrap"
       data-selected={selected || undefined}
       data-selection-key={selectionKey}
+      onContextMenu={onContextMenu}
     >
       {app.source === "plugin" ? (
         <span className="main-panel-plugin-badge" title="插件">
@@ -2039,11 +2577,34 @@ function BuiltinTile({
         title={app.name}
         onClick={onExecute}
       >
-        <span className="main-panel-builtin-icon">
-          <AppIconView icon={app.icon} />
-        </span>
+        {app.source === "plugin" ? (
+          <AppIcon
+            name={app.name}
+            iconDataUrl={app.icon.type === "file" ? app.icon.url : null}
+            className="size-8"
+            fallback="application"
+            fallbackClassName="bg-muted text-muted-foreground"
+          />
+        ) : (
+          <span className="main-panel-builtin-icon">
+            <AppIconView icon={app.icon} />
+          </span>
+        )}
         <span>{app.name}</span>
       </button>
+      {onTogglePinned ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="main-panel-pin-button"
+          aria-label={pinned ? `取消固定 ${app.name}` : `固定 ${app.name}`}
+          title={pinned ? "取消固定" : "固定"}
+          onClick={onTogglePinned}
+        >
+          {pinned ? <PinOff /> : <Pin />}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -2055,6 +2616,7 @@ function AppTile({
   pending,
   onExecute,
   onTogglePinned,
+  onContextMenu,
 }: {
   selectionKey: string;
   app: LauncherApp;
@@ -2062,12 +2624,14 @@ function AppTile({
   pending: boolean;
   onExecute: () => void;
   onTogglePinned: () => void;
+  onContextMenu?: (event: ReactMouseEvent) => void;
 }) {
   return (
     <div
       className="main-panel-app-tile-wrap"
       data-selected={selected || undefined}
       data-selection-key={selectionKey}
+      onContextMenu={onContextMenu}
     >
       <button
         type="button"

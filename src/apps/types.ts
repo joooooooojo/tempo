@@ -106,10 +106,24 @@ export interface QuickAction {
   name: string;
   keywords?: string[];
   icon: AppIconDescriptor;
+  /** When "app", render like launcher tiles (AppIcon) instead of green builtin quick-action style. */
+  iconStyle?: "app" | "builtin";
+  /** Display name for AppIcon fallback when `iconStyle` is "app". */
+  appIconName?: string;
   source: AppSource;
   pluginId?: string;
   /** Input kinds for which this action is shown and can run. */
   accepts: QuickActionAcceptKind[];
+  /**
+   * Extra visibility gate after `accepts` matches (e.g. clipboard text is a URL).
+   * Return false to hide the tile entirely.
+   */
+  isVisible?: (input: QuickActionInput) => boolean;
+  /**
+   * Sort weight for `listVisibleQuickActions` (higher first). Default 0.
+   * Use for context-specific actions (e.g. open-link when clipboard is a URL).
+   */
+  priority?: number;
   /** Return an error message to block execution / mark the tile invalid. */
   validate?: (query: string) => string | null;
   title?: (query: string) => string;
@@ -124,6 +138,11 @@ export interface Registration {
 
 export function lucideIcon(icon: LucideIcon): AppIconDescriptor {
   return { type: "lucide", icon };
+}
+
+export function fileIcon(url: string | null | undefined, path = ""): AppIconDescriptor {
+  const resolved = url ?? path;
+  return { type: "file", path: path || resolved, url: url ?? undefined };
 }
 
 export function resolveOpenAppParams(options?: OpenAppOptions): Record<string, unknown> {

@@ -8,6 +8,12 @@ export { ShelfPickerPage } from "@/builtin-plugins/clipboard/pages/ShelfPickerPa
 export { ClipboardFileGlyph } from "@/builtin-plugins/clipboard/components/ClipboardFileGlyph";
 export { formatClipboardFilesPreview } from "@/builtin-plugins/clipboard/lib/clipboardFiles";
 export {
+  openLinkAction,
+} from "@/builtin-plugins/clipboard/openLink";
+export {
+  syncClipboardUrlBrowserActions,
+} from "@/builtin-plugins/clipboard/actions";
+export {
   resolveQuickActionInput,
   resolveQuickActionQuery,
   seedToMainPanelChip,

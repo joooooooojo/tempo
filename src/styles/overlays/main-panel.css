@@ -396,6 +396,11 @@ html.main-panel-window #root {
   color: hsl(var(--primary-foreground));
 }
 
+.main-panel-action-icon--app {
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
 
 .main-panel-action-icon svg {
   width: 17px;

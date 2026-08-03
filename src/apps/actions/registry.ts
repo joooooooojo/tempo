@@ -39,8 +39,8 @@ function usageTimeMs(value: string | null | undefined): number {
 }
 
 /**
- * Actions compatible with the current input and optional action search, sorted by usage.
- * Unused actions keep registration order after used ones.
+ * Actions compatible with the current input and optional action search.
+ * Sorted by `priority` (desc), then usage, then registration order.
  */
 export function listVisibleQuickActions(
   input: QuickActionInput,
@@ -51,6 +51,7 @@ export function listVisibleQuickActions(
   const searchTerms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const visible = listQuickActions().filter((action) => {
     if (!action.accepts.includes(input.kind)) return false;
+    if (action.isVisible && !action.isVisible(input)) return false;
     if (searchTerms.length === 0) return true;
     const searchable = [action.name, action.id, action.titleTemplate, ...(action.keywords ?? [])]
       .filter(Boolean)
@@ -59,19 +60,23 @@ export function listVisibleQuickActions(
     return searchTerms.every((term) => searchable.includes(term));
   });
 
-  if (!usageById || usageById.size === 0) return visible;
-
   return visible
     .map((action, index) => ({ action, index }))
     .sort((left, right) => {
-      const leftUsage = usageById.get(quickActionUsageId(left.action.id));
-      const rightUsage = usageById.get(quickActionUsageId(right.action.id));
-      const leftTime = usageTimeMs(leftUsage?.last_used_at);
-      const rightTime = usageTimeMs(rightUsage?.last_used_at);
-      if (rightTime !== leftTime) return rightTime - leftTime;
-      const leftCount = leftUsage?.use_count ?? 0;
-      const rightCount = rightUsage?.use_count ?? 0;
-      if (rightCount !== leftCount) return rightCount - leftCount;
+      const leftPriority = left.action.priority ?? 0;
+      const rightPriority = right.action.priority ?? 0;
+      if (rightPriority !== leftPriority) return rightPriority - leftPriority;
+
+      if (usageById && usageById.size > 0) {
+        const leftUsage = usageById.get(quickActionUsageId(left.action.id));
+        const rightUsage = usageById.get(quickActionUsageId(right.action.id));
+        const leftTime = usageTimeMs(leftUsage?.last_used_at);
+        const rightTime = usageTimeMs(rightUsage?.last_used_at);
+        if (rightTime !== leftTime) return rightTime - leftTime;
+        const leftCount = leftUsage?.use_count ?? 0;
+        const rightCount = rightUsage?.use_count ?? 0;
+        if (rightCount !== leftCount) return rightCount - leftCount;
+      }
       return left.index - right.index;
     })
     .map((entry) => entry.action);

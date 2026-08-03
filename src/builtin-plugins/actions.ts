@@ -1,5 +1,6 @@
 import { CheckSquare2, Languages } from "lucide-react";
 import { lucideIcon, type QuickAction } from "@/apps/types";
+import { openLinkAction } from "@/builtin-plugins/clipboard/openLink";
 import { api } from "@/lib/api";
 
 export const TODO_TITLE_LIMIT = 120;
@@ -34,4 +35,8 @@ const translateAction: QuickAction = {
 };
 
 /** Built-in quick actions. Plugins can call `registerQuickAction` later. */
-export const BUILTIN_QUICK_ACTIONS: QuickAction[] = [createTodoAction, translateAction];
+export const BUILTIN_QUICK_ACTIONS: QuickAction[] = [
+  openLinkAction,
+  createTodoAction,
+  translateAction,
+];

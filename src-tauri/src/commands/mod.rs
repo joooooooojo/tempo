@@ -2,6 +2,7 @@ pub mod launcher;
 pub mod markdown;
 pub mod plugins;
 pub(crate) mod tracker;
+pub mod url_browsers;
 pub mod window;
 
 use serde::{Deserialize, Serialize};

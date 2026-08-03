@@ -138,6 +138,24 @@ export const api = {
   searchMainPanelApps: (query: string, limit?: number) =>
     invoke<MainPanelSearchMatch[]>("search_main_panel_apps", { query, limit }),
   launchIndexedApp: (id: string) => invoke<void>("launch_indexed_app", { id }),
+  listInstalledUrlBrowsers: () =>
+    invoke<
+      Array<{
+        id: string;
+        name: string;
+        actionName: string;
+        iconDataUrl: string | null;
+      }>
+    >("list_installed_url_browsers"),
+  getDefaultUrlBrowser: () =>
+    invoke<{ name: string; iconDataUrl: string | null } | null>(
+      "get_default_url_browser",
+    ),
+  openUrlInBrowser: (url: string, browserId?: string | null) =>
+    invoke<void>("open_url_in_browser", {
+      url,
+      browserId: browserId ?? null,
+    }),
   setLauncherAppPinned: (id: string, pinned: boolean) =>
     invoke<void>("set_launcher_app_pinned", { id, pinned }),
   getLauncherUsage: () => invoke<LauncherUsageItem[]>("get_launcher_usage"),

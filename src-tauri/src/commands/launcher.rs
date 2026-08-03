@@ -110,6 +110,26 @@ fn launcher_cache() -> &'static RwLock<Vec<LauncherRecord>> {
     CACHE.get_or_init(|| RwLock::new(Vec::new()))
 }
 
+/// Snapshot of launcher targets for other commands (e.g. URL browser detection).
+#[derive(Debug, Clone)]
+pub(crate) struct LauncherTargetHint {
+    pub name: String,
+    pub target: String,
+    pub keywords: Vec<String>,
+}
+
+pub(crate) fn launcher_cache_records() -> Vec<LauncherTargetHint> {
+    launcher_cache()
+        .read()
+        .iter()
+        .map(|record| LauncherTargetHint {
+            name: record.name.clone(),
+            target: record.target.clone(),
+            keywords: record.keywords.clone(),
+        })
+        .collect()
+}
+
 fn search_contribution_cache() -> &'static RwLock<Vec<IndexedSearchContribution>> {
     static CACHE: OnceLock<RwLock<Vec<IndexedSearchContribution>>> = OnceLock::new();
     CACHE.get_or_init(|| RwLock::new(Vec::new()))
