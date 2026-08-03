@@ -624,6 +624,14 @@ fn enrich_action_command_input(
     if input.get("kind").and_then(Value::as_str) != Some("image") {
         return Ok(params);
     }
+    // Dev verify / callers may already supply a filesystem path.
+    if input
+        .get("filePath")
+        .and_then(Value::as_str)
+        .is_some_and(|path| !path.trim().is_empty())
+    {
+        return Ok(params);
+    }
     let entry_id = input
         .get("entryId")
         .and_then(Value::as_i64)

@@ -606,8 +606,8 @@
 }
 
 .plugin-dev-output--dialog {
-  min-height: 180px;
-  max-height: min(280px, 36vh);
+  min-height: 160px;
+  max-height: min(360px, 45vh);
 }
 
 .plugin-dev-verify__hint {
