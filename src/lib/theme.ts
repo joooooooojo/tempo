@@ -5,6 +5,9 @@ import type { Settings } from "@/types";
 
 export const THEME_CHANGED_EVENT = "settings:theme-changed";
 
+/** Pushed from Rust when the OS light/dark preference changes (see `platform::start_system_appearance_watcher`). */
+export const SYSTEM_APPEARANCE_CHANGED_EVENT = "os:appearance-changed";
+
 export function applyTheme(theme: Settings["theme"]) {
   void applyThemeAsync(theme);
 }
@@ -96,8 +99,10 @@ export function subscribeThemeChanges(
 
 /**
  * Watch OS appearance while the setting is "system".
- * Polls the native preference because forcing an explicit window theme (required for
- * reliable shelf/UI sync) stops matchMedia / onThemeChanged from tracking the OS.
+ *
+ * Prefer the Rust `os:appearance-changed` push (one native poller, emit only on change).
+ * matchMedia / onThemeChanged remain as best-effort backups; forcing an explicit window
+ * theme for overlay sync often stops them from tracking the OS.
  */
 export function watchSystemTheme(
   getTheme: () => Settings["theme"],
@@ -106,10 +111,8 @@ export function watchSystemTheme(
   let lastDark: boolean | null = null;
   let cancelled = false;
 
-  const notifyIfChanged = async () => {
+  const notifyIfChanged = (isDark: boolean) => {
     if (cancelled || getTheme() !== "system") return;
-    const isDark = await resolveSystemIsDark();
-    if (cancelled) return;
     if (lastDark === null) {
       lastDark = isDark;
       return;
@@ -120,6 +123,11 @@ export function watchSystemTheme(
     }
   };
 
+  // One-shot seed so the first OS event is compared correctly (not treated as "init").
+  void resolveSystemIsDark().then((isDark) => {
+    if (!cancelled && lastDark === null) lastDark = isDark;
+  });
+
   const media = window.matchMedia("(prefers-color-scheme: dark)");
   const mediaHandler = () => {
     if (getTheme() === "system") onSystemChange();
@@ -127,6 +135,8 @@ export function watchSystemTheme(
   media.addEventListener("change", mediaHandler);
 
   let unlistenTauri: (() => void) | undefined;
+  let unlistenAppearance: (() => void) | undefined;
+
   if ("__TAURI_INTERNALS__" in window) {
     void getCurrentWindow()
       .onThemeChanged(() => {
@@ -138,17 +148,22 @@ export function watchSystemTheme(
       .catch(() => {
         // Older runtimes / unsupported windows.
       });
-  }
 
-  const interval = window.setInterval(() => {
-    void notifyIfChanged();
-  }, 1500);
-  void notifyIfChanged();
+    void listen<{ dark: boolean }>(SYSTEM_APPEARANCE_CHANGED_EVENT, (event) => {
+      notifyIfChanged(event.payload.dark);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlistenAppearance = fn;
+    });
+  }
 
   return () => {
     cancelled = true;
-    window.clearInterval(interval);
     media.removeEventListener("change", mediaHandler);
     unlistenTauri?.();
+    unlistenAppearance?.();
   };
 }

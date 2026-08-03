@@ -1231,3 +1231,42 @@ fn windows_system_prefers_dark() -> bool {
     };
     status == ERROR_SUCCESS && data == 0
 }
+
+/// Frontend listens for this instead of polling `system_prefers_dark`.
+pub const SYSTEM_APPEARANCE_CHANGED_EVENT: &str = "os:appearance-changed";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemAppearancePayload {
+    pub dark: bool,
+}
+
+/// Watch OS light/dark preference in one background thread and push changes to all WebViews.
+///
+/// Forcing an explicit window theme (needed for overlay sync) breaks `matchMedia` /
+/// `onThemeChanged`, so the frontend used to poll `system_prefers_dark` from every window.
+/// That flooded the invoke log; emit-only-on-change keeps IPC quiet.
+pub fn start_system_appearance_watcher(app: tauri::AppHandle) {
+    use tauri::Emitter;
+
+    std::thread::Builder::new()
+        .name("system-appearance".into())
+        .spawn(move || {
+            let mut last = system_prefers_dark();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let dark = system_prefers_dark();
+                if dark == last {
+                    continue;
+                }
+                last = dark;
+                if let Err(error) = app.emit(
+                    SYSTEM_APPEARANCE_CHANGED_EVENT,
+                    SystemAppearancePayload { dark },
+                ) {
+                    tracing::debug!(error = %error, "failed to emit system appearance change");
+                }
+            }
+        })
+        .ok();
+}

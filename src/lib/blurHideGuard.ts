@@ -2,6 +2,7 @@
 
 let suppressDepth = 0;
 let contextMenuSuppressActive = false;
+let devtoolsSuppressActive = false;
 
 export function isBlurHideSuppressed(): boolean {
   return suppressDepth > 0;
@@ -26,6 +27,19 @@ export function setContextMenuBlurHideSuppressed(active: boolean): void {
   setBlurHideSuppressed(active);
 }
 
+/**
+ * Keep the main panel open while WebView DevTools exists (any focus target).
+ * Cleared only when DevTools is closed (or the panel is intentionally hidden).
+ */
+export function setDevtoolsBlurHideSuppressed(active: boolean): void {
+  if (active === devtoolsSuppressActive) return;
+  devtoolsSuppressActive = active;
+  setBlurHideSuppressed(active);
+}
+
+export function isDevtoolsBlurHideSuppressed(): boolean {
+  return devtoolsSuppressActive;
+}
 
 /** Like ZTools `withBlurHideSuppressed` — keep overlays open across NSOpenPanel focus loss. */
 export async function withBlurHideSuppressed<T>(fn: () => Promise<T>): Promise<T> {

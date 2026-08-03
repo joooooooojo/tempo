@@ -183,6 +183,8 @@ export const api = {
     invoke<string>("save_markdown_image", { dataUrl, mimeType }),
   debugLog: (scope: string, message: string) =>
     invoke<void>("debug_log", { scope, message }),
+  openMainPanelDevtools: () => invoke<void>("open_main_panel_devtools"),
+  isMainPanelDevtoolsOpen: () => invoke<boolean>("is_main_panel_devtools_open"),
   getClipboardHistory: (query?: string, limit?: number, offset?: number) =>
     invoke<ClipboardHistoryPage>("get_clipboard_history", { query, limit, offset }),
   deleteClipboardEntry: (id: number) =>
@@ -255,7 +257,6 @@ export const api = {
     invoke<void>("hide_launcher_context_menu", { reason: reason ?? null }),
   launcherContextMenuAction: (actionId: string, target: unknown) =>
     invoke<void>("launcher_context_menu_action", { actionId, target }),
-
 
   // Plugins
   getPluginRuntimeStatus: () =>

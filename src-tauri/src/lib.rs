@@ -266,6 +266,7 @@ pub fn run() {
             }
 
             tray_menu::setup_tray(app)?;
+            platform::start_system_appearance_watcher(app.handle().clone());
             {
                 let settings = {
                     let conn = state.db.lock();
@@ -369,6 +370,8 @@ pub fn run() {
             commands::window::quit_app,
             commands::window::debug_log,
             commands::window::system_prefers_dark,
+            commands::window::open_main_panel_devtools,
+            commands::window::is_main_panel_devtools_open,
             notify::show_user_notification,
             builtin_plugins::port_manager::get_port_records,
             builtin_plugins::port_manager::terminate_port_process,
