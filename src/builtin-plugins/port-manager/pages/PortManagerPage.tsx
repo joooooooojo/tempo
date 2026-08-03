@@ -196,6 +196,12 @@ export function PortManagerPage() {
 
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
+  const tableViewportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    tableViewportRef.current?.scrollTo({ top: 0 });
+  }, [currentPage]);
+
   const visibleRecords = useMemo(
     () => filteredRecords.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
     [currentPage, filteredRecords]
@@ -343,6 +349,8 @@ export function PortManagerPage() {
           empty={!loading && filteredRecords.length === 0}
           emptyContent={emptyContent}
           scrollAreaLabel="本机端口列表"
+          scrollbars="vertical"
+          viewportRef={tableViewportRef}
           verticalScrollbarInsetTop="2.5rem"
           footer={
             <div className="flex items-center justify-between gap-3 border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
@@ -382,57 +390,57 @@ export function PortManagerPage() {
             </div>
           }
         >
-          <Table>
+          <Table className="table-fixed">
             <TableHeader className="sticky top-0 z-30 bg-background">
               <TableRow>
-                <TableHead className="pl-4">端口</TableHead>
-                <TableHead>协议 / 状态</TableHead>
-                <TableHead>进程</TableHead>
-                <TableHead>PID</TableHead>
-                <TableHead className="w-[24%] max-w-80">程序路径</TableHead>
-                <TableHead>操作</TableHead>
+                <TableHead className="w-24 pl-4">端口</TableHead>
+                <TableHead className="w-40">协议 / 状态</TableHead>
+                <TableHead className="w-[22%]">进程</TableHead>
+                <TableHead className="w-16">PID</TableHead>
+                <TableHead className="w-[26%]">程序路径</TableHead>
+                <TableHead className="w-14">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {visibleRecords.map((record, index) => (
                 <TableRow key={recordKey(record, currentPage * PAGE_SIZE + index)}>
-                  <TableCell className="pl-4">
+                  <TableCell className="w-24 pl-4">
                     <div className="font-mono text-[14px] font-semibold tabular-nums">
                       {record.localPort}
                     </div>
-                    <div className="font-mono text-[10px] text-muted-foreground">
+                    <div className="truncate font-mono text-[10px] text-muted-foreground" title={record.localAddress}>
                       {record.localAddress}
                     </div>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="w-40">
                     <TagList
                       items={[record.protocol, STATE_LABELS[record.state] ?? record.state]}
                       size="sm"
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="w-[22%]">
                     <div
-                      className="text-[13px] font-medium"
+                      className="truncate text-[13px] font-medium"
                       title={record.processName}
                     >
                       {record.processName}
                     </div>
-                    <div className="mt-0.5 text-[10px] text-muted-foreground">
+                    <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
                       {record.canTerminate ? "可结束" : record.protectedReason ?? "受保护"}
                     </div>
                   </TableCell>
-                  <TableCell className="font-mono text-[12px] tabular-nums text-muted-foreground">
+                  <TableCell className="w-16 font-mono text-[12px] tabular-nums text-muted-foreground">
                     {record.pid ?? "-"}
                   </TableCell>
-                  <TableCell className="w-[24%] max-w-80">
+                  <TableCell className="w-[26%]">
                     <div
-                      className="max-w-full truncate text-[11px] text-muted-foreground"
+                      className="truncate text-[11px] text-muted-foreground"
                       title={record.processPath ?? undefined}
                     >
                       {record.processPath ?? "路径不可用"}
                     </div>
                   </TableCell>
-                  <TableCell className="pr-4 text-right">
+                  <TableCell className="w-14 pr-4 text-right">
                     {record.canTerminate ? (
                       <Button
                         variant="destructive"
