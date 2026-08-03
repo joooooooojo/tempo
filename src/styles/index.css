@@ -21,6 +21,7 @@
 @import "../builtin-plugins/settings/styles/settings.css";
 @import "../builtin-plugins/plugin-dev-assistant/styles/plugin-dev-assistant.css";
 @import "./overlays/main-panel.css";
+@import "./overlays/launcher-context-menu.css";
 @import "../builtin-plugins/clipboard/styles/shelf-picker.css";
 @import "@platform-styles";
 @import "./layer.css";

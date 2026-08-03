@@ -79,6 +79,8 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
         crate::logging::debug_if_err(window.hide(), "precache hide shelf picker window");
     }
 
+    crate::launcher_context_menu::precache(app)?;
+
     Ok(())
 }
 
@@ -134,6 +136,8 @@ pub fn is_main_panel_visible(app: &AppHandle) -> bool {
 }
 
 pub fn hide_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    crate::launcher_context_menu::hide_with_main_panel(app);
+
     let Some(window) = app.get_webview_window(MAIN_PANEL_LABEL) else {
         return Ok(());
     };
@@ -271,7 +275,7 @@ fn load_main_panel_position(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
     Some(PhysicalPosition::new(stored.x, stored.y))
 }
 
-fn monitor_containing_position(
+pub(crate) fn monitor_containing_position(
     app: &AppHandle,
     position: PhysicalPosition<i32>,
 ) -> Option<Monitor> {
@@ -285,7 +289,7 @@ fn monitor_containing_position(
     })
 }
 
-fn clamp_position_to_monitor(
+pub(crate) fn clamp_position_to_monitor(
     position: PhysicalPosition<i32>,
     window_size: PhysicalSize<u32>,
     monitor: &Monitor,

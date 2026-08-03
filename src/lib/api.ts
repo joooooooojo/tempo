@@ -138,6 +138,7 @@ export const api = {
   searchMainPanelApps: (query: string, limit?: number) =>
     invoke<MainPanelSearchMatch[]>("search_main_panel_apps", { query, limit }),
   launchIndexedApp: (id: string) => invoke<void>("launch_indexed_app", { id }),
+  revealIndexedApp: (id: string) => invoke<void>("reveal_indexed_app", { id }),
   listInstalledUrlBrowsers: () =>
     invoke<
       Array<{
@@ -158,6 +159,8 @@ export const api = {
     }),
   setLauncherAppPinned: (id: string, pinned: boolean) =>
     invoke<void>("set_launcher_app_pinned", { id, pinned }),
+  removeLauncherFromRecent: (id: string) =>
+    invoke<void>("remove_launcher_from_recent", { id }),
   getLauncherUsage: () => invoke<LauncherUsageItem[]>("get_launcher_usage"),
   recordLauncherUsage: (id: string) => invoke<void>("record_launcher_usage", { id }),
   setMainPanelHeight: (height: number) =>
@@ -236,6 +239,23 @@ export const api = {
   showClipboardPicker: () => invoke<void>("show_clipboard_picker"),
   showSnippetPicker: () => invoke<void>("show_snippet_picker"),
   hideShelfPicker: () => invoke<void>("hide_shelf_picker"),
+  showLauncherContextMenu: (args: {
+    x: number;
+    y: number;
+    items: Array<{
+      id: string;
+      label: string;
+      disabled?: boolean;
+      danger?: boolean;
+      separatorBefore?: boolean;
+    }>;
+    target: unknown;
+  }) => invoke<void>("show_launcher_context_menu", { args }),
+  hideLauncherContextMenu: (reason?: string) =>
+    invoke<void>("hide_launcher_context_menu", { reason: reason ?? null }),
+  launcherContextMenuAction: (actionId: string, target: unknown) =>
+    invoke<void>("launcher_context_menu_action", { actionId, target }),
+
 
   // Plugins
   getPluginRuntimeStatus: () =>
@@ -307,6 +327,8 @@ export const api = {
     }),
   pluginWindowContext: () => invoke<PluginWindowContext>("plugin_window_context"),
   pluginOpenDataDir: (pluginId: string) => invoke<void>("plugin_open_data_dir", { pluginId }),
+  revealPluginInstallDir: (pluginId: string) =>
+    invoke<void>("reveal_plugin_install_dir", { pluginId }),
   pluginUninstall: (pluginId: string, deleteData: boolean) =>
     invoke<void>("plugin_uninstall", {
       args: { pluginId, deleteData: Boolean(deleteData) },

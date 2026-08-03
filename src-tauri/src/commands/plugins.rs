@@ -902,6 +902,31 @@ pub fn plugin_open_data_dir(app: AppHandle, plugin_id: String) -> Result<(), Str
         .map_err(|e| format!("open plugin data dir: {e}"))
 }
 
+/// Reveal the installed plugin package folder in the system file manager.
+#[tauri::command]
+pub fn reveal_plugin_install_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let conn = state.db.lock();
+    ensure_plugin_tables(&conn)?;
+    let row = get_installed_plugin(&conn, &plugin_id)?
+        .ok_or_else(|| "未找到该插件的安装包".to_string())?;
+    drop(conn);
+
+    let path = packages_dir(&app)?.join(&row.id).join(&row.current_version);
+    if !path.is_dir() {
+        return Err("插件安装目录不存在".into());
+    }
+
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|error| format!("无法打开位置：{error}"))
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginUninstallArgs {

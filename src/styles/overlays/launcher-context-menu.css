@@ -1,0 +1,102 @@
+html.launcher-context-menu-window,
+html.launcher-context-menu-window body,
+html.launcher-context-menu-window #root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: hsl(var(--popover));
+}
+
+html.launcher-context-menu-window #root {
+  display: flex;
+}
+
+.launcher-context-menu-page {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: hsl(var(--popover));
+}
+
+.launcher-context-menu-page[data-ready="false"] .launcher-context-menu {
+  opacity: 0;
+}
+
+.launcher-context-menu {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 6px;
+  border: 1px solid hsl(var(--border) / 0.72);
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: none;
+  opacity: 1;
+  transition: opacity 80ms ease;
+}
+
+.launcher-context-menu__block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.launcher-context-menu__separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: hsl(var(--border) / 0.85);
+}
+
+.launcher-context-menu__item {
+  display: flex;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 0 10px;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.launcher-context-menu__item:hover:not(:disabled),
+.launcher-context-menu__item:focus-visible:not(:disabled) {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+  outline: none;
+}
+
+.launcher-context-menu__item:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.launcher-context-menu__item--danger {
+  color: hsl(var(--destructive));
+}
+
+.launcher-context-menu__item--danger:hover:not(:disabled),
+.launcher-context-menu__item--danger:focus-visible:not(:disabled) {
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+}
+
+.dark .launcher-context-menu {
+  border-color: hsl(var(--border) / 0.9);
+  background: hsl(var(--popover));
+}

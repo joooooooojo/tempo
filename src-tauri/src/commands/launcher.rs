@@ -528,6 +528,37 @@ pub fn launch_indexed_app(state: tauri::State<AppState>, id: String) -> Result<(
     Ok(())
 }
 
+/// Reveal the indexed launcher target in the system file manager.
+#[tauri::command]
+pub fn reveal_indexed_app(app: AppHandle, id: String) -> Result<(), String> {
+    let record = launcher_cache()
+        .read()
+        .iter()
+        .find(|record| record.id == id)
+        .cloned()
+        .ok_or_else(|| "应用索引已失效，请刷新后重试".to_string())?;
+
+    let path = resolve_reveal_path(&record.target).ok_or_else(|| {
+        format!("「{}」没有可打开的本地路径", record.name)
+    })?;
+
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|error| format!("无法打开位置：{error}"))
+}
+
+fn resolve_reveal_path(target: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(target);
+    if path.exists() {
+        return Some(path);
+    }
+
+    // Some indexed entries are URI-like (`shell:AppsFolder\...`) with no filesystem path.
+    None
+}
+
+/// Launch a filesystem target without attaching it to Tempo's process tree, console, or job.
 fn launch_target_detached(target: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -718,6 +749,43 @@ pub fn set_launcher_app_pinned(
         params![id, pinned_at],
     )
     .map_err(|error| error.to_string())?;
+    drop(conn);
+    invalidate_launcher_usage_cache();
+    Ok(())
+}
+
+/// Remove an item from the main-panel「最近使用」list without clearing pin state.
+#[tauri::command]
+pub fn remove_launcher_from_recent(
+    state: tauri::State<AppState>,
+    id: String,
+) -> Result<(), String> {
+    let id = id.trim().to_string();
+    if id.is_empty() {
+        return Err("无效的应用标识".into());
+    }
+
+    let conn = state.db.lock();
+    let pinned = conn
+        .query_row(
+            "SELECT pinned_at IS NOT NULL FROM launcher_usage WHERE item_id = ?1",
+            params![id],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .unwrap_or(false);
+
+    if pinned {
+        conn.execute(
+            "UPDATE launcher_usage SET last_used_at = NULL, use_count = 0 WHERE item_id = ?1",
+            params![id],
+        )
+        .map_err(|error| error.to_string())?;
+    } else {
+        conn.execute("DELETE FROM launcher_usage WHERE item_id = ?1", params![id])
+            .map_err(|error| error.to_string())?;
+    }
     drop(conn);
     invalidate_launcher_usage_cache();
     Ok(())

@@ -8,6 +8,7 @@ mod plugins;
 mod app_icons;
 mod asset_protocol;
 mod auxiliary_windows;
+mod launcher_context_menu;
 mod logging;
 mod launcher_search;
 #[cfg(target_os = "macos")]
@@ -327,10 +328,12 @@ pub fn run() {
             commands::launcher::sync_main_panel_search_contributions,
             commands::launcher::search_main_panel_apps,
             commands::launcher::launch_indexed_app,
+            commands::launcher::reveal_indexed_app,
             commands::url_browsers::list_installed_url_browsers,
             commands::url_browsers::get_default_url_browser,
             commands::url_browsers::open_url_in_browser,
             commands::launcher::set_launcher_app_pinned,
+            commands::launcher::remove_launcher_from_recent,
             commands::launcher::record_launcher_usage,
             commands::launcher::get_launcher_usage,
             auxiliary_windows::set_main_panel_height,
@@ -405,6 +408,7 @@ pub fn run() {
             plugins::windows::open_plugin_window,
             plugins::windows::plugin_window_context,
             commands::plugins::plugin_open_data_dir,
+            commands::plugins::reveal_plugin_install_dir,
             commands::plugins::plugin_uninstall,
             commands::plugins::set_plugin_mcp_exposed,
             commands::plugins::set_plugin_mcp_tool_enabled,
@@ -451,6 +455,9 @@ pub fn run() {
             auxiliary_windows::show_clipboard_picker,
             auxiliary_windows::show_snippet_picker,
             auxiliary_windows::hide_shelf_picker,
+            launcher_context_menu::show_launcher_context_menu,
+            launcher_context_menu::hide_launcher_context_menu,
+            launcher_context_menu::launcher_context_menu_action,
         ])
         .build(tauri::generate_context!())
         .map(|app| {
