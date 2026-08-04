@@ -474,6 +474,13 @@ pub fn init_db(path: &Path) -> Result<Connection, String> {
             payload TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS custom_launcher_entries (
+            id TEXT PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS plugins (
             id TEXT PRIMARY KEY,
             current_version TEXT NOT NULL,

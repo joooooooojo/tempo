@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CircleHelp } from "lucide-react";
+import { AlertTriangle, CircleHelp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -7,7 +7,8 @@ import {
   formatShortcutLabel,
   shortcutFromKeyboardEvent,
 } from "@/lib/shortcut";
-import type { Settings } from "@/types";
+import type { Settings, ShortcutBindingStatus, ShortcutOccupationState } from "@/types";
+import { cn } from "@/lib/utils";
 
 export const CLIPBOARD_RETENTION_OPTIONS = [
   { value: "days", label: "天" },
@@ -34,7 +35,7 @@ export const SHORTCUT_SETTING_KEYS = [
 
 export type ShortcutSettingKey = (typeof SHORTCUT_SETTING_KEYS)[number];
 
-export type SettingsSectionId = "general" | "plugins" | "storage";
+export type SettingsSectionId = "general" | "plugins" | "storage" | "custom-open";
 
 export const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId;
@@ -42,6 +43,7 @@ export const SETTINGS_SECTIONS: Array<{
 }> = [
   { id: "general", label: "通用设置" },
   { id: "plugins", label: "插件管理" },
+  { id: "custom-open", label: "自定义打开" },
   { id: "storage", label: "存储管理" },
 ];
 
@@ -49,6 +51,46 @@ export type SettingsUpdater = (patch: Partial<Settings>) => Promise<void>;
 
 export function normalizeShortcutForComparison(shortcut: string) {
   return shortcut.trim().toLowerCase().replace(/^ctrl\+/, "control+");
+}
+
+export function shortcutStatusLabel(state: ShortcutOccupationState | undefined) {
+  switch (state) {
+    case "conflict":
+      return "与其他快捷键冲突";
+    case "occupied":
+      return "已被占用";
+    case "failed":
+      return "注册失败";
+    case "invalid":
+      return "无效快捷键";
+    default:
+      return null;
+  }
+}
+
+export function resolveShortcutRowStatus(
+  key: ShortcutSettingKey,
+  settings: Settings,
+  statuses: ShortcutBindingStatus[]
+): { state: ShortcutOccupationState; message: string } | null {
+  const value = settings[key];
+  const normalized = normalizeShortcutForComparison(value);
+  if (normalized) {
+    const conflict = SHORTCUT_SETTING_KEYS.some(
+      (otherKey) =>
+        otherKey !== key && normalizeShortcutForComparison(settings[otherKey]) === normalized
+    );
+    if (conflict) {
+      return { state: "conflict", message: "与其他快捷键冲突" };
+    }
+  }
+
+  const status = statuses.find((item) => item.id === key);
+  if (!status) return null;
+  const label = shortcutStatusLabel(status.state) ?? status.message ?? null;
+  if (!label) return null;
+  if (status.state === "ok" || status.state === "empty") return null;
+  return { state: status.state, message: status.message?.trim() || label };
 }
 
 export function clipboardRetentionIndex(value: Settings["clipboard_history_retention"]) {
@@ -78,7 +120,7 @@ export function clipboardRetentionLabel(value: Settings["clipboard_history_reten
 }
 
 export function parseSettingsSectionId(value: string | null | undefined): SettingsSectionId | null {
-  if (value === "general" || value === "plugins" || value === "storage") {
+  if (value === "general" || value === "plugins" || value === "storage" || value === "custom-open") {
     return value;
   }
   return null;
@@ -122,11 +164,13 @@ export function ShortcutRow({
   label,
   desc,
   value,
+  status,
   onChange,
 }: {
   label: string;
   desc?: string;
   value: string;
+  status?: { state: ShortcutOccupationState; message: string } | null;
   onChange: (value: string) => Promise<void>;
 }) {
   const [recording, setRecording] = useState(false);
@@ -159,13 +203,33 @@ export function ShortcutRow({
       <div className="min-w-0">
         <p className="text-[14px] font-medium">{label}</p>
         {desc ? <p className="text-[11px] text-muted-foreground">{desc}</p> : null}
+        {status ? (
+          <p
+            className={cn(
+              "mt-1 flex items-center gap-1 text-[11px]",
+              status.state === "conflict" || status.state === "occupied" || status.state === "failed"
+                ? "text-destructive"
+                : "text-muted-foreground"
+            )}
+          >
+            <AlertTriangle className="size-3 shrink-0" aria-hidden />
+            <span>{status.message}</span>
+          </p>
+        ) : null}
       </div>
       <div className="flex items-center gap-2">
         <Button
           type="button"
           variant={recording ? "default" : "outline"}
           size="sm"
-          className="min-w-28 font-mono text-[12px]"
+          className={cn(
+            "min-w-28 font-mono text-[12px]",
+            status &&
+              (status.state === "conflict" ||
+                status.state === "occupied" ||
+                status.state === "failed") &&
+              "border-destructive/40 text-destructive"
+          )}
           onClick={() => setRecording((prev) => !prev)}
         >
           {recording ? "按下快捷键" : value ? formatShortcutLabel(value) : "未设置"}

@@ -120,6 +120,7 @@ const FLUSH_APP_IDS = new Set([
   "hosts",
   "translate",
   "port-manager",
+  "file-search",
   "plugin-dev-assistant",
   "settings",
 ]);
@@ -128,6 +129,7 @@ const FILL_HEIGHT_APP_IDS = new Set([
   "hosts",
   "translate",
   "port-manager",
+  "file-search",
   "plugin-dev-assistant",
   "todo",
   "settings",
@@ -1934,7 +1936,7 @@ export function MainPanelPage() {
                   appName={activeApp.name}
                   fallbackTitle={activeApp.id !== "plugin-dev-assistant"}
                 />
-                <div className="main-panel-search-spacer" aria-hidden="true" />
+                <MainPanelAppBarSpacer />
                 {activeApp.development ? (
                   <>
                     <Button
@@ -1964,9 +1966,7 @@ export function MainPanelPage() {
                   </>
                 ) : null}
                 <MainPanelAppBarTrailing />
-                <div className="main-panel-app-bar-icon" aria-hidden="true">
-                  <AppIconView icon={activeApp.icon} className="main-panel-app-bar-icon-glyph" />
-                </div>
+                <MainPanelAppBarIcon icon={activeApp.icon} />
               </>
             ) : (
               <>
@@ -2190,7 +2190,13 @@ function MainPanelAppBarLeading({
   const { chrome } = useMainPanelAppBarChrome();
   if (chrome.leading) {
     return (
-      <div className="main-panel-app-bar-leading" data-no-drag>
+      <div
+        className={cn(
+          "main-panel-app-bar-leading",
+          chrome.leadingGrow && "main-panel-app-bar-leading--grow",
+        )}
+        data-no-drag
+      >
         {chrome.leading}
       </div>
     );
@@ -2199,12 +2205,28 @@ function MainPanelAppBarLeading({
   return <div className="main-panel-app-bar-title">{appName}</div>;
 }
 
+function MainPanelAppBarSpacer() {
+  const { chrome } = useMainPanelAppBarChrome();
+  if (chrome.leadingGrow) return null;
+  return <div className="main-panel-search-spacer" aria-hidden="true" />;
+}
+
 function MainPanelAppBarTrailing() {
   const { chrome } = useMainPanelAppBarChrome();
   if (!chrome.trailing) return null;
   return (
     <div className="main-panel-app-bar-trailing" data-no-drag>
       {chrome.trailing}
+    </div>
+  );
+}
+
+function MainPanelAppBarIcon({ icon }: { icon: BuiltinApp["icon"] }) {
+  const { chrome } = useMainPanelAppBarChrome();
+  if (chrome.hideIcon) return null;
+  return (
+    <div className="main-panel-app-bar-icon" aria-hidden="true">
+      <AppIconView icon={icon} className="main-panel-app-bar-icon-glyph" />
     </div>
   );
 }

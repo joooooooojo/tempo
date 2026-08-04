@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
-import type { Settings } from "@/types";
+import type { Settings, ShortcutBindingStatus } from "@/types";
 import {
   DEFAULT_SHORTCUTS,
   McpCapabilitiesHint,
@@ -27,7 +27,7 @@ import {
   THEME_OPTIONS,
   type SettingsUpdater,
   type ShortcutSettingKey,
-  normalizeShortcutForComparison,
+  resolveShortcutRowStatus,
 } from "@/builtin-plugins/settings/pages/shared";
 import { PluginRuntimeSection } from "@/builtin-plugins/settings/pages/PluginRuntimeSection";
 
@@ -64,25 +64,28 @@ export function GeneralSettingsPanel({
 }: GeneralSettingsPanelProps) {
   const [showMcpToken, setShowMcpToken] = useState(false);
   const [mcpPortDraft, setMcpPortDraft] = useState(String(settings.mcp_port));
+  const [shortcutStatuses, setShortcutStatuses] = useState<ShortcutBindingStatus[]>([]);
 
   useEffect(() => {
     setMcpPortDraft(String(settings.mcp_port));
   }, [settings.mcp_port]);
 
-  const updateShortcut = (key: ShortcutSettingKey, value: string) => {
-    const patch: Partial<Settings> = { [key]: value };
-    const normalized = normalizeShortcutForComparison(value);
-    if (normalized) {
-      for (const otherKey of SHORTCUT_SETTING_KEYS) {
-        if (
-          otherKey !== key &&
-          normalizeShortcutForComparison(settings[otherKey]) === normalized
-        ) {
-          patch[otherKey] = "";
-        }
-      }
+  const refreshShortcutStatuses = async () => {
+    try {
+      const next = await api.getShortcutStatuses();
+      setShortcutStatuses(next);
+    } catch (error) {
+      console.error(error);
     }
-    return update(patch);
+  };
+
+  useEffect(() => {
+    void refreshShortcutStatuses();
+  }, []);
+
+  const updateShortcut = async (key: ShortcutSettingKey, value: string) => {
+    await update({ [key]: value });
+    await refreshShortcutStatuses();
   };
 
   return (
@@ -128,24 +131,24 @@ export function GeneralSettingsPanel({
 
       <Section title="快捷键">
         <Card>
-          <ShortcutRow
-            label="主面板"
-            desc="全局搜索应用并执行快捷操作"
-            value={settings.shortcut_main_panel}
-            onChange={(value) => updateShortcut("shortcut_main_panel", value)}
-          />
-          <ShortcutRow
-            label="剪贴板货架"
-            desc="全局打开剪贴板历史"
-            value={settings.shortcut_clipboard_picker}
-            onChange={(value) => updateShortcut("shortcut_clipboard_picker", value)}
-          />
-          <ShortcutRow
-            label="快捷短语货架"
-            desc="全局打开快捷短语"
-            value={settings.shortcut_snippet_picker}
-            onChange={(value) => updateShortcut("shortcut_snippet_picker", value)}
-          />
+          {SHORTCUT_SETTING_KEYS.map((key) => {
+            const meta =
+              key === "shortcut_main_panel"
+                ? { label: "主面板", desc: "全局搜索应用并执行快捷操作" }
+                : key === "shortcut_clipboard_picker"
+                  ? { label: "剪贴板货架", desc: "全局打开剪贴板历史" }
+                  : { label: "快捷短语货架", desc: "全局打开快捷短语" };
+            return (
+              <ShortcutRow
+                key={key}
+                label={meta.label}
+                desc={meta.desc}
+                value={settings[key]}
+                status={resolveShortcutRowStatus(key, settings, shortcutStatuses)}
+                onChange={(value) => updateShortcut(key, value)}
+              />
+            );
+          })}
           <div className="border-t border-border/50 px-4 py-3">
             <Button
               variant="outline"
@@ -155,7 +158,7 @@ export function GeneralSettingsPanel({
                   shortcut_main_panel: DEFAULT_SHORTCUTS.shortcut_main_panel,
                   shortcut_clipboard_picker: DEFAULT_SHORTCUTS.shortcut_clipboard_picker,
                   shortcut_snippet_picker: DEFAULT_SHORTCUTS.shortcut_snippet_picker,
-                })
+                }).then(() => refreshShortcutStatuses())
               }
             >
               恢复默认

@@ -14,6 +14,7 @@ import type {
   MainPanelSearchContribution,
   MainPanelSearchMatch,
   LauncherUsageItem,
+  CustomLauncherEntry,
   PluginContributionBundle,
   PluginAppRect,
   PluginMcpToolInfo,
@@ -28,7 +29,12 @@ import type {
   PluginUiPrepareResult,
   PluginWindowContext,
   PortRecord,
+  FileSearchPreviewMeta,
+  FileSearchArchiveListing,
+  FileSearchQueryResult,
+  FileSearchStatus,
   Settings,
+  ShortcutBindingStatus,
   Snippet,
   SnippetGroup,
   TodoImage,
@@ -55,6 +61,7 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Partial<Settings>) =>
     invoke<void>("update_settings", { settings }),
+  getShortcutStatuses: () => invoke<ShortcutBindingStatus[]>("get_shortcut_statuses"),
   regenerateMcpToken: () => invoke<Settings>("regenerate_mcp_token"),
   setStorageDir: (storageDir: string) =>
     invoke<Settings>("set_storage_dir", { storageDir }),
@@ -133,6 +140,14 @@ export const api = {
   getKnownApps: () => invoke<AppUsage[]>("get_known_apps"),
   getLauncherApps: () => invoke<LauncherApp[]>("get_launcher_apps"),
   refreshLauncherApps: () => invoke<LauncherApp[]>("refresh_launcher_apps"),
+  listCustomLauncherEntries: () =>
+    invoke<CustomLauncherEntry[]>("list_custom_launcher_entries"),
+  addCustomLauncherEntries: (paths: string[]) =>
+    invoke<CustomLauncherEntry[]>("add_custom_launcher_entries", { paths }),
+  removeCustomLauncherEntry: (id: string) =>
+    invoke<void>("remove_custom_launcher_entry", { id }),
+  renameCustomLauncherEntry: (id: string, name: string) =>
+    invoke<CustomLauncherEntry>("rename_custom_launcher_entry", { id, name }),
   syncMainPanelSearchContributions: (contributions: MainPanelSearchContribution[]) =>
     invoke<void>("sync_main_panel_search_contributions", { contributions }),
   searchMainPanelApps: (query: string, limit?: number) =>
@@ -451,6 +466,25 @@ export const api = {
     invoke<PortRecord[]>("get_port_records", { includeActiveConnections }),
   terminatePortProcess: (request: TerminatePortProcessRequest) =>
     invoke<void>("terminate_port_process", { request }),
+
+  // Tools — File search
+  fileSearchStatus: () => invoke<FileSearchStatus>("file_search_status"),
+  fileSearchEnsureEngine: () => invoke<FileSearchStatus>("file_search_ensure_engine"),
+  fileSearchQuery: (request: {
+    query: string;
+    category?: string;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+  }) => invoke<FileSearchQueryResult>("file_search_query", { request }),
+  fileSearchOpen: (path: string) => invoke<void>("file_search_open", { path }),
+  fileSearchReveal: (path: string) => invoke<void>("file_search_reveal", { path }),
+  fileSearchPreviewMeta: (path: string) =>
+    invoke<FileSearchPreviewMeta>("file_search_preview_meta", { path }),
+  fileSearchPreviewUrl: (path: string) =>
+    invoke<string>("file_search_preview_url", { path }),
+  fileSearchListArchive: (path: string) =>
+    invoke<FileSearchArchiveListing>("file_search_list_archive", { path }),
 
   // Tools — Translate
   getTranslateConfig: () => invoke<TranslateConfig>("get_translate_config"),

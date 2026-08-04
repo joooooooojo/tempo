@@ -17,9 +17,32 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$APPDATA/Tempo/**"
-        ]
+        "scope": {
+          "requireLiteralLeadingDot": false,
+          "allow": [
+            "$APPDATA/Tempo/**",
+            "$APPDATA/**",
+            "$APPLOCALDATA/**",
+            "$HOME/**",
+            "$DESKTOP/**",
+            "$DOCUMENT/**",
+            "$DOWNLOAD/**",
+            "$PICTURE/**",
+            "$PUBLIC/**",
+            "$TEMP/**",
+            "$RESOURCE/**",
+            "/**",
+            "C:/**",
+            "D:/**",
+            "E:/**",
+            "F:/**",
+            "G:/**",
+            "H:/**",
+            "I:/**",
+            "J:/**",
+            "**/*"
+          ]
+        }
       }
     }
   },

@@ -26,6 +26,15 @@ export interface LauncherUsageItem {
   use_count: number;
 }
 
+export interface CustomLauncherEntry {
+  id: string;
+  path: string;
+  name: string;
+  kind: "file" | "folder" | "shortcut" | string;
+  createdAt: string;
+  iconDataUrl?: string | null;
+}
+
 export interface MainPanelSearchContribution {
   id: string;
   name: string;
@@ -146,6 +155,27 @@ export interface Settings {
   disabled_builtin_apps: string[];
 }
 
+/** Per-binding status from global hotkey registration / conflict checks. */
+export type ShortcutOccupationState =
+  | "ok"
+  | "empty"
+  | "conflict"
+  | "occupied"
+  | "failed"
+  | "invalid";
+
+export interface ShortcutBindingStatus {
+  id: ShortcutSettingId | string;
+  shortcut: string;
+  state: ShortcutOccupationState;
+  message?: string | null;
+}
+
+export type ShortcutSettingId =
+  | "shortcut_main_panel"
+  | "shortcut_clipboard_picker"
+  | "shortcut_snippet_picker";
+
 export interface ClipboardEntry {
   id: number;
   content: string;
@@ -257,6 +287,73 @@ export interface TerminatePortProcessRequest {
   localPort: number;
   pid: number;
   processStartedAt: number;
+}
+
+export interface FileSearchStatus {
+  ready: boolean;
+  engine?: string | null;
+  version?: string | null;
+  message?: string | null;
+}
+
+export interface FileSearchEngineProgress {
+  stage: string;
+  current: number;
+  total?: number | null;
+  percent?: number | null;
+  label?: string | null;
+}
+
+export interface FileSearchItem {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size?: number | null;
+  modifiedAt?: string | null;
+  extension?: string | null;
+}
+
+export interface FileSearchQueryResult {
+  items: FileSearchItem[];
+  total: number;
+  hasMore: boolean;
+}
+
+export type FileSearchPreviewKind =
+  | "image"
+  | "video"
+  | "audio"
+  | "text"
+  | "excel"
+  | "word"
+  | "ppt"
+  | "archive"
+  | "none";
+
+export interface FileSearchPreviewMeta {
+  path: string;
+  name: string;
+  size?: number | null;
+  modifiedAt?: string | null;
+  isDir: boolean;
+  extension?: string | null;
+  mimeHint?: string | null;
+  previewKind: FileSearchPreviewKind;
+}
+
+export interface FileSearchArchiveEntry {
+  path: string;
+  isDir: boolean;
+  size?: number | null;
+  compressedSize?: number | null;
+}
+
+export interface FileSearchArchiveListing {
+  format: string;
+  entries: FileSearchArchiveEntry[];
+  totalEntries: number;
+  truncated: boolean;
+  message?: string | null;
 }
 
 export type TranslateProviderId = "youdao" | "baidu" | "tencent" | "google" | "deepl";

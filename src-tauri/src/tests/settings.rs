@@ -4,7 +4,7 @@ use crate::validate_shortcut_bindings;
 use serde_json::json;
 
 #[test]
-fn assigning_an_existing_shortcut_clears_its_previous_owner() {
+fn assigning_an_existing_shortcut_keeps_both_values() {
     let mut settings = Settings {
         shortcut_main_panel: "Control+Shift+F".into(),
         shortcut_clipboard_picker: "Control+Shift+V".into(),
@@ -18,19 +18,29 @@ fn assigning_an_existing_shortcut_clears_its_previous_owner() {
     );
 
     assert!(changed);
-    assert_eq!(settings.shortcut_main_panel, "");
+    assert_eq!(settings.shortcut_main_panel, "Control+Shift+F");
     assert_eq!(settings.shortcut_clipboard_picker, "Control+Shift+F");
     assert_eq!(settings.shortcut_snippet_picker, "Control+Shift+S");
 }
 
 #[test]
-fn empty_shortcuts_are_valid_but_duplicate_non_empty_shortcuts_are_not() {
+fn empty_and_duplicate_shortcuts_are_valid_for_persistence() {
     let validated = validate_shortcut_bindings("", "Control+Shift+V", "")
         .expect("empty bindings should be valid");
     assert_eq!(validated, ("".into(), "Control+Shift+V".into(), "".into()));
 
-    assert!(
-        validate_shortcut_bindings("Control+Shift+V", "Control+Shift+V", "Control+Shift+S",)
-            .is_err()
+    let duplicates = validate_shortcut_bindings(
+        "Control+Shift+V",
+        "Control+Shift+V",
+        "Control+Shift+S",
+    )
+    .expect("duplicates should persist so UI can show conflict status");
+    assert_eq!(
+        duplicates,
+        (
+            "Control+Shift+V".into(),
+            "Control+Shift+V".into(),
+            "Control+Shift+S".into()
+        )
     );
 }

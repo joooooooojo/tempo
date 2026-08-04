@@ -1,4 +1,5 @@
 pub mod clipboard;
+pub mod file_search;
 pub mod hosts;
 pub mod mcp_exposure;
 pub mod plugin_dev;

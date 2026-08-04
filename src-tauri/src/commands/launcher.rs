@@ -299,7 +299,7 @@ pub fn warm_launcher_index(app: AppHandle) {
     }
 
     crate::logging::spawn_named("tempo-launcher-index", move || {
-        let records = enumerate_launcher_apps();
+        let records = build_launcher_records(&app);
         publish_launcher_records(&app, &records);
         finish_launcher_indexing();
     });
@@ -321,7 +321,7 @@ pub fn refresh_launcher_apps(app: AppHandle, state: tauri::State<AppState>) -> V
         return hydrate_launcher_apps(&state, launcher_cache().read().clone());
     }
 
-    let records = enumerate_launcher_apps();
+    let records = build_launcher_records(&app);
     publish_launcher_records(&app, &records);
     finish_launcher_indexing();
     hydrate_launcher_apps(&state, records)
@@ -907,6 +907,394 @@ fn enumerate_launcher_apps() -> Vec<LauncherRecord> {
     records.retain(|record| seen.insert(record.id.clone()));
     records.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
     records
+}
+
+fn build_launcher_records(app: &AppHandle) -> Vec<LauncherRecord> {
+    let mut records = enumerate_launcher_apps();
+    if let Some(state) = app.try_state::<AppState>() {
+        let conn = state.db.lock();
+        merge_custom_launcher_entries(&conn, &mut records);
+    }
+    records
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomLauncherEntry {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub created_at: String,
+    pub icon_data_url: Option<String>,
+}
+
+#[tauri::command]
+pub fn list_custom_launcher_entries(
+    state: tauri::State<AppState>,
+) -> Result<Vec<CustomLauncherEntry>, String> {
+    let conn = state.db.lock();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path, name, kind, created_at
+             FROM custom_launcher_entries
+             ORDER BY created_at DESC, name COLLATE NOCASE ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|error| error.to_string())?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        let (id, path, name, kind, created_at) = row.map_err(|error| error.to_string())?;
+        let icon_source = custom_entry_icon_source(&path, &kind);
+        let icon_data_url = icon_source
+            .as_ref()
+            .and_then(|source| crate::app_icons::AppIconService::global().icon_url(&name, source));
+        entries.push(CustomLauncherEntry {
+            id,
+            path,
+            name,
+            kind,
+            created_at,
+            icon_data_url,
+        });
+    }
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn add_custom_launcher_entries(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    paths: Vec<String>,
+) -> Result<Vec<CustomLauncherEntry>, String> {
+    let _shell_context = crate::platform::icon_extraction_thread_context();
+    let mut added = Vec::new();
+    {
+        let conn = state.db.lock();
+        for raw in paths {
+            let Some(entry) = prepare_custom_launcher_entry(&raw)? else {
+                continue;
+            };
+            conn.execute(
+                "INSERT INTO custom_launcher_entries (id, path, name, kind, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(path) DO UPDATE SET
+                   name = excluded.name,
+                   kind = excluded.kind",
+                params![
+                    entry.id,
+                    entry.path,
+                    entry.name,
+                    entry.kind,
+                    entry.created_at
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            added.push(entry);
+        }
+    }
+
+    republish_launcher_with_custom(&app);
+    Ok(added
+        .into_iter()
+        .map(|entry| {
+            let icon_source = custom_entry_icon_source(&entry.path, &entry.kind);
+            let icon_data_url = icon_source.as_ref().and_then(|source| {
+                crate::app_icons::AppIconService::global().icon_url(&entry.name, source)
+            });
+            CustomLauncherEntry {
+                id: entry.id,
+                path: entry.path,
+                name: entry.name,
+                kind: entry.kind,
+                created_at: entry.created_at,
+                icon_data_url,
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn remove_custom_launcher_entry(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    id: String,
+) -> Result<(), String> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("无效的条目标识".into());
+    }
+    let conn = state.db.lock();
+    let removed = conn
+        .execute("DELETE FROM custom_launcher_entries WHERE id = ?1", [id])
+        .map_err(|error| error.to_string())?;
+    drop(conn);
+    if removed == 0 {
+        return Err("未找到该自定义打开条目".into());
+    }
+    republish_launcher_with_custom(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn rename_custom_launcher_entry(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    id: String,
+    name: String,
+) -> Result<CustomLauncherEntry, String> {
+    let id = id.trim().to_string();
+    let name = name.trim().to_string();
+    if id.is_empty() {
+        return Err("无效的条目标识".into());
+    }
+    if name.is_empty() {
+        return Err("名称不能为空".into());
+    }
+    let conn = state.db.lock();
+    let updated = conn
+        .execute(
+            "UPDATE custom_launcher_entries SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        )
+        .map_err(|error| error.to_string())?;
+    if updated == 0 {
+        return Err("未找到该自定义打开条目".into());
+    }
+    let (path, kind, created_at) = conn
+        .query_row(
+            "SELECT path, kind, created_at FROM custom_launcher_entries WHERE id = ?1",
+            [&id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    drop(conn);
+
+    republish_launcher_with_custom(&app);
+    let icon_source = custom_entry_icon_source(&path, &kind);
+    let icon_data_url = icon_source
+        .as_ref()
+        .and_then(|source| crate::app_icons::AppIconService::global().icon_url(&name, source));
+    Ok(CustomLauncherEntry {
+        id,
+        path,
+        name,
+        kind,
+        created_at,
+        icon_data_url,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct PreparedCustomEntry {
+    id: String,
+    path: String,
+    name: String,
+    kind: String,
+    created_at: String,
+}
+
+fn prepare_custom_launcher_entry(raw: &str) -> Result<Option<PreparedCustomEntry>, String> {
+    let path = normalize_custom_path(raw);
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let path_buf = PathBuf::from(&path);
+    if !path_buf.exists() {
+        return Err(format!("路径不存在：{path}"));
+    }
+    let kind = detect_custom_entry_kind(&path_buf);
+    let name = path_buf
+        .file_stem()
+        .or_else(|| path_buf.file_name())
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("未命名")
+        .to_string();
+    Ok(Some(PreparedCustomEntry {
+        id: launcher_id(&path),
+        path,
+        name,
+        kind: kind.to_string(),
+        created_at: Local::now().to_rfc3339(),
+    }))
+}
+
+fn detect_custom_entry_kind(path: &Path) -> &'static str {
+    if path.is_dir() {
+        return "folder";
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(extension.as_str(), "lnk" | "url") {
+        "shortcut"
+    } else {
+        "file"
+    }
+}
+
+fn normalize_custom_path(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let path = PathBuf::from(trimmed);
+    if let Ok(canonical) = dunce_canonicalize(&path) {
+        return canonical.to_string_lossy().into_owned();
+    }
+    #[cfg(windows)]
+    {
+        let mut value = trimmed.replace('/', "\\");
+        while value.len() > 3 && value.ends_with('\\') {
+            value.pop();
+        }
+        value
+    }
+    #[cfg(not(windows))]
+    {
+        let mut value = trimmed.to_string();
+        while value.len() > 1 && value.ends_with('/') {
+            value.pop();
+        }
+        value
+    }
+}
+
+/// Canonicalize without the Windows `\\?\` verbatim prefix when possible.
+fn dunce_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    #[cfg(windows)]
+    {
+        let text = canonical.to_string_lossy();
+        if let Some(stripped) = text.strip_prefix(r"\\?\UNC\") {
+            return Ok(PathBuf::from(format!(r"\\{stripped}")));
+        }
+        if let Some(stripped) = text.strip_prefix(r"\\?\") {
+            return Ok(PathBuf::from(stripped));
+        }
+    }
+    Ok(canonical)
+}
+
+fn custom_entry_icon_source(path: &str, kind: &str) -> Option<String> {
+    let path_buf = PathBuf::from(path);
+    if kind == "shortcut" {
+        #[cfg(windows)]
+        {
+            if path_buf
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("lnk"))
+            {
+                return resolve_windows_shortcut(&path_buf)
+                    .and_then(|shortcut| shortcut.icon_source)
+                    .or_else(|| Some(path.to_string()));
+            }
+        }
+        return Some(path.to_string());
+    }
+    if path_buf.exists() {
+        Some(path.to_string())
+    } else {
+        None
+    }
+}
+
+fn custom_entry_subtitle(kind: &str) -> &'static str {
+    match kind {
+        "folder" => "文件夹",
+        "shortcut" => "快捷方式",
+        _ => "文件",
+    }
+}
+
+fn custom_entry_to_record(path: &str, name: &str, kind: &str) -> LauncherRecord {
+    let mut keywords = vec![
+        path.to_string(),
+        name.to_lowercase(),
+        "自定义打开".into(),
+        kind.to_string(),
+    ];
+    let icon_source = custom_entry_icon_source(path, kind);
+    #[cfg(windows)]
+    if kind == "shortcut" {
+        if let Some(shortcut) = resolve_windows_shortcut(Path::new(path)) {
+            if let Some(target_path) = shortcut.target_path {
+                keywords.push(target_path);
+            }
+        }
+    }
+    launcher_record(
+        name.to_string(),
+        custom_entry_subtitle(kind),
+        path.to_string(),
+        icon_source,
+        keywords,
+    )
+}
+
+fn merge_custom_launcher_entries(conn: &Connection, records: &mut Vec<LauncherRecord>) {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT path, name, kind FROM custom_launcher_entries ORDER BY created_at ASC",
+    ) else {
+        return;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    }) else {
+        return;
+    };
+
+    let existing_ids: HashSet<String> = records.iter().map(|record| record.id.clone()).collect();
+    let existing_targets: HashSet<String> = records
+        .iter()
+        .map(|record| normalize_custom_path(&record.target))
+        .collect();
+
+    for row in rows.flatten() {
+        let (path, name, kind) = row;
+        let normalized = normalize_custom_path(&path);
+        let id = launcher_id(&normalized);
+        if existing_ids.contains(&id) || existing_targets.contains(&normalized) {
+            continue;
+        }
+        records.push(custom_entry_to_record(&normalized, &name, &kind));
+    }
+}
+
+fn republish_launcher_with_custom(app: &AppHandle) {
+    let mut records = launcher_cache().read().clone();
+    records.retain(|record| !record.keywords.iter().any(|keyword| keyword == "自定义打开"));
+    if let Some(state) = app.try_state::<AppState>() {
+        let conn = state.db.lock();
+        merge_custom_launcher_entries(&conn, &mut records);
+    }
+    publish_launcher_records(app, &records);
 }
 
 fn publish_launcher_records(app: &AppHandle, records: &[LauncherRecord]) {

@@ -52,22 +52,6 @@ pub(crate) fn apply_shortcut_updates(current: &mut Settings, updates: &serde_jso
             continue;
         };
         let value = value.trim().to_string();
-        let normalized = (!value.is_empty()).then(|| crate::normalize_shortcut_key(&value));
-
-        if let Some(normalized) = normalized {
-            for (other_shortcut, _) in SHORTCUT_SETTINGS {
-                if other_shortcut == shortcut {
-                    continue;
-                }
-                let other_value = shortcut_value(current, other_shortcut);
-                if !other_value.is_empty()
-                    && crate::normalize_shortcut_key(other_value) == normalized
-                {
-                    set_shortcut_value(current, other_shortcut, String::new());
-                    changed = true;
-                }
-            }
-        }
 
         if shortcut_value(current, shortcut) != value {
             set_shortcut_value(current, shortcut, value);
@@ -90,6 +74,23 @@ pub fn get_settings(app: AppHandle, state: tauri::State<AppState>) -> Settings {
             String::new()
         });
     settings
+}
+
+#[tauri::command]
+pub fn get_shortcut_statuses(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<Vec<crate::ShortcutBindingStatus>, String> {
+    let settings = {
+        let conn = state.db.lock();
+        load_settings(&conn)
+    };
+    crate::apply_global_shortcuts(
+        &app,
+        &settings.shortcut_main_panel,
+        &settings.shortcut_clipboard_picker,
+        &settings.shortcut_snippet_picker,
+    )
 }
 
 #[tauri::command]

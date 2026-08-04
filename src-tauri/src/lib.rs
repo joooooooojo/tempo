@@ -30,6 +30,7 @@ use db::{
     DEFAULT_SNIPPET_PICKER_SHORTCUT,
 };
 use parking_lot::Mutex;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -43,12 +44,40 @@ const ACTION_SNIPPET_PICKER: &str = "snippet_picker";
 const ACTION_SHELF_ESCAPE: &str = "shelf_escape";
 const SHELF_ESCAPE_SHORTCUT: &str = "Escape";
 
+const SHORTCUT_ID_MAIN_PANEL: &str = "shortcut_main_panel";
+const SHORTCUT_ID_CLIPBOARD_PICKER: &str = "shortcut_clipboard_picker";
+const SHORTCUT_ID_SNIPPET_PICKER: &str = "shortcut_snippet_picker";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutOccupationState {
+    Ok,
+    Empty,
+    Conflict,
+    Occupied,
+    Failed,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ShortcutBindingStatus {
+    pub id: String,
+    pub shortcut: String,
+    pub state: ShortcutOccupationState,
+    pub message: Option<String>,
+}
+
 #[derive(Default)]
 struct ShortcutActionMap {
     /// Normalized shortcut string -> action id
     by_shortcut: HashMap<String, &'static str>,
     /// Currently registered raw shortcut strings (for unregister)
     registered: Vec<String>,
+}
+
+#[derive(Default)]
+struct ShortcutStatusCache {
+    statuses: Vec<ShortcutBindingStatus>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -84,6 +113,10 @@ pub fn run() {
         .register_uri_scheme_protocol(builtin_plugins::todo::TODO_IMAGE_PROTOCOL, |ctx, request| {
             builtin_plugins::todo::todo_image_protocol_response(ctx.app_handle(), request)
         })
+        .register_uri_scheme_protocol(
+            builtin_plugins::file_search::FILE_PREVIEW_PROTOCOL,
+            |_ctx, request| builtin_plugins::file_search::file_preview_protocol_response(request),
+        )
         .register_asynchronous_uri_scheme_protocol(app_icons::APP_ICON_PROTOCOL, |_ctx, request, responder| {
             // Extraction (especially macOS `sips`) must not run on the sync protocol
             // path — that stalls WKWebView while search tiles first paint.
@@ -213,6 +246,7 @@ pub fn run() {
             builtin_plugins::hosts::start_remote_refresh_scheduler(app.handle().clone());
             app.manage(state.clone());
             app.manage(Mutex::new(ShortcutActionMap::default()));
+            app.manage(Mutex::new(ShortcutStatusCache::default()));
             let mcp_controller = mcp::McpController::new();
             app.manage(mcp_controller.clone());
             commands::check_pending_recurrences(app.handle(), &state);
@@ -272,35 +306,53 @@ pub fn run() {
                     let conn = state.db.lock();
                     db::load_settings(&conn)
                 };
-                if let Err(error) = apply_global_shortcuts(
+                match apply_global_shortcuts(
                     app.handle(),
                     &settings.shortcut_main_panel,
                     &settings.shortcut_clipboard_picker,
                     &settings.shortcut_snippet_picker,
                 ) {
-                    tracing::warn!(
-                        error = %error,
-                        "failed to register saved shortcuts; falling back to defaults"
-                    );
-                    if let Err(fallback_error) = apply_global_shortcuts(
-                        app.handle(),
-                        DEFAULT_MAIN_PANEL_SHORTCUT,
-                        DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
-                        DEFAULT_SNIPPET_PICKER_SHORTCUT,
-                    ) {
+                    Ok(statuses) => {
+                        let troubled = statuses.iter().any(|status| {
+                            matches!(
+                                status.state,
+                                ShortcutOccupationState::Occupied
+                                    | ShortcutOccupationState::Failed
+                                    | ShortcutOccupationState::Conflict
+                            )
+                        });
+                        if troubled {
+                            tracing::warn!(
+                                ?statuses,
+                                "some saved shortcuts could not be registered"
+                            );
+                        }
+                    }
+                    Err(error) => {
                         tracing::warn!(
-                            error = %fallback_error,
-                            "failed to register default global shortcuts"
+                            error = %error,
+                            "failed to register saved shortcuts; falling back to defaults"
                         );
-                        logging::debug_if_err(
-                            app.emit(
-                                "toast",
-                                serde_json::json!({
-                                    "message": format!("快捷键注册失败: {fallback_error}")
-                                }),
-                            ),
-                            "emit shortcut registration failure toast",
-                        );
+                        if let Err(fallback_error) = apply_global_shortcuts(
+                            app.handle(),
+                            DEFAULT_MAIN_PANEL_SHORTCUT,
+                            DEFAULT_CLIPBOARD_PICKER_SHORTCUT,
+                            DEFAULT_SNIPPET_PICKER_SHORTCUT,
+                        ) {
+                            tracing::warn!(
+                                error = %fallback_error,
+                                "failed to register default global shortcuts"
+                            );
+                            logging::debug_if_err(
+                                app.emit(
+                                    "toast",
+                                    serde_json::json!({
+                                        "message": format!("快捷键注册失败: {fallback_error}")
+                                    }),
+                                ),
+                                "emit shortcut registration failure toast",
+                            );
+                        }
                     }
                 }
             }
@@ -319,6 +371,7 @@ pub fn run() {
             builtin_plugins::reports::get_weekly_report,
             builtin_plugins::settings::get_settings,
             builtin_plugins::settings::update_settings,
+            builtin_plugins::settings::get_shortcut_statuses,
             builtin_plugins::settings::regenerate_mcp_token,
             builtin_plugins::settings::set_storage_dir,
             builtin_plugins::settings::reset_today,
@@ -326,6 +379,10 @@ pub fn run() {
             builtin_plugins::reports::get_known_apps,
             commands::launcher::get_launcher_apps,
             commands::launcher::refresh_launcher_apps,
+            commands::launcher::list_custom_launcher_entries,
+            commands::launcher::add_custom_launcher_entries,
+            commands::launcher::remove_custom_launcher_entry,
+            commands::launcher::rename_custom_launcher_entry,
             commands::launcher::sync_main_panel_search_contributions,
             commands::launcher::search_main_panel_apps,
             commands::launcher::launch_indexed_app,
@@ -375,6 +432,14 @@ pub fn run() {
             notify::show_user_notification,
             builtin_plugins::port_manager::get_port_records,
             builtin_plugins::port_manager::terminate_port_process,
+            builtin_plugins::file_search::file_search_status,
+            builtin_plugins::file_search::file_search_ensure_engine,
+            builtin_plugins::file_search::file_search_query,
+            builtin_plugins::file_search::file_search_open,
+            builtin_plugins::file_search::file_search_reveal,
+            builtin_plugins::file_search::file_search_preview_meta,
+            builtin_plugins::file_search::file_search_preview_url,
+            builtin_plugins::file_search::file_search_list_archive,
             builtin_plugins::clipboard::get_clipboard_history,
             builtin_plugins::clipboard::delete_clipboard_history_entry,
             builtin_plugins::clipboard::clear_clipboard_history_command,
@@ -574,35 +639,20 @@ pub(crate) fn unregister_shelf_escape_shortcut(app: &tauri::AppHandle) -> Result
 }
 
 /// Apply the configurable shortcuts, preserving Esc only while the shelf is visible.
+///
+/// Returns per-binding occupation status. Internal conflicts and OS registration
+/// failures do not roll back other successful registrations; settings may still be saved.
 pub fn apply_global_shortcuts(
     app: &tauri::AppHandle,
     main_panel: &str,
     clipboard_picker: &str,
     snippet_picker: &str,
-) -> Result<(), String> {
-    let main_panel_raw = main_panel.trim();
-    let clipboard_raw = clipboard_picker.trim();
-    let snippet_raw = snippet_picker.trim();
-
-    let main_panel_norm = validate_shortcut_binding(main_panel_raw)?;
-    let clipboard_norm = validate_shortcut_binding(clipboard_raw)?;
-    let snippet_norm = validate_shortcut_binding(snippet_raw)?;
-
-    if shortcut_bindings_conflict(&main_panel_norm, &clipboard_norm)
-        || shortcut_bindings_conflict(&main_panel_norm, &snippet_norm)
-        || shortcut_bindings_conflict(&clipboard_norm, &snippet_norm)
-    {
-        return Err("快捷键不能重复".into());
-    }
+) -> Result<Vec<ShortcutBindingStatus>, String> {
+    let prepared = prepare_shortcut_bindings(main_panel, clipboard_picker, snippet_picker)?;
 
     let map_state = app
         .try_state::<Mutex<ShortcutActionMap>>()
         .ok_or_else(|| "快捷键状态未初始化".to_string())?;
-
-    let (previous_registered, previous_map) = {
-        let map = map_state.lock();
-        (map.registered.clone(), map.by_shortcut.clone())
-    };
 
     {
         let mut map = map_state.lock();
@@ -614,65 +664,184 @@ pub fn apply_global_shortcuts(
         map.by_shortcut.clear();
     }
 
-    let mut bindings: Vec<(&str, String, &'static str)> = Vec::new();
-    if let Some(normalized) = main_panel_norm {
-        bindings.push((main_panel_raw, normalized, ACTION_MAIN_PANEL));
-    }
-    if let Some(normalized) = clipboard_norm {
-        bindings.push((clipboard_raw, normalized, ACTION_CLIPBOARD_PICKER));
-    }
-    if let Some(normalized) = snippet_norm {
-        bindings.push((snippet_raw, normalized, ACTION_SNIPPET_PICKER));
-    }
-    if auxiliary_windows::is_shelf_picker_visible(app) {
-        bindings.push((
-            SHELF_ESCAPE_SHORTCUT,
-            normalize_shortcut_key(SHELF_ESCAPE_SHORTCUT),
-            ACTION_SHELF_ESCAPE,
-        ));
-    }
-
     let mut registered: Vec<String> = Vec::new();
     let mut by_shortcut: HashMap<String, &'static str> = HashMap::new();
+    let mut statuses: Vec<ShortcutBindingStatus> = Vec::with_capacity(3);
 
-    for (raw, normalized, action) in &bindings {
-        if let Err(error) = app.global_shortcut().register(*raw) {
-            for done in &registered {
-                let _ = app.global_shortcut().unregister(done.as_str());
+    for binding in &prepared {
+        let mut status = ShortcutBindingStatus {
+            id: binding.id.to_string(),
+            shortcut: binding.raw.to_string(),
+            state: ShortcutOccupationState::Empty,
+            message: None,
+        };
+
+        match &binding.outcome {
+            PreparedBindingOutcome::Empty => {
+                status.state = ShortcutOccupationState::Empty;
             }
-            for old in &previous_registered {
-                let _ = app.global_shortcut().register(old.as_str());
+            PreparedBindingOutcome::Invalid(message) => {
+                status.state = ShortcutOccupationState::Invalid;
+                status.message = Some(message.clone());
             }
-            let mut map = map_state.lock();
-            map.registered = previous_registered;
-            map.by_shortcut = previous_map;
-            return Err(format!("注册快捷键 {raw} 失败: {error}"));
+            PreparedBindingOutcome::Conflict => {
+                status.state = ShortcutOccupationState::Conflict;
+                status.message = Some("与其他快捷键冲突".into());
+            }
+            PreparedBindingOutcome::Ready(normalized) => {
+                match app.global_shortcut().register(binding.raw.as_str()) {
+                    Ok(()) => {
+                        registered.push(binding.raw.clone());
+                        by_shortcut.insert(normalized.clone(), binding.action);
+                        status.state = ShortcutOccupationState::Ok;
+                    }
+                    Err(error) => {
+                        let error_text = error.to_string();
+                        let occupied = is_shortcut_occupation_error(&error_text);
+                        status.state = if occupied {
+                            ShortcutOccupationState::Occupied
+                        } else {
+                            ShortcutOccupationState::Failed
+                        };
+                        status.message = Some(if occupied {
+                            "已被占用".into()
+                        } else {
+                            "注册失败".into()
+                        });
+                        tracing::warn!(
+                            shortcut = %binding.raw,
+                            error = %error_text,
+                            occupied,
+                            "failed to register global shortcut"
+                        );
+                    }
+                }
+            }
         }
-        registered.push((*raw).to_string());
-        by_shortcut.insert(normalized.clone(), *action);
+
+        statuses.push(status);
     }
 
-    let mut map = map_state.lock();
-    map.registered = registered;
-    map.by_shortcut = by_shortcut;
-    Ok(())
+    if auxiliary_windows::is_shelf_picker_visible(app) {
+        let escape_normalized = normalize_shortcut_key(SHELF_ESCAPE_SHORTCUT);
+        if !by_shortcut.contains_key(&escape_normalized) {
+            match app.global_shortcut().register(SHELF_ESCAPE_SHORTCUT) {
+                Ok(()) => {
+                    registered.push(SHELF_ESCAPE_SHORTCUT.to_string());
+                    by_shortcut.insert(escape_normalized, ACTION_SHELF_ESCAPE);
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        error = %error,
+                        "failed to register shelf Escape shortcut"
+                    );
+                }
+            }
+        }
+    }
+
+    {
+        let mut map = map_state.lock();
+        map.registered = registered;
+        map.by_shortcut = by_shortcut;
+    }
+
+    if let Some(cache) = app.try_state::<Mutex<ShortcutStatusCache>>() {
+        cache.lock().statuses = statuses.clone();
+    }
+
+    Ok(statuses)
+}
+
+fn is_shortcut_occupation_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("already registered")
+        || lower.contains("alreadyregistered")
+        || lower.contains("already been registered")
+        || lower.contains("hotkey already")
+}
+
+#[derive(Debug)]
+struct PreparedShortcutBinding {
+    id: &'static str,
+    raw: String,
+    action: &'static str,
+    outcome: PreparedBindingOutcome,
+}
+
+#[derive(Debug)]
+enum PreparedBindingOutcome {
+    Empty,
+    Invalid(String),
+    Conflict,
+    Ready(String),
+}
+
+fn prepare_shortcut_bindings(
+    main_panel: &str,
+    clipboard_picker: &str,
+    snippet_picker: &str,
+) -> Result<Vec<PreparedShortcutBinding>, String> {
+    let specs = [
+        (SHORTCUT_ID_MAIN_PANEL, main_panel, ACTION_MAIN_PANEL),
+        (
+            SHORTCUT_ID_CLIPBOARD_PICKER,
+            clipboard_picker,
+            ACTION_CLIPBOARD_PICKER,
+        ),
+        (
+            SHORTCUT_ID_SNIPPET_PICKER,
+            snippet_picker,
+            ACTION_SNIPPET_PICKER,
+        ),
+    ];
+
+    let mut prepared: Vec<PreparedShortcutBinding> = specs
+        .into_iter()
+        .map(|(id, raw, action)| {
+            let trimmed = raw.trim().to_string();
+            let outcome = match validate_shortcut_binding(&trimmed) {
+                Ok(None) => PreparedBindingOutcome::Empty,
+                Ok(Some(normalized)) => PreparedBindingOutcome::Ready(normalized),
+                Err(message) => PreparedBindingOutcome::Invalid(message),
+            };
+            PreparedShortcutBinding {
+                id,
+                raw: trimmed,
+                action,
+                outcome,
+            }
+        })
+        .collect();
+
+    let mut normalized_counts: HashMap<String, usize> = HashMap::new();
+    for binding in &prepared {
+        if let PreparedBindingOutcome::Ready(normalized) = &binding.outcome {
+            *normalized_counts.entry(normalized.clone()).or_insert(0) += 1;
+        }
+    }
+
+    for binding in &mut prepared {
+        if let PreparedBindingOutcome::Ready(normalized) = &binding.outcome {
+            if normalized_counts.get(normalized).copied().unwrap_or(0) > 1 {
+                binding.outcome = PreparedBindingOutcome::Conflict;
+            }
+        }
+    }
+
+    Ok(prepared)
 }
 
 /// Validate bindings before saving settings. Returns trimmed raw strings to persist.
+/// Duplicate chords are allowed so the UI can surface conflict status.
 pub fn validate_shortcut_bindings(
     main_panel: &str,
     clipboard_picker: &str,
     snippet_picker: &str,
 ) -> Result<(String, String, String), String> {
-    let main_panel_binding = validate_shortcut_binding(main_panel)?;
-    let clipboard = validate_shortcut_binding(clipboard_picker)?;
-    let snippet = validate_shortcut_binding(snippet_picker)?;
-    if shortcut_bindings_conflict(&main_panel_binding, &clipboard)
-        || shortcut_bindings_conflict(&main_panel_binding, &snippet)
-        || shortcut_bindings_conflict(&clipboard, &snippet)
-    {
-        return Err("快捷键不能重复".into());
-    }
+    validate_shortcut_binding(main_panel)?;
+    validate_shortcut_binding(clipboard_picker)?;
+    validate_shortcut_binding(snippet_picker)?;
     Ok((
         main_panel.trim().to_string(),
         clipboard_picker.trim().to_string(),
@@ -680,6 +849,40 @@ pub fn validate_shortcut_bindings(
     ))
 }
 
-fn shortcut_bindings_conflict(left: &Option<String>, right: &Option<String>) -> bool {
-    matches!((left, right), (Some(left), Some(right)) if left == right)
+#[cfg(test)]
+mod shortcut_status_tests {
+    use super::{is_shortcut_occupation_error, prepare_shortcut_bindings, PreparedBindingOutcome};
+
+    #[test]
+    fn occupation_error_detection_matches_global_hotkey_messages() {
+        assert!(is_shortcut_occupation_error(
+            "HotKey already registered: HotKey { mods: Modifiers(0x0), key: KeyA }"
+        ));
+        assert!(is_shortcut_occupation_error(
+            "hotkey already registered by another application"
+        ));
+        assert!(!is_shortcut_occupation_error("Unable to register hotkey: boom"));
+    }
+
+    #[test]
+    fn duplicate_bindings_are_marked_conflict() {
+        let prepared = prepare_shortcut_bindings(
+            "Control+Shift+V",
+            "Control+Shift+V",
+            "Control+Shift+S",
+        )
+        .expect("prepare");
+        assert!(matches!(
+            prepared[0].outcome,
+            PreparedBindingOutcome::Conflict
+        ));
+        assert!(matches!(
+            prepared[1].outcome,
+            PreparedBindingOutcome::Conflict
+        ));
+        assert!(matches!(
+            prepared[2].outcome,
+            PreparedBindingOutcome::Ready(_)
+        ));
+    }
 }

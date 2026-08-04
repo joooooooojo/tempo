@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { HardDrive, Puzzle, SlidersHorizontal } from "lucide-react";
+import { HardDrive, Puzzle, SlidersHorizontal, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { emitThemeChange } from "@/lib/theme";
@@ -10,6 +10,7 @@ import type { Settings } from "@/types";
 import { GeneralSettingsPanel } from "@/builtin-plugins/settings/pages/GeneralSettingsPanel";
 import { PluginsSettingsPanel } from "@/builtin-plugins/settings/pages/PluginsSettingsPanel";
 import { StorageSettingsPanel } from "@/builtin-plugins/settings/pages/StorageSettingsPanel";
+import { CustomOpenSettingsPanel } from "@/builtin-plugins/settings/pages/CustomOpenSettingsPanel";
 import {
   parseSettingsSectionId,
   SETTINGS_SECTIONS,
@@ -21,6 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 const SECTION_ICONS = {
   general: SlidersHorizontal,
   plugins: Puzzle,
+  "custom-open": Sparkles,
   storage: HardDrive,
 } as const;
 
@@ -209,6 +211,7 @@ export function SettingsPage() {
             />
           ) : null}
           {section === "plugins" ? <PluginsSettingsPanel /> : null}
+          {section === "custom-open" ? <CustomOpenSettingsPanel /> : null}
           {section === "storage" ? (
             <StorageSettingsPanel
               settings={settings}

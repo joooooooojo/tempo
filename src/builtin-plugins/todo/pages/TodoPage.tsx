@@ -832,7 +832,7 @@ export function TodoPage() {
             <TodoEmptyState text="加载中..." />
           ) : (
             <TodoCalendarView
-              todos={visibleTodos}
+              todos={todos}
               onOpenDetail={(todo) => openDetail(todo.id)}
             />
           )}

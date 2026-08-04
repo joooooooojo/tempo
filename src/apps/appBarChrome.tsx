@@ -10,8 +10,12 @@ import {
 export type MainPanelAppBarChrome = {
   /** Replaces the default app title next to the back button. */
   leading?: ReactNode;
+  /** When true, leading expands to fill remaining header space. */
+  leadingGrow?: boolean;
   /** Rendered before the app icon on the right. */
   trailing?: ReactNode;
+  /** Hide the decorative app icon on the right of the app bar. */
+  hideIcon?: boolean;
 };
 
 type MainPanelAppBarChromeContextValue = {

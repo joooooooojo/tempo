@@ -8,6 +8,7 @@ import { snippetsApp } from "@/builtin-plugins/snippets";
 import { hostsApp } from "@/builtin-plugins/hosts";
 import { translateApp } from "@/builtin-plugins/translate";
 import { portManagerApp } from "@/builtin-plugins/port-manager";
+import { fileSearchApp } from "@/builtin-plugins/file-search";
 import { pluginDevAssistantApp } from "@/builtin-plugins/plugin-dev-assistant";
 import { settingsApp } from "@/builtin-plugins/settings";
 
@@ -21,6 +22,7 @@ export const BUILTIN_APP_DEFS: TempoApp[] = [
   hostsApp,
   translateApp,
   portManagerApp,
+  fileSearchApp,
   pluginDevAssistantApp,
   settingsApp,
 ];

@@ -204,6 +204,11 @@ html.main-panel-window #root {
   gap: 8px;
 }
 
+.main-panel-app-bar-leading--grow {
+  flex: 1;
+  max-width: none;
+}
+
 .main-panel-app-bar-trailing {
   display: flex;
   flex: none;
@@ -558,7 +563,7 @@ html.main-panel-window #root {
 }
 
 .main-panel-app-host--padded {
-  padding: 16px 20px 20px;
+  padding: 1px 20px;
   box-sizing: border-box;
 }
 

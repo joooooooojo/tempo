@@ -63,17 +63,19 @@ tracing-log = "0.2.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "process", "io-util", "fs"] }
 tokio-util = "0.7"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
 axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.6", features = ["cors"] }
 rmcp = { version = "2.2", features = ["server", "macros", "transport-streamable-http-server", "schemars"] }
 rand = "0.8"
 schemars = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 sha2 = "0.10"
 md-5 = "0.10"
 hmac = "0.12"
 hex = "0.4"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
 resvg = "0.45"
 tiny-skia = "0.11"
 usvg = "0.45"
@@ -106,10 +108,12 @@ window-vibrancy = "0.6"
 notify-rust = { version = "4.18", default-features = false, features = ["preview-macos-un"] }
 
 [target.'cfg(windows)'.dependencies]
+encoding_rs = "0.8"
 raw-window-handle = "0.6"
 window-vibrancy = "0.6"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
