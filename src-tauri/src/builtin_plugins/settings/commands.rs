@@ -85,6 +85,8 @@ pub fn get_shortcut_statuses(
         let conn = state.db.lock();
         load_settings(&conn)
     };
+    // Differential apply: already-held chords stay registered (no release gap for other apps).
+    // Occupied bindings are retried without touching successful ones.
     crate::apply_global_shortcuts(
         &app,
         &settings.shortcut_main_panel,
