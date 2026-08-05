@@ -384,7 +384,6 @@ html.main-panel-window #root {
 }
 
 .main-panel-app-tile-wrap:hover .main-panel-pin-button,
-.main-panel-app-tile-wrap[data-selected] .main-panel-pin-button,
 .main-panel-pin-button:focus-visible {
   opacity: 1;
 }

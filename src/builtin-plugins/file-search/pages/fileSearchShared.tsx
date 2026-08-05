@@ -51,3 +51,39 @@ export function truncateMiddle(path: string, max = 52) {
   const keep = Math.floor((max - 1) / 2);
   return `${path.slice(0, keep)}…${path.slice(-keep)}`;
 }
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Highlight every whitespace-separated search term (case-insensitive). */
+export function HighlightText({ value, query }: { value: string; query: string }) {
+  const terms = Array.from(
+    new Set(
+      query
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((term) => term.toLocaleLowerCase()),
+    ),
+  );
+  if (terms.length === 0 || !value) return <>{value}</>;
+
+  const matcher = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  const parts = value.split(matcher);
+  const termSet = new Set(terms);
+
+  return (
+    <>
+      {parts.map((part, index) =>
+        termSet.has(part.toLocaleLowerCase()) ? (
+          <mark key={`${part}-${index}`} className="file-search-row__mark">
+            {part}
+          </mark>
+        ) : (
+          <span key={`${part}-${index}`}>{part}</span>
+        ),
+      )}
+    </>
+  );
+}

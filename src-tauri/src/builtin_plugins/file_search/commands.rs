@@ -13,6 +13,12 @@ pub struct FileSearchStatus {
     pub engine: Option<String>,
     pub version: Option<String>,
     pub message: Option<String>,
+    /// True while Everything is loading/rebuilding its database (Windows).
+    #[serde(default)]
+    pub indexing: bool,
+    /// Human-readable indexing phase for the progress banner.
+    #[serde(default)]
+    pub indexing_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -600,6 +606,8 @@ fn status_sync(app: &AppHandle) -> Result<FileSearchStatus, String> {
             engine: None,
             version: None,
             message: Some("当前平台暂不支持文件搜索".into()),
+            indexing: false,
+            indexing_message: None,
         })
     }
 }

@@ -37,12 +37,16 @@ pub(crate) fn status(app: &AppHandle) -> Result<FileSearchStatus, String> {
             engine: Some("fd".into()),
             version: Some(fd_version(&fd).unwrap_or_else(|| "installed".into())),
             message: Some("已就绪（fd 实时扫描全盘，无持久索引）".into()),
+            indexing: false,
+            indexing_message: None,
         }),
         None => Ok(FileSearchStatus {
             ready: false,
             engine: Some("fd".into()),
             version: None,
             message: Some("未检测到 fd，可下载最新版以启用全盘搜索".into()),
+            indexing: false,
+            indexing_message: None,
         }),
     }
 }
@@ -55,6 +59,8 @@ pub(crate) fn ensure_engine(app: &AppHandle) -> Result<FileSearchStatus, String>
             engine: Some("fd".into()),
             version: Some(fd_version(&fd).unwrap_or_else(|| "installed".into())),
             message: Some("fd 已就绪（实时扫描）".into()),
+            indexing: false,
+            indexing_message: None,
         });
     }
     install_fd(app)?;
@@ -65,6 +71,8 @@ pub(crate) fn ensure_engine(app: &AppHandle) -> Result<FileSearchStatus, String>
         engine: Some("fd".into()),
         version: Some(fd_version(&fd).unwrap_or_else(|| "installed".into())),
         message: Some("fd 已下载并就绪（实时扫描全盘）".into()),
+        indexing: false,
+        indexing_message: None,
     })
 }
 

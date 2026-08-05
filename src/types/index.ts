@@ -294,6 +294,9 @@ export interface FileSearchStatus {
   engine?: string | null;
   version?: string | null;
   message?: string | null;
+  /** Everything is loading or syncing its database (Windows). */
+  indexing?: boolean;
+  indexingMessage?: string | null;
 }
 
 export interface FileSearchEngineProgress {

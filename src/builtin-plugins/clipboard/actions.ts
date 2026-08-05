@@ -11,14 +11,11 @@ import {
 import { api } from "@/lib/api";
 import { extractClipboardUrl } from "@/lib/clipboardUrl";
 
-const BROWSER_ACTION_IDS = [
-  "open-link-chrome",
-  "open-link-edge",
-  "open-link-firefox",
-] as const;
+/** Dynamic `open-link-*` action ids registered for currently installed browsers. */
+const registeredBrowserActionIds = new Set<string>();
 
 function browserAction(
-  id: (typeof BROWSER_ACTION_IDS)[number],
+  id: string,
   browserId: string,
   actionName: string,
   browserName: string,
@@ -50,14 +47,15 @@ function browserAction(
 }
 
 /**
- * Register Chrome / Edge / Firefox open-link actions when those browsers exist,
+ * Register “open with …” actions for every installed http browser discovered by the OS,
  * and refresh the default-browser icon for「打开链接」.
  * Safe to call repeatedly (e.g. on main panel open).
  */
 export async function syncClipboardUrlBrowserActions(): Promise<void> {
-  for (const id of BROWSER_ACTION_IDS) {
+  for (const id of registeredBrowserActionIds) {
     unregisterQuickAction(id, BUILTIN_OWNER);
   }
+  registeredBrowserActionIds.clear();
 
   let browsers: Array<{
     id: string;
@@ -72,11 +70,12 @@ export async function syncClipboardUrlBrowserActions(): Promise<void> {
   }
 
   for (const browser of browsers) {
-    const actionId = `open-link-${browser.id}` as (typeof BROWSER_ACTION_IDS)[number];
-    if (!BROWSER_ACTION_IDS.includes(actionId)) continue;
+    const actionId = `open-link-${browser.id}`;
+    registeredBrowserActionIds.add(actionId);
     registerQuickAction(
       browserAction(actionId, browser.id, browser.actionName, browser.name, browser.iconDataUrl, [
         browser.id,
+        browser.name,
         browser.actionName,
       ]),
       BUILTIN_OWNER,

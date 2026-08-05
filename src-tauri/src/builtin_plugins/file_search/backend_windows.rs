@@ -14,68 +14,91 @@ const EVERYTHING_VERSION: &str = "1.4.1.1032";
 const QUERY_TIMEOUT_SECS: u64 = 12;
 
 pub(crate) fn status(app: &AppHandle) -> Result<FileSearchStatus, String> {
-    match resolve_runtime(app, true)? {
-        Some(runtime) => Ok(FileSearchStatus {
-            ready: true,
-            engine: Some("everything".into()),
-            version: Some(runtime.version),
-            message: Some(if runtime.portable {
-                "已就绪（便携 Everything）".into()
-            } else {
-                "已就绪（系统 Everything）".into()
-            }),
-        }),
-        None => {
-            let has_everything = resolve_runtime(app, false)?.is_some();
+    // IPC queries do not need ES.exe — only Everything itself.
+    match resolve_runtime(app, false)? {
+        Some(runtime) => {
+            let index = everything_index_state();
+            let indexing = index.indexing();
             Ok(FileSearchStatus {
-                ready: false,
+                ready: true,
                 engine: Some("everything".into()),
-                version: None,
-                message: Some(if has_everything {
-                    "已检测到 Everything，但仍需 ES 命令行；点击启用将自动下载".into()
+                version: Some(runtime.version),
+                message: Some(if indexing {
+                    index
+                        .message()
+                        .unwrap_or_else(|| "正在建立索引…".into())
+                } else if runtime.portable {
+                    "已就绪（便携 Everything）".into()
                 } else {
-                    "未检测到 Everything，可下载便携版以启用全盘搜索".into()
+                    "已就绪（系统 Everything）".into()
                 }),
+                indexing,
+                indexing_message: index.message(),
             })
         }
+        None => Ok(FileSearchStatus {
+            ready: false,
+            engine: Some("everything".into()),
+            version: None,
+            message: Some("未检测到 Everything，可下载便携版以启用全盘搜索".into()),
+            indexing: false,
+            indexing_message: None,
+        }),
     }
 }
 
 pub(crate) fn ensure_engine(app: &AppHandle) -> Result<FileSearchStatus, String> {
-    if let Some(mut runtime) = resolve_runtime(app, false)? {
+    if let Some(runtime) = resolve_runtime(app, false)? {
+        // ES is optional fallback only; IPC is the primary query path.
         if !runtime.es_path.exists() {
-            ensure_es_installed(app)?;
-            runtime = resolve_runtime(app, true)?
-                .ok_or_else(|| "已检测到 Everything，但未能安装 ES.exe".to_string())?;
+            let _ = ensure_es_installed(app);
         }
+        let runtime = resolve_runtime(app, false)?
+            .ok_or_else(|| "已检测到 Everything，但未能定位可执行文件".to_string())?;
         ensure_everything_running(app, &runtime, true)?;
         emit_engine_progress(app, "done", 0, None, Some(100.0), Some("完成"));
-        return Ok(FileSearchStatus {
+        return Ok(with_index_fields(FileSearchStatus {
             ready: true,
             engine: Some("everything".into()),
             version: Some(runtime.version),
             message: Some("Everything 已就绪".into()),
-        });
+            indexing: false,
+            indexing_message: None,
+        }));
     }
     install_portable(app)?;
-    let runtime = resolve_runtime(app, true)?
+    let runtime = resolve_runtime(app, false)?
         .ok_or_else(|| "便携 Everything 安装后仍无法定位可执行文件".to_string())?;
     ensure_everything_running(app, &runtime, true)?;
     // Give IPC a moment after first launch.
     std::thread::sleep(Duration::from_millis(800));
     emit_engine_progress(app, "done", 0, None, Some(100.0), Some("完成"));
-    Ok(FileSearchStatus {
+    Ok(with_index_fields(FileSearchStatus {
         ready: true,
         engine: Some("everything".into()),
         version: Some(runtime.version),
         message: Some("便携 Everything 已下载并启动".into()),
-    })
+        indexing: false,
+        indexing_message: None,
+    }))
 }
 
 pub(crate) fn query(app: &AppHandle, request: FileSearchQuery) -> Result<FileSearchQueryResult, String> {
-    let runtime = resolve_runtime(app, true)?
+    let runtime = resolve_runtime(app, false)?
         .ok_or_else(|| "搜索引擎未就绪，请先下载并启用 Everything".to_string())?;
     ensure_everything_running(app, &runtime, false)?;
+
+    // Official SDK: wait until IsDBLoaded before querying; otherwise results are empty.
+    // Do NOT use IsDBBusy — that flag is true during normal searches (including ours).
+    if everything_index_state().indexing() {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while everything_index_state().indexing() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if everything_index_state().indexing() {
+            return Err("Everything 正在建立文件索引，请稍候再搜".into());
+        }
+    }
 
     let query = request.query.trim();
     let category = request.category.as_str();
@@ -90,73 +113,22 @@ pub(crate) fn query(app: &AppHandle, request: FileSearchQuery) -> Result<FileSea
             has_more: false,
         });
     }
-    let sort_flag = everything_sort_flag(&request.sort);
-    let offset_str = offset.to_string();
-    // Fetch one extra row so has_more is accurate without -get-result-count
-    // (count over mid-string OR wildcards on large indexes is often slower than
-    // the first page and blocked the UI on every keystroke).
-    let fetch_limit = limit.saturating_add(1).min(201);
-    let fetch_limit_str = fetch_limit.to_string();
 
-    let output = run_es(
-        &runtime.es_path,
-        &[
-            "-offset",
-            &offset_str,
-            "-n",
-            &fetch_limit_str,
-            "-size",
-            "-date-modified",
-            "-sort",
-            sort_flag,
-            "-timeout",
-            "8000",
-            &search,
-        ],
-    )?;
-
-    let mut items = parse_es_output(&output);
-    // ES already sorted; still normalize metadata for missing fields.
-    // Do not post-filter with retain: category+keyword already uses `*term*.ext|...`
-    // wildcards, and retain would shrink pages and break offset paging.
-    for item in &mut items {
-        if item.size.is_none() || item.modified_at.is_none() || item.extension.is_none() {
-            if let Some(fresh) = item_from_path(Path::new(&item.path)) {
-                if item.size.is_none() {
-                    item.size = fresh.size;
-                }
-                if item.modified_at.is_none() {
-                    item.modified_at = fresh.modified_at;
-                }
-                item.is_dir = fresh.is_dir;
-                if item.extension.is_none() {
-                    item.extension = fresh.extension;
-                }
-            } else if item.extension.is_none() {
-                item.extension = Path::new(&item.path)
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .map(|value| value.to_ascii_lowercase());
+    // Primary path: in-process WM IPC (same class of latency as Everything's own UI).
+    // ES.exe spawn + CSV temp file was ~0.5–1s+ per keystroke.
+    match query_via_ipc(&request.sort, &search, limit, offset) {
+        Ok(result) => return Ok(result),
+        Err(ipc_error) => {
+            if !runtime.es_path.exists() {
+                return Err(format!(
+                    "无法通过 Everything IPC 搜索（{ipc_error}）。请确认 Everything 正在运行。"
+                ));
             }
+            // Fall through to ES CLI.
         }
     }
 
-    let has_more = items.len() > limit as usize;
-    if has_more {
-        items.truncate(limit as usize);
-    }
-    // Lower-bound total (exact count deferred): enough for the footer until the
-    // last page; matches the macOS fd path.
-    let total = if has_more {
-        offset.saturating_add(items.len() as u32).saturating_add(1)
-    } else {
-        offset.saturating_add(items.len() as u32)
-    };
-    Ok(FileSearchQueryResult {
-        items,
-        total,
-        has_more,
-    })
+    query_via_es(&runtime.es_path, &request.sort, &search, limit, offset)
 }
 
 #[derive(Debug, Clone)]
@@ -258,14 +230,11 @@ fn install_portable(app: &AppHandle) -> Result<(), String> {
     extract_zip(&everything_zip, &dir)?;
     let _ = std::fs::remove_file(&everything_zip);
 
-    ensure_es_installed(app)?;
-
     if find_file_named(&dir, &["Everything.exe"]).is_none() {
         return Err("Everything 压缩包中未找到 Everything.exe（可能被杀软拦截）".into());
     }
-    if find_file_named(&dir, &["ES.exe", "es.exe"]).is_none() && find_system_es().is_none() {
-        return Err("ES 压缩包中未找到 ES.exe".into());
-    }
+    // ES is optional (IPC is primary); keep it when possible for fallback.
+    let _ = ensure_es_installed(app);
     Ok(())
 }
 
@@ -292,7 +261,8 @@ fn ensure_everything_running(
     runtime: &EverythingRuntime,
     report_progress: bool,
 ) -> Result<(), String> {
-    if everything_process_running() {
+    // Prefer FindWindow IPC (microseconds) over `tasklist` (can take 100ms–1s+).
+    if everything_ipc_available() || everything_process_running() {
         return Ok(());
     }
     if report_progress {
@@ -312,10 +282,10 @@ fn ensure_everything_running(
         })?;
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
-        if everything_process_running() {
+        if everything_ipc_available() || everything_process_running() {
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(100));
     }
     Err("Everything 启动超时，请确认未被杀软拦截，或手动打开 Everything 后重试".into())
 }
@@ -334,10 +304,101 @@ fn everything_process_running() -> bool {
     text.contains("everything.exe")
 }
 
+/// Official guidance (voidtools): only `IS_DB_LOADED` means the database is still
+/// starting. `IS_DB_BUSY` is true whenever *any* query is running — including our
+/// own ES searches — so it must not be treated as "indexing".
+#[derive(Debug, Clone, Copy)]
+struct EverythingIndexState {
+    /// `Some(false)` = DB still loading; `Some(true)` = ready; `None` = IPC unavailable.
+    loaded: Option<bool>,
+}
+
+impl EverythingIndexState {
+    fn indexing(self) -> bool {
+        matches!(self.loaded, Some(false))
+    }
+
+    fn message(self) -> Option<String> {
+        self.indexing()
+            .then(|| "正在建立文件索引…".to_string())
+    }
+}
+
+fn with_index_fields(mut status: FileSearchStatus) -> FileSearchStatus {
+    let index = everything_index_state();
+    status.indexing = index.indexing();
+    status.indexing_message = index.message();
+    if status.indexing {
+        if let Some(message) = index.message() {
+            status.message = Some(message);
+        }
+    }
+    status
+}
+
+fn everything_ipc_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+    use windows::core::w;
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+
+    unsafe {
+        FindWindowW(w!("EVERYTHING_TASKBAR_NOTIFICATION"), None)
+            .ok()
+            .filter(|handle| !handle.0.is_null())
+            .or_else(|| {
+                FindWindowW(w!("EVERYTHING_TASKBAR_NOTIFICATION_(1.5a)"), None)
+                    .ok()
+                    .filter(|handle| !handle.0.is_null())
+            })
+    }
+}
+
+fn everything_ipc_available() -> bool {
+    everything_ipc_hwnd().is_some()
+}
+
+/// Query Everything IPC for database load state (Everything 1.4+).
+/// See: https://www.voidtools.com/support/everything/sdk/everything_isdbloaded/
+fn everything_index_state() -> EverythingIndexState {
+    // EVERYTHING_IPC_IS_DB_LOADED = 401
+    const IPC_IS_DB_LOADED: usize = 401;
+
+    let Some(hwnd) = everything_ipc_hwnd() else {
+        return EverythingIndexState { loaded: None };
+    };
+    EverythingIndexState {
+        loaded: unsafe { send_everything_ipc(hwnd, IPC_IS_DB_LOADED) },
+    }
+}
+
+unsafe fn send_everything_ipc(
+    hwnd: windows::Win32::Foundation::HWND,
+    command: usize,
+) -> Option<bool> {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_USER};
+
+    let mut result = windows::Win32::Foundation::LRESULT(0);
+    let status = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_USER,
+            WPARAM(command),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            200,
+            Some(&mut result as *mut _ as *mut usize),
+        )
+    };
+    if status.0 == 0 {
+        return None;
+    }
+    Some(result.0 != 0)
+}
+
 fn build_everything_search(query: &str, category: &str) -> String {
     let query = query.trim();
     if query.is_empty() {
-        // Empty query: browse by category, or `*` for all files (ES matches everything).
+        // Empty query: browse by category, or `*` for all files.
         return match category {
             "all" => "*".to_string(),
             "folder" => "folder:".to_string(),
@@ -350,26 +411,24 @@ fn build_everything_search(query: &str, category: &str) -> String {
     let escaped = escape_everything_literal(query);
     match category {
         "all" => escaped,
-        // `folder:term` (no space) works; `folder: term` / `ext:png term` do not via ES.
+        // `folder:term` (no space) — `folder: term` is treated differently.
         "folder" => format!("folder:{escaped}"),
         other => {
             if let Some(exts) = category_extensions(other) {
-                // Typing an extension name in its category (e.g. 图片 + "svg") should
-                // hit `*.svg` only — mid-string OR across every image ext is expensive.
+                // Typing an extension name in its category (e.g. 图片 + "svg")
+                // should hit that extension only.
                 let query_lower = query.to_ascii_lowercase();
                 if exts
                     .iter()
                     .any(|ext| ext.eq_ignore_ascii_case(query_lower.as_str()))
                 {
-                    return format!("*.{query_lower}");
+                    return format!("ext:{query_lower}");
                 }
-                // `ext:png keyword` returns 0 via ES IPC. Use mid-string wildcards:
-                // `*企业微信*.png|*企业微信*.jpg|...` (prefix-only `term*.png` misses
-                // names like `截图_178245.png`).
-                exts.iter()
-                    .map(|ext| format!("*{escaped}*.{ext}"))
-                    .collect::<Vec<_>>()
-                    .join("|")
+                // Prefer `ext:a;b keyword` (~20ms via WM IPC). Mid-string OR
+                // wildcards like `*kw*.png|*kw*.jpg|...` take ~1s+ and often
+                // time out — that made category search feel broken/slow while
+                // "全部" stayed fast.
+                format!("ext:{} {escaped}", exts.join(";"))
             } else {
                 escaped
             }
@@ -403,6 +462,194 @@ fn everything_sort_flag(sort: &str) -> &'static str {
         "size_desc" => "size-descending",
         _ => "date-modified-descending",
     }
+}
+
+fn everything_ipc_sort(sort: &str) -> everything_ipc::wm::Sort {
+    use everything_ipc::wm::Sort;
+    match sort {
+        "mtime_asc" => Sort::DateModifiedAscending,
+        "name_asc" => Sort::NameAscending,
+        "name_desc" => Sort::NameDescending,
+        "size_asc" => Sort::SizeAscending,
+        "size_desc" => Sort::SizeDescending,
+        _ => Sort::DateModifiedDescending,
+    }
+}
+
+/// Direct Everything WM IPC — no process spawn, no CSV temp file.
+fn query_via_ipc(
+    sort: &str,
+    search: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<FileSearchQueryResult, String> {
+    use everything_ipc::wm::{EverythingClient, RequestFlags};
+    use std::time::Duration;
+
+    let client = EverythingClient::shared().map_err(|error| error.to_string())?;
+    // Fetch one extra row so has_more is accurate without a separate count query.
+    let fetch_limit = limit.saturating_add(1).min(201);
+    let flags = RequestFlags::FullPathAndFileName
+        | RequestFlags::Size
+        | RequestFlags::DateModified
+        | RequestFlags::Attributes;
+
+    let list = client
+        .query_wait(search)
+        .request_flags(flags)
+        .sort(everything_ipc_sort(sort))
+        .offset(offset)
+        .max_results(fetch_limit)
+        .timeout(Duration::from_millis(1500))
+        .call()
+        .map_err(|error| error.to_string())?;
+
+    let mut items = Vec::with_capacity(list.len());
+    for item in list.iter() {
+        let Some(path) = item.get_string(RequestFlags::FullPathAndFileName) else {
+            continue;
+        };
+        let path_buf = PathBuf::from(&path);
+        let name = path_buf
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(path.as_str())
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        // FILE_ATTRIBUTE_DIRECTORY = 0x10 — avoid per-row disk metadata.
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+        let attrs = item.get_u32(RequestFlags::Attributes).unwrap_or(0);
+        let is_dir = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        let size = if is_dir {
+            None
+        } else {
+            item.get_size(RequestFlags::Size)
+        };
+        let modified_at = item.get_time(RequestFlags::DateModified).and_then(|ft| {
+            filetime_parts_to_system_time(ft.dwHighDateTime, ft.dwLowDateTime)
+                .and_then(super::commands::system_time_to_rfc3339)
+        });
+        let extension = if is_dir {
+            None
+        } else {
+            path_buf
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.to_ascii_lowercase())
+        };
+        items.push(FileSearchItem {
+            name,
+            path,
+            is_dir,
+            size,
+            modified_at,
+            extension,
+        });
+    }
+
+    let has_more = items.len() > limit as usize;
+    if has_more {
+        items.truncate(limit as usize);
+    }
+    let total = {
+        let reported = list.total_len() as u32;
+        if reported > 0 {
+            reported
+        } else if has_more {
+            offset.saturating_add(items.len() as u32).saturating_add(1)
+        } else {
+            offset.saturating_add(items.len() as u32)
+        }
+    };
+    Ok(FileSearchQueryResult {
+        items,
+        total,
+        has_more,
+    })
+}
+
+fn filetime_parts_to_system_time(high: u32, low: u32) -> Option<std::time::SystemTime> {
+    use std::time::{Duration, UNIX_EPOCH};
+    let ticks = ((high as u64) << 32) | (low as u64);
+    // FILETIME epochs at 1601-01-01; Unix at 1970-01-01.
+    const EPOCH_DIFF: u64 = 116_444_736_000_000_000;
+    if ticks < EPOCH_DIFF {
+        return None;
+    }
+    let nanos = (ticks - EPOCH_DIFF).checked_mul(100)?;
+    Some(UNIX_EPOCH + Duration::from_nanos(nanos))
+}
+
+fn query_via_es(
+    es_path: &Path,
+    sort: &str,
+    search: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<FileSearchQueryResult, String> {
+    let sort_flag = everything_sort_flag(sort);
+    let offset_str = offset.to_string();
+    let fetch_limit = limit.saturating_add(1).min(201);
+    let fetch_limit_str = fetch_limit.to_string();
+
+    let output = run_es(
+        es_path,
+        &[
+            "-offset",
+            &offset_str,
+            "-n",
+            &fetch_limit_str,
+            "-size",
+            "-date-modified",
+            "-sort",
+            sort_flag,
+            "-timeout",
+            "500",
+            search,
+        ],
+    )?;
+
+    let mut items = parse_es_output(&output);
+    // Only touch disk when CSV omitted size/date/extension — never for the IPC path.
+    for item in &mut items {
+        if item.size.is_some() && item.modified_at.is_some() && item.extension.is_some() {
+            continue;
+        }
+        if let Some(fresh) = item_from_path(Path::new(&item.path)) {
+            if item.size.is_none() {
+                item.size = fresh.size;
+            }
+            if item.modified_at.is_none() {
+                item.modified_at = fresh.modified_at;
+            }
+            item.is_dir = fresh.is_dir;
+            if item.extension.is_none() {
+                item.extension = fresh.extension;
+            }
+        } else if item.extension.is_none() {
+            item.extension = Path::new(&item.path)
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.to_ascii_lowercase());
+        }
+    }
+
+    let has_more = items.len() > limit as usize;
+    if has_more {
+        items.truncate(limit as usize);
+    }
+    let total = if has_more {
+        offset.saturating_add(items.len() as u32).saturating_add(1)
+    } else {
+        offset.saturating_add(items.len() as u32)
+    };
+    Ok(FileSearchQueryResult {
+        items,
+        total,
+        has_more,
+    })
 }
 
 fn run_es(es_path: &Path, args: &[&str]) -> Result<String, String> {
@@ -450,7 +697,10 @@ fn run_es(es_path: &Path, args: &[&str]) -> Result<String, String> {
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = std::fs::remove_file(&export_path);
-                return Err("搜索超时，请缩小关键词或等待 Everything 完成索引".into());
+                if everything_index_state().indexing() {
+                    return Err("Everything 正在建立文件索引，请稍候再搜".into());
+                }
+                return Err("搜索超时，请缩小关键词或稍后再试".into());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(40)),
             Err(error) => {
@@ -601,28 +851,24 @@ fn parse_es_csv_line(line: &str) -> Option<FileSearchItem> {
     }
 
     let path_buf = PathBuf::from(&path);
-    let mut item = item_from_path(&path_buf).unwrap_or(FileSearchItem {
-        name: path_buf
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or(path.as_str())
-            .to_string(),
-        path: path.clone(),
-        is_dir: path_buf.is_dir(),
-        size: None,
-        modified_at: None,
-        extension: path_buf
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| value.to_ascii_lowercase()),
-    });
-    if size.is_some() {
-        item.size = size;
-    }
-    if modified_at.is_some() {
-        item.modified_at = modified_at;
-    }
-    Some(item)
+    let name = path_buf
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(path.as_str())
+        .to_string();
+    // Prefer CSV fields; avoid disk metadata for every row (was a major latency source).
+    let extension = path_buf
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    Some(FileSearchItem {
+        name,
+        path,
+        is_dir: false,
+        size,
+        modified_at,
+        extension,
+    })
 }
 
 fn parse_es_whitespace_line(line: &str) -> Option<FileSearchItem> {

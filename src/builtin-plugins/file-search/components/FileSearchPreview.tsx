@@ -425,7 +425,7 @@ export function FileSearchPreview({
           content,
           truncated,
           message: truncated
-            ? `仅显示前 ${formatFileSize(Math.min(TEXT_MAX_BYTES, bytes.length))}（已截断）`
+            ? `仅显示前 ${formatFileSize(Math.min(TEXT_MAX_BYTES, bytes.length))}`
             : undefined,
         });
       } catch (err) {
@@ -514,7 +514,7 @@ export function FileSearchPreview({
         setOffice({
           state: "ready",
           bytes: buf.byteLength,
-          message: "已加载文件流。幻灯片预览暂不支持，请用系统应用打开。",
+          message: "幻灯片预览暂不支持，请用系统应用打开。",
         });
       } catch (err) {
         if (cancelled) return;

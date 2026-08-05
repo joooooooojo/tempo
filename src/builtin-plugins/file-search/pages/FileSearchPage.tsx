@@ -50,14 +50,14 @@ import { FileSearchPreview, resolvePreviewKind } from "@/builtin-plugins/file-se
 import {
   FILE_SEARCH_CATEGORIES,
   FILE_SEARCH_SORTS,
+  HighlightText,
   truncateMiddle,
   type FileSearchCategoryId,
   type FileSearchSortId,
 } from "@/builtin-plugins/file-search/pages/fileSearchShared";
 import "@/builtin-plugins/file-search/styles/file-search.css";
 
-const DEBOUNCE_MS = 350;
-const PAGE_LIMIT = 100;
+const PAGE_LIMIT = 50;
 const LOAD_MORE_THRESHOLD_PX = 120;
 const ENGINE_PROGRESS_EVENT = "file-search:engine-progress";
 
@@ -151,7 +151,6 @@ export function FileSearchPage() {
   const [ensuring, setEnsuring] = useState(false);
   const [engineProgress, setEngineProgress] = useState<FileSearchEngineProgress | null>(null);
   const [query, setQuery] = useState("");
-  const [draftQuery, setDraftQuery] = useState("");
   const [category, setCategory] = useState<FileSearchCategoryId>("all");
   const [sort, setSort] = useState<FileSearchSortId>("mtime_desc");
   const [previewEnabled, setPreviewEnabled] = useState(true);
@@ -188,9 +187,6 @@ export function FileSearchPage() {
   useEffect(() => {
     searchingRef.current = searching;
   }, [searching]);
-  useEffect(() => {
-    draftQueryRef.current = draftQuery;
-  }, [draftQuery]);
   useEffect(() => {
     queryKeyRef.current = { query, category, sort };
   }, [query, category, sort]);
@@ -288,6 +284,13 @@ export function FileSearchPage() {
       } catch (err) {
         if (current !== requestId.current) return;
         const message = err instanceof Error ? err.message : String(err);
+        // Indexing is shown via the banner; avoid flashing a hard error while polling.
+        if (/索引|indexing/i.test(message)) {
+          setError(null);
+          setSearching(false);
+          void api.fileSearchStatus().then(setStatus).catch(() => {});
+          return;
+        }
         setError(message);
         setItems([]);
         setTotal(0);
@@ -344,15 +347,30 @@ export function FileSearchPage() {
   }, [status?.ready]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setQuery(draftQuery);
-    }, DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [draftQuery]);
+    if (!status?.ready || !status.indexing) return;
+    let cancelled = false;
+    const interval = window.setInterval(() => {
+      void api
+        .fileSearchStatus()
+        .then((next) => {
+          if (!cancelled) setStatus(next);
+        })
+        .catch(() => {});
+    }, 700);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [status?.ready, status?.indexing]);
 
   useEffect(() => {
+    if (status?.indexing) {
+      setSearching(false);
+      setError(null);
+      return;
+    }
     void runSearch(query, category, sort);
-  }, [query, category, sort, runSearch]);
+  }, [query, category, sort, runSearch, status?.indexing]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -461,7 +479,8 @@ export function FileSearchPage() {
   }, [category, query, runSearch, sort]);
 
   const onDraftChange = useCallback((value: string) => {
-    setDraftQuery(value);
+    draftQueryRef.current = value;
+    setQuery(value);
   }, []);
 
   const submitSearchRef = useRef(submitSearch);
@@ -478,9 +497,8 @@ export function FileSearchPage() {
       return;
     }
 
-    // Omit draftQuery from deps: field owns local text so chrome doesn't rebuild
-    // (and re-render the whole main panel) on every keystroke. searching only
-    // updates the button spinner; React keeps the field's local state.
+    // Field owns local text so chrome doesn't rebuild (and re-render the whole
+    // main panel) on every keystroke. searching only updates the button spinner.
     setAppBarChrome({
       leadingGrow: true,
       hideIcon: true,
@@ -618,6 +636,24 @@ export function FileSearchPage() {
         </aside>
 
         <section className="file-search-list" aria-label="搜索结果">
+          {status?.indexing ? (
+            <div className="file-search-index-banner" role="status" aria-live="polite">
+              <div className="file-search-index-banner__copy">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <div>
+                  <p className="file-search-index-banner__title">
+                    {status.indexingMessage ?? "正在建立文件索引…"}
+                  </p>
+                  <p className="file-search-index-banner__hint">
+                    Everything 首次启动时需要加载数据库，完成后即可搜索
+                  </p>
+                </div>
+              </div>
+              <div className="file-search-index-banner__bar" aria-hidden>
+                <span className="file-search-index-banner__bar-fill" />
+              </div>
+            </div>
+          ) : null}
           {error ? (
             <div className="file-search-empty file-search-empty--error">
               <TriangleAlert className="h-4 w-4" />
@@ -625,6 +661,10 @@ export function FileSearchPage() {
               <Button type="button" size="sm" variant="outline" onClick={() => void ensureEngine()}>
                 重试引擎
               </Button>
+            </div>
+          ) : status?.indexing && items.length === 0 ? (
+            <div className="file-search-empty">
+              <p>索引加载完成后自动开始搜索</p>
             </div>
           ) : items.length === 0 && searching ? (
             <div className="file-search-empty">
@@ -664,9 +704,11 @@ export function FileSearchPage() {
                         )}
                       </span>
                       <span className="file-search-row__text">
-                        <span className="file-search-row__name">{item.name}</span>
+                        <span className="file-search-row__name">
+                          <HighlightText value={item.name} query={query} />
+                        </span>
                         <span className="file-search-row__path" title={item.path}>
-                          {truncateMiddle(item.path)}
+                          <HighlightText value={truncateMiddle(item.path)} query={query} />
                         </span>
                       </span>
                     </button>
@@ -773,10 +815,8 @@ export function FileSearchPage() {
         </div>
         <p className="file-search-foot__count">
           {searching && items.length === 0
-            ? "搜索中…"
-            : hasMore && total != null
-              ? `已加载 ${items.length} 项`
-              : `共 ${total ?? items.length} 项`}
+            ? "检索中..."
+            :`共 ${total ?? items.length} 项` }
         </p>
       </footer>
     </div>
