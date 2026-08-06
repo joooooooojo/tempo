@@ -17,8 +17,9 @@ import {
 } from "@/builtin-plugins/settings/pages/shared";
 import type { BuiltinConfigPanelProps } from "@/builtin-plugins/settings/pages/config-types";
 
-export function ClipboardBuiltinConfig({ busy, onBusyChange }: BuiltinConfigPanelProps) {
+export function ClipboardBuiltinConfig(_props: BuiltinConfigPanelProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -36,8 +37,7 @@ export function ClipboardBuiltinConfig({ busy, onBusyChange }: BuiltinConfigPane
     if (!settings) return;
     const previous = settings;
     setSettings({ ...settings, ...patch });
-    // Do not toggle parent busy here — it re-renders the plugin list and used to
-    // remount this dialog (unstable load deps). Keep busy for destructive actions only.
+    // Keep mutations local — do not toggle parent busy (that dimmed every plugin Switch).
     try {
       await api.updateSettings(patch);
     } catch (error) {
@@ -112,7 +112,6 @@ export function ClipboardBuiltinConfig({ busy, onBusyChange }: BuiltinConfigPane
                   min={0}
                   max={4}
                   step={1}
-                  disabled={busy}
                   value={[clipboardRetentionIndex(settings.clipboard_history_retention)]}
                   onValueChange={([value]) =>
                     void update({
@@ -131,17 +130,17 @@ export function ClipboardBuiltinConfig({ busy, onBusyChange }: BuiltinConfigPane
               <Button
                 variant="outline"
                 size="sm"
-                disabled={busy}
+                disabled={clearing}
                 onClick={async () => {
                   if (!confirm("确定清空全部未固定的剪贴板历史？")) return;
-                  onBusyChange(true);
+                  setClearing(true);
                   try {
                     const count = await api.clearClipboardHistory();
                     toast.success(count > 0 ? `已清空 ${count} 条记录` : "没有可清空的记录");
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : String(error));
                   } finally {
-                    onBusyChange(false);
+                    setClearing(false);
                   }
                 }}
               >

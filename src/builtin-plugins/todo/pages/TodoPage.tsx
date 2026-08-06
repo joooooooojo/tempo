@@ -479,8 +479,15 @@ export function TodoPage() {
   };
 
   const toggleTodo = async (todo: TodoItem) => {
+    const nextCompleted = !todo.completed;
+    // Optimistic: update this row immediately so the list doesn't wait on the round-trip.
+    applyTodoUpdate({
+      ...todo,
+      completed: nextCompleted,
+      completed_at: nextCompleted ? new Date().toISOString() : null,
+    });
     try {
-      const updated = await api.setTodoCompleted(todo.id, !todo.completed);
+      const updated = await api.setTodoCompleted(todo.id, nextCompleted);
       applyTodoUpdate(updated);
       toast.success(
         updated.completed
@@ -502,12 +509,17 @@ export function TodoPage() {
         },
       });
     } catch (error) {
+      applyTodoUpdate(todo);
       toast.error(errorMessage(error));
     }
   };
 
   const toggleTodoPinned = async (todo: TodoItem) => {
     const nextPinned = !todo.pinned_at;
+    applyTodoUpdate({
+      ...todo,
+      pinned_at: nextPinned ? new Date().toISOString() : null,
+    });
 
     try {
       const updated = await api.setTodoPinned(todo.id, nextPinned);
@@ -527,6 +539,7 @@ export function TodoPage() {
         },
       });
     } catch (error) {
+      applyTodoUpdate(todo);
       toast.error(errorMessage(error));
     }
   };

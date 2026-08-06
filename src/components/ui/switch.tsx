@@ -25,7 +25,9 @@ function Switch({
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
         className={cn(
-          "pointer-events-none block rounded-md bg-white shadow-md transition-transform duration-200 ease-out will-change-transform data-unchecked:translate-x-[2px]",
+          // Tailwind v4 `translate-x-*` sets CSS `translate`, not `transform` —
+          // `transition-transform` alone won't animate the thumb.
+          "pointer-events-none block rounded-md bg-white shadow-md transition-[transform,translate] duration-200 ease-out will-change-transform data-unchecked:translate-x-[2px]",
           isSm
             ? "h-[18px] w-[18px] data-checked:translate-x-[18px]"
             : "h-[22px] w-[22px] data-checked:translate-x-[22px]"

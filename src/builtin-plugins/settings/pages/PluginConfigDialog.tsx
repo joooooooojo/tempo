@@ -146,10 +146,8 @@ export function PluginConfigDialog({
     try {
       if (target.source === "plugin") {
         await api.setPluginMcpToolEnabled(target.id, toolName, enabled);
-        setMcpTools(await api.listPluginMcpTools(target.id));
       } else {
         await api.setBuiltinMcpToolEnabled(target.id, toolName, enabled);
-        setMcpTools(await api.listBuiltinMcpTools(target.id));
       }
       onPluginMcpChanged?.();
     } catch (error) {
@@ -168,11 +166,17 @@ export function PluginConfigDialog({
 
   return (
     <Dialog open={target != null} onOpenChange={onOpenChange}>
-      <DialogPanel className="plugin-config-dialog flex h-[90vh] max-h-[90vh] w-[90vw] max-w-[90vw] flex-col overflow-hidden sm:max-w-[90vw]">
+      <DialogPanel
+        height="90vh"
+        className="plugin-config-dialog flex w-[90vw] max-w-[90vw] flex-col overflow-hidden sm:max-w-[90vw]"
+      >
         <DialogHeader>
           <DialogTitle>插件配置{titleName ? ` · ${titleName}` : ""}</DialogTitle>
         </DialogHeader>
-        <DialogContent className="plugin-config-dialog__body space-y-6 !px-5 !py-4">
+        <DialogContent
+          className="plugin-config-dialog__body space-y-6 !px-5 !py-4"
+          scrollAreaLabel="插件配置"
+        >
           {loading ? (
             <p className="py-10 text-center text-[13px] text-muted-foreground">加载中…</p>
           ) : (

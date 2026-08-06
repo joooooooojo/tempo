@@ -3,7 +3,7 @@ mod preview_protocol;
 mod tools;
 
 #[cfg(target_os = "windows")]
-mod backend_windows;
+pub(crate) mod backend_windows;
 
 #[cfg(target_os = "macos")]
 mod backend_macos;

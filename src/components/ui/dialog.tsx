@@ -6,6 +6,13 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { X } from "lucide-react"
 
+const DEFAULT_DIALOG_MAX_HEIGHT = "min(760px, calc(100vh - 2rem))"
+
+function toCssSize(value: number | string | undefined): string | undefined {
+  if (value == null) return undefined
+  return typeof value === "number" ? `${value}px` : value
+}
+
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
@@ -54,27 +61,42 @@ function DialogOverlay({
   )
 }
 
-/** Outer popup shell. Compose with DialogHeader / DialogContent / DialogFooter. */
+type DialogPanelProps = DialogPrimitive.Popup.Props & {
+  showOverlay?: boolean
+  onOpenAutoFocus?: (event: { preventDefault: () => void }) => void
+  height?: number | string
+  maxHeight?: number | string
+}
+
 function DialogPanel({
   className,
   children,
   showOverlay = true,
   onOpenAutoFocus: _onOpenAutoFocus,
+  height,
+  maxHeight,
+  style,
   ...props
-}: DialogPrimitive.Popup.Props & {
-  /** First-layer dialogs keep the dimmed mask; nested layers usually omit it. */
-  showOverlay?: boolean
-  onOpenAutoFocus?: (event: { preventDefault: () => void }) => void
-}) {
+}: DialogPanelProps) {
+  const cssHeight = toCssSize(height)
+  const cssMaxHeight =
+    height != null
+      ? cssHeight
+      : (toCssSize(maxHeight) ?? DEFAULT_DIALOG_MAX_HEIGHT)
+
   return (
     <DialogPortal>
       {showOverlay ? <DialogOverlay /> : null}
       <DialogPrimitive.Popup
         data-slot="dialog-panel"
         data-nested={showOverlay ? undefined : "true"}
+        style={{
+          ...style,
+          ...(cssHeight ? { height: cssHeight } : null),
+          ...(cssMaxHeight ? { maxHeight: cssMaxHeight } : null),
+        }}
         className={cn(
-          // max-h gives DialogContent's ScrollArea a definite flex budget to scroll against.
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[min(760px,calc(100vh-2rem))] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 overflow-hidden rounded-xl bg-popover p-0 text-sm text-popover-foreground ring-1 ring-foreground/10 animation-duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 overflow-hidden rounded-xl bg-popover p-0 text-sm text-popover-foreground ring-1 ring-foreground/10 animation-duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           !showOverlay && "dialog-nested z-[70]",
           className
         )}
@@ -130,11 +152,6 @@ function DialogHeader({
 }
 
 type DialogContentProps = React.ComponentProps<"div"> & {
-  /**
-   * Wrap body in ScrollArea (no native scrollbar). Needs a bounded panel height
-   * (DialogPanel default max-h) so the area can scroll. Set false when the body
-   * manages its own layout/scroll (e.g. image preview, nested editors).
-   */
   scrollable?: boolean
   scrollAreaLabel?: string
 }
@@ -189,7 +206,7 @@ function DialogContent({
       {...props}
     >
       <ScrollArea
-        className="w-full"
+        className="h-full w-full"
         style={
           scrollHeight && scrollHeight > 0
             ? { height: scrollHeight }

@@ -3,21 +3,33 @@ use super::commands::{
     FileSearchQueryResult, FileSearchStatus,
 };
 use super::tools::{download_file, emit_engine_progress, extract_zip, find_file_named};
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
+use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 const EVERYTHING_ZIP_URL: &str = "https://www.voidtools.com/Everything-1.4.1.1032.x64.zip";
 const ES_ZIP_URL: &str = "https://www.voidtools.com/ES-1.1.0.30.x64.zip";
 const EVERYTHING_VERSION: &str = "1.4.1.1032";
 const QUERY_TIMEOUT_SECS: u64 = 12;
+/// How often to flush the in-memory index to Everything.db while portable mode runs.
+const PORTABLE_DB_PERSIST_INTERVAL: Duration = Duration::from_secs(30 * 60);
+
+static PORTABLE_DB_PERSISTED: AtomicBool = AtomicBool::new(false);
+static PORTABLE_DB_LAST_PERSIST: Mutex<Option<Instant>> = Mutex::new(None);
 
 pub(crate) fn status(app: &AppHandle) -> Result<FileSearchStatus, String> {
     // IPC queries do not need ES.exe — only Everything itself.
     match resolve_runtime(app, false)? {
         Some(runtime) => {
-            let index = everything_index_state();
+            if runtime.portable {
+                maybe_persist_portable_db(&runtime);
+            }
+            let index = everything_index_state_for(&runtime);
             let indexing = index.indexing();
             Ok(FileSearchStatus {
                 ready: true,
@@ -55,37 +67,68 @@ pub(crate) fn ensure_engine(app: &AppHandle) -> Result<FileSearchStatus, String>
         }
         let runtime = resolve_runtime(app, false)?
             .ok_or_else(|| "已检测到 Everything，但未能定位可执行文件".to_string())?;
+        if runtime.portable {
+            ensure_portable_config(&runtime)?;
+            remove_portable_autostart();
+        }
         ensure_everything_running(app, &runtime, true)?;
+        schedule_persist_when_ready(runtime.clone());
         emit_engine_progress(app, "done", 0, None, Some(100.0), Some("完成"));
-        return Ok(with_index_fields(FileSearchStatus {
-            ready: true,
-            engine: Some("everything".into()),
-            version: Some(runtime.version),
-            message: Some("Everything 已就绪".into()),
-            indexing: false,
-            indexing_message: None,
-        }));
+        return Ok(with_index_fields_for(
+            Some(&runtime),
+            FileSearchStatus {
+                ready: true,
+                engine: Some("everything".into()),
+                version: Some(runtime.version.clone()),
+                message: Some("Everything 已就绪".into()),
+                indexing: false,
+                indexing_message: None,
+            },
+        ));
     }
     install_portable(app)?;
     let runtime = resolve_runtime(app, false)?
         .ok_or_else(|| "便携 Everything 安装后仍无法定位可执行文件".to_string())?;
+    ensure_portable_config(&runtime)?;
+    remove_portable_autostart();
     ensure_everything_running(app, &runtime, true)?;
     // Give IPC a moment after first launch.
     std::thread::sleep(Duration::from_millis(800));
+    schedule_persist_when_ready(runtime.clone());
     emit_engine_progress(app, "done", 0, None, Some(100.0), Some("完成"));
-    Ok(with_index_fields(FileSearchStatus {
-        ready: true,
-        engine: Some("everything".into()),
-        version: Some(runtime.version),
-        message: Some("便携 Everything 已下载并启动".into()),
-        indexing: false,
-        indexing_message: None,
-    }))
+    Ok(with_index_fields_for(
+        Some(&runtime),
+        FileSearchStatus {
+            ready: true,
+            engine: Some("everything".into()),
+            version: Some(runtime.version.clone()),
+            message: Some("便携 Everything 已下载并启动".into()),
+            indexing: false,
+            indexing_message: None,
+        },
+    ))
+}
+
+/// Flush + quit portable Everything when Tempo exits.
+/// System-installed Everything is left running.
+pub(crate) fn persist_on_app_exit(app: &AppHandle) {
+    let Ok(Some(runtime)) = resolve_runtime(app, false) else {
+        return;
+    };
+    if !runtime.portable {
+        return;
+    }
+    // Do NOT spawn `Everything.exe -exit` / `-update` — that flashes the search UI.
+    // Prefer IPC EXIT (saves .db); tray WM_COMMAND is a fallback.
+    exit_everything_silently();
 }
 
 pub(crate) fn query(app: &AppHandle, request: FileSearchQuery) -> Result<FileSearchQueryResult, String> {
     let runtime = resolve_runtime(app, false)?
         .ok_or_else(|| "搜索引擎未就绪，请先下载并启用 Everything".to_string())?;
+    if runtime.portable {
+        ensure_portable_config(&runtime)?;
+    }
     ensure_everything_running(app, &runtime, false)?;
 
     // Official SDK: wait until IsDBLoaded before querying; otherwise results are empty.
@@ -116,19 +159,22 @@ pub(crate) fn query(app: &AppHandle, request: FileSearchQuery) -> Result<FileSea
 
     // Primary path: in-process WM IPC (same class of latency as Everything's own UI).
     // ES.exe spawn + CSV temp file was ~0.5–1s+ per keystroke.
-    match query_via_ipc(&request.sort, &search, limit, offset) {
-        Ok(result) => return Ok(result),
+    let result = match query_via_ipc(&request.sort, &search, limit, offset) {
+        Ok(result) => Ok(result),
         Err(ipc_error) => {
             if !runtime.es_path.exists() {
-                return Err(format!(
+                Err(format!(
                     "无法通过 Everything IPC 搜索（{ipc_error}）。请确认 Everything 正在运行。"
-                ));
+                ))
+            } else {
+                query_via_es(&runtime.es_path, &request.sort, &search, limit, offset)
             }
-            // Fall through to ES CLI.
         }
+    };
+    if result.is_ok() {
+        maybe_persist_portable_db(&runtime);
     }
-
-    query_via_es(&runtime.es_path, &request.sort, &search, limit, offset)
+    result
 }
 
 #[derive(Debug, Clone)]
@@ -235,6 +281,17 @@ fn install_portable(app: &AppHandle) -> Result<(), String> {
     }
     // ES is optional (IPC is primary); keep it when possible for fallback.
     let _ = ensure_es_installed(app);
+    // Seed portable ini before first launch so the db stays next to the exe.
+    if let Some(exe) = find_file_named(&dir, &["Everything.exe"]) {
+        let runtime = EverythingRuntime {
+            everything_exe: exe,
+            es_path: PathBuf::new(),
+            version: EVERYTHING_VERSION.to_string(),
+            portable: true,
+        };
+        ensure_portable_config(&runtime)?;
+        remove_portable_autostart();
+    }
     Ok(())
 }
 
@@ -261,14 +318,23 @@ fn ensure_everything_running(
     runtime: &EverythingRuntime,
     report_progress: bool,
 ) -> Result<(), String> {
-    // Prefer FindWindow IPC (microseconds) over `tasklist` (can take 100ms–1s+).
-    if everything_ipc_available() || everything_process_running() {
+    // FindWindow IPC only — never `tasklist` (console subsystem flashes a window).
+    if everything_ipc_available() {
+        // Another launch path may have left the search UI visible; keep it hidden.
+        if runtime.portable {
+            hide_everything_search_windows();
+            schedule_persist_when_ready(runtime.clone());
+        }
         return Ok(());
+    }
+    if runtime.portable {
+        ensure_portable_config(runtime)?;
+        remove_portable_autostart();
     }
     if report_progress {
         emit_engine_progress(app, "start", 0, None, None, Some("正在启动 Everything…"));
     }
-    Command::new(&runtime.everything_exe)
+    silent_command(&runtime.everything_exe)
         .arg("-startup")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -282,7 +348,11 @@ fn ensure_everything_running(
         })?;
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
-        if everything_ipc_available() || everything_process_running() {
+        if everything_ipc_available() {
+            if runtime.portable {
+                hide_everything_search_windows();
+                schedule_persist_when_ready(runtime.clone());
+            }
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -290,18 +360,260 @@ fn ensure_everything_running(
     Err("Everything 启动超时，请确认未被杀软拦截，或手动打开 Everything 后重试".into())
 }
 
-fn everything_process_running() -> bool {
-    let Ok(output) = Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq Everything.exe", "/NH"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-    else {
+/// Keep settings + Everything.db next to the portable exe (not %APPDATA%).
+fn ensure_portable_config(runtime: &EverythingRuntime) -> Result<(), String> {
+    if !runtime.portable {
+        return Ok(());
+    }
+    let Some(dir) = runtime.everything_exe.parent() else {
+        return Ok(());
+    };
+    let ini_path = dir.join("Everything.ini");
+    let existing = std::fs::read_to_string(&ini_path).unwrap_or_default();
+    let mut next = existing.clone();
+
+    // Force portable storage even if a previous run flipped it on.
+    if next.lines().any(|line| line.trim() == "app_data=1") {
+        next = next
+            .lines()
+            .map(|line| {
+                if line.trim().starts_with("app_data=") {
+                    "app_data=0"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    if !next.contains("app_data=") {
+        next = if next.trim().is_empty() {
+            String::from(
+                "; Managed by Tempo — keep database next to Everything.exe\r\n\
+                 [Everything]\r\n\
+                 app_data=0\r\n\
+                 run_as_admin=0\r\n\
+                 run_in_background=1\r\n\
+                 show_tray_icon=0\r\n\
+                 allow_multiple_windows=0\r\n\
+                 minimized=1\r\n\
+                 auto_include_fixed_volumes=1\r\n\
+                 auto_include_removable_volumes=0\r\n",
+            )
+        } else if next.contains("[Everything]") {
+            next.replacen("[Everything]", "[Everything]\r\napp_data=0", 1)
+        } else {
+            format!("[Everything]\r\napp_data=0\r\n{next}")
+        };
+    }
+
+    // Prefer background-only: new windows start minimized (Everything doesn't
+    // persist this itself; we re-assert it for Tempo's portable instance).
+    next = upsert_ini_key(&next, "minimized", "1");
+    next = upsert_ini_key(&next, "run_in_background", "1");
+
+    if next != existing {
+        if !next.ends_with('\n') {
+            next.push('\n');
+        }
+        std::fs::write(&ini_path, next)
+            .map_err(|error| format!("写入 Everything.ini 失败: {error}"))?;
+    }
+    Ok(())
+}
+
+fn upsert_ini_key(contents: &str, key: &str, value: &str) -> String {
+    let prefix = format!("{key}=");
+    let replacement = format!("{key}={value}");
+    let mut found = false;
+    let mut lines = contents
+        .lines()
+        .map(|line| {
+            if line.trim().starts_with(&prefix) {
+                found = true;
+                replacement.as_str()
+            } else {
+                line
+            }
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if !found {
+        if let Some(idx) = lines.iter().position(|line| line.trim() == "[Everything]") {
+            lines.insert(idx + 1, replacement);
+        } else {
+            lines.insert(0, "[Everything]".into());
+            lines.insert(1, replacement);
+        }
+    }
+    let mut out = lines.join("\n");
+    if contents.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Remove any leftover Startup entry from an earlier attempt; file search is a
+/// Tempo feature and must not launch Everything at Windows logon on its own.
+fn remove_portable_autostart() {
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return;
+    };
+    let script = PathBuf::from(appdata)
+        .join("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs")
+        .join("Startup")
+        .join("TempoEverything.cmd");
+    let _ = std::fs::remove_file(script);
+}
+
+fn persist_everything_db(_runtime: &EverythingRuntime) -> bool {
+    // EVERYTHING_IPC_SAVE_DB = 407 — flush in-process.
+    // Never spawn `Everything.exe -update`: a secondary process shows the search UI
+    // even when only asking the running instance to save.
+    const IPC_SAVE_DB: usize = 407;
+    let Some(hwnd) = everything_ipc_hwnd() else {
         return false;
     };
-    let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-    text.contains("everything.exe")
+    hide_everything_search_windows();
+    unsafe { send_everything_ipc_command(hwnd, IPC_SAVE_DB) }
+}
+
+/// File → Exit via IPC / tray notification window (no secondary process, no UI flash).
+fn exit_everything_silently() {
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, WM_COMMAND, SMTO_ABORTIFHUNG,
+    };
+
+    // EVERYTHING_IPC_EXIT = 4 — orderly shutdown; saves database.
+    const IPC_EXIT: usize = 4;
+    // voidtools: WM_COMMAND + UI_ID_TRAY_EXIT (40006)
+    const UI_ID_TRAY_EXIT: usize = 40006;
+
+    hide_everything_search_windows();
+    let Some(hwnd) = everything_ipc_hwnd() else {
+        return;
+    };
+    // Prefer official IPC exit (works even when tray icon is hidden).
+    if unsafe { send_everything_ipc_command(hwnd, IPC_EXIT) } {
+        return;
+    }
+    let mut result = LRESULT(0);
+    unsafe {
+        let _ = SendMessageTimeoutW(
+            hwnd,
+            WM_COMMAND,
+            WPARAM(UI_ID_TRAY_EXIT),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            2000,
+            Some(&mut result as *mut _ as *mut usize),
+        );
+    }
+}
+
+fn hide_everything_search_windows() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, IsWindowVisible, ShowWindow, SW_HIDE,
+    };
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+
+    unsafe extern "system" fn enum_hide(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+        let mut class = [0u16; 64];
+        let len = unsafe { GetClassNameW(hwnd, &mut class) } as usize;
+        if len == 0 {
+            return BOOL(1);
+        }
+        let class_name = String::from_utf16_lossy(&class[..len]);
+        // Everything 1.4: "EVERYTHING"; 1.5 alpha: "EVERYTHING_(1.5a)"
+        if class_name.eq_ignore_ascii_case("EVERYTHING")
+            || class_name.eq_ignore_ascii_case("EVERYTHING_(1.5a)")
+        {
+            if unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
+            }
+        }
+        BOOL(1)
+    }
+
+    unsafe {
+        let _ = EnumWindows(Some(enum_hide), LPARAM(0));
+    }
+}
+
+fn maybe_persist_portable_db(runtime: &EverythingRuntime) {
+    if !runtime.portable {
+        return;
+    }
+    if everything_index_state().indexing() {
+        return;
+    }
+    if !matches!(everything_index_state().loaded, Some(true)) {
+        return;
+    }
+
+    let now = Instant::now();
+    {
+        let last = PORTABLE_DB_LAST_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
+        if PORTABLE_DB_PERSISTED.load(Ordering::Relaxed) {
+            if let Some(prev) = *last {
+                if now.duration_since(prev) < PORTABLE_DB_PERSIST_INTERVAL {
+                    return;
+                }
+            }
+        }
+    }
+
+    if !persist_everything_db(runtime) {
+        return;
+    }
+    PORTABLE_DB_PERSISTED.store(true, Ordering::Relaxed);
+    if let Ok(mut last) = PORTABLE_DB_LAST_PERSIST.lock() {
+        *last = Some(now);
+    }
+}
+
+fn schedule_persist_when_ready(runtime: EverythingRuntime) {
+    if !runtime.portable {
+        return;
+    }
+    static SCHEDULED: AtomicBool = AtomicBool::new(false);
+    if SCHEDULED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("tempo-everything-persist".into())
+        .spawn(move || {
+            // First index can take a long time; keep waiting and flush once ready,
+            // then again periodically so reboot mid-session still has a recent db.
+            loop {
+                if matches!(everything_index_state().loaded, Some(true))
+                    && !everything_index_state().indexing()
+                {
+                    maybe_persist_portable_db(&runtime);
+                }
+                std::thread::sleep(Duration::from_secs(15));
+            }
+        })
+        .ok();
+}
+
+fn portable_db_path(runtime: &EverythingRuntime) -> Option<PathBuf> {
+    runtime
+        .everything_exe
+        .parent()
+        .map(|dir| dir.join("Everything.db"))
+}
+
+/// GUI host spawning console tools (tasklist / ES) without this flag flashes a console.
+fn silent_command(program: impl AsRef<Path>) -> Command {
+    let mut command = Command::new(program.as_ref());
+    command.creation_flags(CREATE_NO_WINDOW.0);
+    command
 }
 
 /// Official guidance (voidtools): only `IS_DB_LOADED` means the database is still
@@ -311,6 +623,8 @@ fn everything_process_running() -> bool {
 struct EverythingIndexState {
     /// `Some(false)` = DB still loading; `Some(true)` = ready; `None` = IPC unavailable.
     loaded: Option<bool>,
+    /// True when a persisted Everything.db already exists (load vs first build).
+    has_saved_db: bool,
 }
 
 impl EverythingIndexState {
@@ -319,13 +633,25 @@ impl EverythingIndexState {
     }
 
     fn message(self) -> Option<String> {
-        self.indexing()
-            .then(|| "正在建立文件索引…".to_string())
+        if !self.indexing() {
+            return None;
+        }
+        Some(if self.has_saved_db {
+            "正在加载文件索引…".to_string()
+        } else {
+            "正在建立文件索引…".to_string()
+        })
     }
 }
 
-fn with_index_fields(mut status: FileSearchStatus) -> FileSearchStatus {
-    let index = everything_index_state();
+fn with_index_fields_for(
+    runtime: Option<&EverythingRuntime>,
+    mut status: FileSearchStatus,
+) -> FileSearchStatus {
+    let index = match runtime {
+        Some(runtime) => everything_index_state_for(runtime),
+        None => everything_index_state(),
+    };
     status.indexing = index.indexing();
     status.indexing_message = index.message();
     if status.indexing {
@@ -359,14 +685,33 @@ fn everything_ipc_available() -> bool {
 /// Query Everything IPC for database load state (Everything 1.4+).
 /// See: https://www.voidtools.com/support/everything/sdk/everything_isdbloaded/
 fn everything_index_state() -> EverythingIndexState {
+    everything_index_state_for_db(None)
+}
+
+fn everything_index_state_for(runtime: &EverythingRuntime) -> EverythingIndexState {
+    everything_index_state_for_db(portable_db_path(runtime))
+}
+
+fn everything_index_state_for_db(db_path: Option<PathBuf>) -> EverythingIndexState {
     // EVERYTHING_IPC_IS_DB_LOADED = 401
     const IPC_IS_DB_LOADED: usize = 401;
 
+    let has_saved_db = db_path.as_ref().is_some_and(|path| path.is_file())
+        || std::env::var("LOCALAPPDATA")
+            .ok()
+            .map(PathBuf::from)
+            .map(|base| base.join("Everything").join("Everything.db").is_file())
+            .unwrap_or(false);
+
     let Some(hwnd) = everything_ipc_hwnd() else {
-        return EverythingIndexState { loaded: None };
+        return EverythingIndexState {
+            loaded: None,
+            has_saved_db,
+        };
     };
     EverythingIndexState {
         loaded: unsafe { send_everything_ipc(hwnd, IPC_IS_DB_LOADED) },
+        has_saved_db,
     }
 }
 
@@ -393,6 +738,29 @@ unsafe fn send_everything_ipc(
         return None;
     }
     Some(result.0 != 0)
+}
+
+/// Deliver a WM_USER IPC command; returns whether the message was accepted.
+unsafe fn send_everything_ipc_command(
+    hwnd: windows::Win32::Foundation::HWND,
+    command: usize,
+) -> bool {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_USER};
+
+    let mut result = windows::Win32::Foundation::LRESULT(0);
+    let status = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_USER,
+            WPARAM(command),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            2000,
+            Some(&mut result as *mut _ as *mut usize),
+        )
+    };
+    status.0 != 0
 }
 
 fn build_everything_search(query: &str, category: &str) -> String {
@@ -500,7 +868,8 @@ fn query_via_ipc(
         .sort(everything_ipc_sort(sort))
         .offset(offset)
         .max_results(fetch_limit)
-        .timeout(Duration::from_millis(1500))
+        // Paginated / large-sort queries can exceed 1.5s; don't abort mid-scroll.
+        .timeout(Duration::from_millis(8000))
         .call()
         .map_err(|error| error.to_string())?;
 
@@ -549,19 +918,26 @@ fn query_via_ipc(
         });
     }
 
-    let has_more = items.len() > limit as usize;
-    if has_more {
+    let fetched = items.len();
+    let has_more_by_page = fetched > limit as usize;
+    if has_more_by_page {
         items.truncate(limit as usize);
     }
-    let total = {
-        let reported = list.total_len() as u32;
-        if reported > 0 {
-            reported
-        } else if has_more {
-            offset.saturating_add(items.len() as u32).saturating_add(1)
-        } else {
-            offset.saturating_add(items.len() as u32)
-        }
+    let reported_total = list.total_len() as u32;
+    let loaded_through = offset.saturating_add(items.len() as u32);
+    // Prefer Everything's total match count — more reliable than the +1 peek when
+    // the engine returns exactly `limit` rows even though more exist.
+    let has_more = if reported_total > 0 {
+        loaded_through < reported_total
+    } else {
+        has_more_by_page
+    };
+    let total = if reported_total > 0 {
+        reported_total
+    } else if has_more {
+        loaded_through.saturating_add(1)
+    } else {
+        loaded_through
     };
     Ok(FileSearchQueryResult {
         items,
@@ -606,7 +982,7 @@ fn query_via_es(
             "-sort",
             sort_flag,
             "-timeout",
-            "500",
+            "8000",
             search,
         ],
     )?;
@@ -680,7 +1056,7 @@ fn run_es(es_path: &Path, args: &[&str]) -> Result<String, String> {
         export_path_arg,
     ]);
 
-    let mut child = Command::new(es_path)
+    let mut child = silent_command(es_path)
         .args(&cmd_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

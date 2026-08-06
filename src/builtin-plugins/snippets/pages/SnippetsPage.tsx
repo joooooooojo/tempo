@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Copy,
@@ -100,6 +100,8 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
   const [newGroupName, setNewGroupName] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [actionMenuId, setActionMenuId] = useState<number | null>(null);
+  /** Skip snippets-update → load while this page is applying its own mutation. */
+  const localMutatingRef = useRef(false);
 
   const groupId = useMemo(() => groupFilterToId(groupFilter), [groupFilter]);
 
@@ -132,7 +134,10 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
   }, [load]);
 
   useEffect(() => {
-    const unlisten = listen("snippets-update", () => void load(false));
+    const unlisten = listen("snippets-update", () => {
+      if (localMutatingRef.current) return;
+      void load(false);
+    });
     return () => {
       void unlisten.then((fn) => fn());
     };
@@ -181,6 +186,7 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
     }
 
     setSaving(true);
+    localMutatingRef.current = true;
     try {
       if (editor.id) {
         await api.updateSnippet(editor.id, title, content, tags, nextGroupId, shortcut, language);
@@ -194,6 +200,7 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
       toast.error(error instanceof Error ? error.message : "保存失败");
     } finally {
       setSaving(false);
+      localMutatingRef.current = false;
     }
   };
 
@@ -209,6 +216,7 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
       return;
     }
     setCreatingGroup(true);
+    localMutatingRef.current = true;
     try {
       await api.createSnippetGroup(name);
       setNewGroupName("");
@@ -218,11 +226,13 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
       toast.error(error instanceof Error ? error.message : "创建分组失败");
     } finally {
       setCreatingGroup(false);
+      localMutatingRef.current = false;
     }
   };
 
   const deleteGroup = async (group: SnippetGroup) => {
     if (!confirm(`删除「${group.name}」分组？分组内短语会保留为未分组。`)) return;
+    localMutatingRef.current = true;
     try {
       await api.deleteSnippetGroup(group.id);
       if (groupFilter === String(group.id)) setGroupFilter("all");
@@ -230,10 +240,13 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
       void load(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除分组失败");
+    } finally {
+      localMutatingRef.current = false;
     }
   };
 
   const useSnippet = async (snippet: Snippet) => {
+    localMutatingRef.current = true;
     try {
       const updated = await api.copySnippetToClipboard(snippet.id);
       setSnippets((current) =>
@@ -243,14 +256,18 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
       void load(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
+    } finally {
+      localMutatingRef.current = false;
     }
   };
 
   const togglePinned = async (snippet: Snippet) => {
+    if (localMutatingRef.current) return;
     const nextPinned = !snippet.pinned;
     setSnippets((current) =>
       current.map((item) => (item.id === snippet.id ? { ...item, pinned: nextPinned } : item))
     );
+    localMutatingRef.current = true;
     try {
       await api.pinSnippet(snippet.id, nextPinned);
       void load(false);
@@ -259,12 +276,15 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
         current.map((item) => (item.id === snippet.id ? { ...item, pinned: snippet.pinned } : item))
       );
       toast.error(error instanceof Error ? error.message : "操作失败");
+    } finally {
+      localMutatingRef.current = false;
     }
   };
 
   const deleteSnippet = async (snippet: Snippet) => {
     if (!confirm(`删除「${snippet.title}」？`)) return;
     setSnippets((current) => current.filter((item) => item.id !== snippet.id));
+    localMutatingRef.current = true;
     try {
       await api.deleteSnippet(snippet.id);
       toast.success("已删除");
@@ -272,6 +292,8 @@ export function SnippetsPage({ openCreateOnMount }: BuiltinAppProps) {
     } catch (error) {
       setSnippets((current) => [snippet, ...current]);
       toast.error(error instanceof Error ? error.message : "删除失败");
+    } finally {
+      localMutatingRef.current = false;
     }
   };
 

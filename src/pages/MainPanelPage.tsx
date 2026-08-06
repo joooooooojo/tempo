@@ -9,6 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   isBlurHideSuppressed,
@@ -60,6 +61,7 @@ import {
 } from "@/apps";
 import {
   clearMainPanelSession,
+  MAIN_PANEL_APP_SESSION_STALE_MS,
   resolveRestorableMainPanelSession,
   writeMainPanelSession,
 } from "@/apps/mainPanelSession";
@@ -230,6 +232,8 @@ export function MainPanelPage() {
   const clipboardChipRef = useRef<MainPanelClipboardChip | null>(null);
   /** Timestamp when panel was hidden while a clipboard chip was active. */
   const clipboardChipHiddenAtRef = useRef<number | null>(null);
+  /** Timestamp when panel was hidden while a plugin/app was open. */
+  const appSessionHiddenAtRef = useRef<number | null>(null);
   const panelVisibleRef = useRef(true);
   const contentRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<string | null>(null);
@@ -573,6 +577,7 @@ export function MainPanelPage() {
   const hideAndResetMainPanel = useCallback(async () => {
     clearMainPanelSession();
     clipboardChipHiddenAtRef.current = null;
+    appSessionHiddenAtRef.current = null;
     panelVisibleRef.current = false;
     setDevtoolsBlurHideSuppressed(false);
     dismissClipboardSeed();
@@ -586,6 +591,7 @@ export function MainPanelPage() {
     const appId = activeAppIdRef.current;
     if (modeRef.current === "app" && appId) {
       writeMainPanelSession(appId);
+      appSessionHiddenAtRef.current = Date.now();
       panelVisibleRef.current = false;
       setDevtoolsBlurHideSuppressed(false);
       await hideMainPanel();
@@ -599,6 +605,9 @@ export function MainPanelPage() {
   const backToSearch = useCallback(() => {
     toast.dismiss();
     clearMainPanelSession();
+    appSessionHiddenAtRef.current = null;
+    modeRef.current = "search";
+    activeAppIdRef.current = null;
     setMode("search");
     setActiveAppId(null);
     setActiveAppParams({});
@@ -667,6 +676,9 @@ export function MainPanelPage() {
       setMode("app");
       setActiveAppId(appId);
       setActiveAppParams(params);
+      modeRef.current = "app";
+      activeAppIdRef.current = appId;
+      appSessionHiddenAtRef.current = null;
       setOpenCreateSnippet(Boolean(params.createSnippet));
       const translateText =
         typeof params.initialTranslateText === "string"
@@ -824,7 +836,20 @@ export function MainPanelPage() {
 
     const restoreSessionIfNeeded = () => {
       if (modeRef.current === "app" && activeAppIdRef.current) {
-        // Keep current size ? resizing here after show causes a visible flash.
+        const hiddenAt = appSessionHiddenAtRef.current;
+        appSessionHiddenAtRef.current = null;
+        // Panel stayed mounted in app mode after blur-hide; drop if idle too long.
+        if (
+          hiddenAt != null &&
+          Date.now() - hiddenAt >= MAIN_PANEL_APP_SESSION_STALE_MS
+        ) {
+          clearMainPanelSession();
+          backToSearch();
+          return false;
+        }
+        // Fresh reopen counts as use — restart the idle clock for the next hide.
+        writeMainPanelSession(activeAppIdRef.current);
+        // Keep current size — resizing here after show causes a visible flash.
         return true;
       }
       const session = resolveRestorableMainPanelSession();
@@ -878,6 +903,19 @@ export function MainPanelPage() {
       }
       armTimer = window.setTimeout(() => {
         armed = true;
+        void appWindow.isFocused().then((focused) => {
+          if (
+            disposed ||
+            focused ||
+            !armed ||
+            pendingRef.current ||
+            devWindowPinnedRef.current ||
+            isBlurHideSuppressed()
+          ) {
+            return;
+          }
+          void hidePreservingSession();
+        });
       }, 220);
     };
 
@@ -886,6 +924,7 @@ export function MainPanelPage() {
       const appId = activeAppIdRef.current;
       if (modeRef.current === "app" && appId) {
         writeMainPanelSession(appId);
+        appSessionHiddenAtRef.current = Date.now();
         panelVisibleRef.current = false;
         return;
       }
@@ -989,6 +1028,7 @@ export function MainPanelPage() {
     };
   }, [
     applyClipboardSeedFromBackend,
+    backToSearch,
     clearClipboardChipLocal,
     focusSearchInputAtEnd,
     hidePreservingSession,
@@ -2769,6 +2809,8 @@ function isTauriRuntime(): boolean {
 
 async function hideMainPanel() {
   if (!isTauriRuntime()) return;
+  // Clear Rust toggle state *before* OS hide so a concurrent Alt+Space opens.
+  await invoke("mark_main_panel_hidden").catch(() => undefined);
   await getCurrentWindow().hide();
 }
 

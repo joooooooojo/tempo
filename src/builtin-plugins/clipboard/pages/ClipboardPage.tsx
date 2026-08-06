@@ -50,6 +50,8 @@ export function ClipboardPage() {
   const [previewEntry, setPreviewEntry] = useState<ClipboardEntry | null>(null);
   const queryRef = useRef(query);
   const pageRef = useRef(page);
+  /** Skip clipboard-update → reload while this page is applying its own mutation. */
+  const localMutatingRef = useRef(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const rangeStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -114,6 +116,7 @@ export function ClipboardPage() {
 
   useEffect(() => {
     const unlisten = listen("clipboard-update", () => {
+      if (localMutatingRef.current) return;
       void reload(false);
     });
     return () => {
@@ -122,6 +125,7 @@ export function ClipboardPage() {
   }, [reload]);
 
   const copyEntry = async (entry: ClipboardEntry) => {
+    localMutatingRef.current = true;
     try {
       await api.copyClipboardEntry(entry.id);
       if (pageRef.current === 1) {
@@ -134,14 +138,18 @@ export function ClipboardPage() {
       void reload(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "复制失败");
+    } finally {
+      localMutatingRef.current = false;
     }
   };
 
   const togglePinned = async (entry: ClipboardEntry) => {
+    if (localMutatingRef.current) return;
     const nextPinned = !entry.pinned;
     setEntries((current) =>
       current.map((item) => (item.id === entry.id ? { ...item, pinned: nextPinned } : item))
     );
+    localMutatingRef.current = true;
     try {
       await api.pinClipboardEntry(entry.id, nextPinned);
       void reload(false);
@@ -150,12 +158,15 @@ export function ClipboardPage() {
         current.map((item) => (item.id === entry.id ? { ...item, pinned: entry.pinned } : item))
       );
       toast.error(error instanceof Error ? error.message : "操作失败");
+    } finally {
+      localMutatingRef.current = false;
     }
   };
 
   const deleteEntry = async (entry: ClipboardEntry) => {
     setEntries((current) => current.filter((item) => item.id !== entry.id));
     setTotal((current) => Math.max(0, current - 1));
+    localMutatingRef.current = true;
     try {
       await api.deleteClipboardEntry(entry.id);
       void reload(false);
@@ -163,6 +174,8 @@ export function ClipboardPage() {
       setEntries((current) => [entry, ...current]);
       setTotal((current) => current + 1);
       toast.error(error instanceof Error ? error.message : "删除失败");
+    } finally {
+      localMutatingRef.current = false;
     }
   };
 

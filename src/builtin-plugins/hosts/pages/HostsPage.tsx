@@ -14,6 +14,17 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
@@ -56,11 +67,14 @@ export function HostsPage() {
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
   const [formDraft, setFormDraft] = useState<CreateHostsDraft>(EMPTY_CREATE_DRAFT);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<HostsProfile | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const editorViewportRef = useRef<HTMLDivElement>(null);
   const contentCache = useRef(new Map<string, string>());
   const editorTargetRef = useRef(editorTarget);
   const dirtyRef = useRef(dirty);
+  /** Skip hosts-changed → load while this page is applying its own mutation. */
+  const localMutatingRef = useRef(false);
 
   editorTargetRef.current = editorTarget;
   dirtyRef.current = dirty;
@@ -118,32 +132,47 @@ export function HostsPage() {
   }, []);
 
   const load = useCallback(
-    async (keepTarget?: EditorTarget) => {
-      setLoading(true);
+    async (keepTarget?: EditorTarget, options?: { soft?: boolean }) => {
+      const soft = options?.soft ?? false;
+      if (!soft) setLoading(true);
       try {
         const next = await api.getHostsWorkspace();
-        contentCache.current.clear();
+        if (!soft) contentCache.current.clear();
         const target = keepTarget ?? editorTargetRef.current;
         if (typeof target !== "string") {
           setWorkspace(next);
           try {
-            const text = await api.getHostsProfileContent(target.profileId);
+            const cached = soft ? contentCache.current.get(target.profileId) : undefined;
+            const text =
+              cached !== undefined
+                ? cached
+                : await api.getHostsProfileContent(target.profileId);
             contentCache.current.set(target.profileId, text);
             setEditorTarget(target);
-            setContent(text);
-            setDirty(false);
+            if (!dirtyRef.current) {
+              setContent(text);
+              setDirty(false);
+            }
           } catch {
             applyWorkspace(next, "system");
           }
         } else {
-          applyWorkspace(next, "system");
+          if (soft && !dirtyRef.current) {
+            setWorkspace(next);
+            setContent(next.systemContent);
+            setDirty(false);
+          } else if (!soft) {
+            applyWorkspace(next, "system");
+          } else {
+            setWorkspace(next);
+          }
         }
         void prefetchProfileContents(next.profiles);
         await refreshBackups();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : String(error));
       } finally {
-        setLoading(false);
+        if (!soft) setLoading(false);
       }
     },
     [applyWorkspace, prefetchProfileContents, refreshBackups],
@@ -157,8 +186,8 @@ export function HostsPage() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listen("hosts-changed", () => {
-      if (cancelled || dirtyRef.current) return;
-      void load(editorTargetRef.current);
+      if (cancelled || dirtyRef.current || localMutatingRef.current) return;
+      void load(editorTargetRef.current, { soft: true });
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -371,6 +400,7 @@ export function HostsPage() {
   };
 
   const toggleActive = async (profile: HostsProfile, active: boolean) => {
+    if (localMutatingRef.current) return;
     const label = active ? "激活" : "取消激活";
     if (
       !confirm(
@@ -379,6 +409,26 @@ export function HostsPage() {
     ) {
       return;
     }
+
+    // Optimistic: only this row's Switch/checked icon updates; avoid disabling the
+    // whole list (data-disabled:opacity-50 was flashing every thumb).
+    setWorkspace((prev) => {
+      if (!prev) return prev;
+      const activeProfileIds = active
+        ? prev.activeProfileIds.includes(profile.id)
+          ? prev.activeProfileIds
+          : [...prev.activeProfileIds, profile.id]
+        : prev.activeProfileIds.filter((id) => id !== profile.id);
+      return {
+        ...prev,
+        activeProfileIds,
+        profiles: prev.profiles.map((p) =>
+          p.id === profile.id ? { ...p, active } : p,
+        ),
+      };
+    });
+
+    localMutatingRef.current = true;
     setSaving(true);
     try {
       if (dirty && typeof editorTarget !== "string" && editorTarget.profileId === profile.id) {
@@ -401,20 +451,16 @@ export function HostsPage() {
       toast.success(active ? `已激活「${profile.name}」` : `已取消激活「${profile.name}」`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
+      void load(editorTargetRef.current);
     } finally {
       setSaving(false);
+      localMutatingRef.current = false;
     }
   };
 
   const deleteProfile = async (profile: HostsProfile) => {
-    if (
-      !confirm(
-        `删除配置「${profile.name}」？${profile.active ? "（当前已激活，删除后将从系统 hosts 移除）" : ""}`,
-      )
-    ) {
-      return;
-    }
     try {
+      setSaving(true);
       const next = await api.deleteHostsProfile(profile.id);
       contentCache.current.delete(profile.id);
       if (typeof editorTarget !== "string" && editorTarget.profileId === profile.id) {
@@ -423,9 +469,12 @@ export function HostsPage() {
         setWorkspace(next);
       }
       await refreshBackups();
+      setPendingDelete(null);
       toast.success("已删除");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -493,11 +542,11 @@ export function HostsPage() {
 
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-60 shrink-0 flex-col border-r border-border/60">
-          <ScrollArea className="min-h-0 flex-1" viewportClassName="px-2 py-2">
+          <div className="shrink-0 px-2 pt-2">
             <button
               type="button"
               className={cn(
-                "mb-1 w-full rounded-lg px-2.5 py-2 text-left text-[12px]",
+                "w-full rounded-lg px-2.5 py-2 text-left text-[12px]",
                 isSystem ? "bg-foreground/8" : "hover:bg-foreground/5",
               )}
               onClick={openSystem}
@@ -508,9 +557,10 @@ export function HostsPage() {
                 {workspace?.path || "只读查看当前文件"}
               </div>
             </button>
-
             <div className="my-1.5 border-t border-border/60" />
+          </div>
 
+          <ScrollArea className="min-h-0 flex-1" viewportClassName="px-2 pb-2">
             {(workspace?.profiles ?? []).map((profile) => {
               const selected =
                 typeof editorTarget !== "string" && editorTarget.profileId === profile.id;
@@ -556,7 +606,6 @@ export function HostsPage() {
                     <Switch
                       size="sm"
                       checked={profile.active}
-                      disabled={saving}
                       aria-label={profile.active ? "取消激活" : "激活"}
                       title={profile.active ? "取消激活" : "激活"}
                       className={cn(
@@ -564,9 +613,14 @@ export function HostsPage() {
                         "data-checked:bg-emerald-500/85",
                         "[&_[data-slot=switch-thumb]]:size-3 [&_[data-slot=switch-thumb]]:rounded-full",
                         "[&_[data-slot=switch-thumb]]:shadow-none [&_[data-slot=switch-thumb]]:bg-white",
-                        "[&_[data-slot=switch-thumb]]:data-checked:translate-x-[14px]",
+                        // Override size=sm thumb travel (18px) for this compact track.
+                        "[&_[data-slot=switch-thumb]]:translate-x-[2px]",
+                        "[&_[data-slot=switch-thumb]]:data-checked:!translate-x-[14px]",
                       )}
-                      onCheckedChange={(checked) => void toggleActive(profile, checked)}
+                      onCheckedChange={(checked) => {
+                        if (localMutatingRef.current) return;
+                        void toggleActive(profile, checked);
+                      }}
                     />
                   </div>
                 </div>
@@ -606,6 +660,7 @@ export function HostsPage() {
           </div>
 
           <ScrollArea
+            key={editorTarget === "system" ? "system" : editorTarget.profileId}
             className={cn(
               "min-h-0 flex-1 rounded-lg border border-border/60",
               readOnly ? "bg-muted/40" : "bg-background/50",
@@ -648,7 +703,7 @@ export function HostsPage() {
               variant="outline"
               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
               disabled={saving}
-              onClick={() => void deleteProfile(selectedProfile)}
+              onClick={() => setPendingDelete(selectedProfile)}
             >
               <Trash2 />
               删除
@@ -707,6 +762,42 @@ export function HostsPage() {
         backups={backups}
         onRestore={(backup) => void restoreBackup(backup)}
       />
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !saving) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia className="bg-destructive/10 text-destructive">
+              <Trash2 />
+            </AlertDialogMedia>
+            <AlertDialogTitle>
+              删除配置「{pendingDelete?.name ?? ""}」？
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete?.active
+                ? "该配置当前已激活，删除后会从系统 hosts 中移除对应内容。"
+                : "删除后无法恢复该配置内容。"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={saving || !pendingDelete}
+              onClick={() => {
+                if (pendingDelete) void deleteProfile(pendingDelete);
+              }}
+            >
+              {saving ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Trash2 data-icon="inline-start" />}
+              {saving ? "正在删除" : "确认删除"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

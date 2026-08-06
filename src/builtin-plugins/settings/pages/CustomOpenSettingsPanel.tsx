@@ -28,7 +28,9 @@ function kindLabel(kind: string) {
 export function CustomOpenSettingsPanel() {
   const [entries, setEntries] = useState<CustomLauncherEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Blocks add-actions only; row actions use per-row busyId to avoid list-wide opacity flash. */
   const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
@@ -97,17 +99,19 @@ export function CustomOpenSettingsPanel() {
   };
 
   const removeEntry = async (entry: CustomLauncherEntry) => {
-    if (busy) return;
-    setBusy(true);
+    if (busyId || busy) return;
+    setBusyId(entry.id);
+    setEntries((current) => current.filter((item) => item.id !== entry.id));
     try {
       await api.removeCustomLauncherEntry(entry.id);
-      await load();
       await refreshLauncher();
       toast.success("已移除");
     } catch (error) {
+      setEntries((current) => [...current, entry]);
       toast.error(error instanceof Error ? error.message : String(error));
+      await load();
     } finally {
-      setBusy(false);
+      setBusyId(null);
     }
   };
 
@@ -120,16 +124,22 @@ export function CustomOpenSettingsPanel() {
     const nextName = renameValue.trim();
     setRenamingId(null);
     if (!nextName || nextName === entry.name) return;
-    setBusy(true);
+    if (busyId || busy) return;
+    setBusyId(entry.id);
+    setEntries((current) =>
+      current.map((item) => (item.id === entry.id ? { ...item, name: nextName } : item))
+    );
     try {
       await api.renameCustomLauncherEntry(entry.id, nextName);
-      await load();
       await refreshLauncher();
       toast.success("已重命名");
     } catch (error) {
+      setEntries((current) =>
+        current.map((item) => (item.id === entry.id ? { ...item, name: entry.name } : item))
+      );
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusy(false);
+      setBusyId(null);
     }
   };
 
@@ -182,6 +192,7 @@ export function CustomOpenSettingsPanel() {
               <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
                 {entries.map((entry) => {
                   const renaming = renamingId === entry.id;
+                  const rowBusy = busyId === entry.id;
                   return (
                     <li
                       key={entry.id}
@@ -234,7 +245,7 @@ export function CustomOpenSettingsPanel() {
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          disabled={busy || renaming}
+                          disabled={rowBusy || renaming}
                           aria-label="重命名"
                           onClick={() => startRename(entry)}
                         >
@@ -244,7 +255,7 @@ export function CustomOpenSettingsPanel() {
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          disabled={busy}
+                          disabled={rowBusy}
                           aria-label="删除"
                           onClick={() => void removeEntry(entry)}
                         >

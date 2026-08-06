@@ -36,8 +36,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type {
@@ -59,6 +59,8 @@ import "@/builtin-plugins/file-search/styles/file-search.css";
 
 const PAGE_LIMIT = 50;
 const LOAD_MORE_THRESHOLD_PX = 120;
+/** Stop after this many consecutive pages with no new unique paths (offset stuck). */
+const MAX_EMPTY_UNIQUE_PAGES = 3;
 const ENGINE_PROGRESS_EVENT = "file-search:engine-progress";
 
 const SORT_SELECT_ITEMS = FILE_SEARCH_SORTS.map((item) => ({
@@ -167,11 +169,15 @@ export function FileSearchPage() {
   const requestId = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const itemsRef = useRef<FileSearchItem[]>([]);
   const hasMoreRef = useRef(false);
   const loadingMoreRef = useRef(false);
   const searchingRef = useRef(false);
+  /** Next Everything/fd offset — must track server pages, not deduped list length. */
+  const nextOffsetRef = useRef(0);
+  const emptyUniquePagesRef = useRef(0);
   const draftQueryRef = useRef("");
   const queryKeyRef = useRef({ query: "", category: "all" as FileSearchCategoryId, sort: "mtime_desc" as FileSearchSortId });
 
@@ -263,9 +269,10 @@ export function FileSearchPage() {
       const current = ++requestId.current;
       setSearching(true);
       setLoadingMore(false);
+      loadingMoreRef.current = false;
       setError(null);
-      // Keep previous rows visible until the new page arrives — clearing first
-      // made the list flash empty (共 0 项) while IPC was still in flight.
+      nextOffsetRef.current = 0;
+      emptyUniquePagesRef.current = 0;
       try {
         const result = await api.fileSearchQuery({
           query: trimmed,
@@ -275,10 +282,24 @@ export function FileSearchPage() {
           offset: 0,
         });
         if (current !== requestId.current) return;
+        // Ignore stale responses if the user already switched category/query.
+        if (
+          queryKeyRef.current.query.trim() !== trimmed ||
+          queryKeyRef.current.category !== nextCategory ||
+          queryKeyRef.current.sort !== nextSort
+        ) {
+          return;
+        }
+        nextOffsetRef.current = result.items.length;
+        emptyUniquePagesRef.current = 0;
+        const more =
+          result.hasMore ||
+          (result.total > 0 && result.items.length < result.total);
+        hasMoreRef.current = more;
         startTransition(() => {
           setItems(result.items);
           setTotal(result.total);
-          setHasMore(result.hasMore);
+          setHasMore(more);
           setSelectedIndex(0);
         });
       } catch (err) {
@@ -309,9 +330,11 @@ export function FileSearchPage() {
     const { query: q, category: cat, sort: s } = queryKeyRef.current;
     const trimmed = q.trim();
 
-    const offset = itemsRef.current.length;
+    const offset = nextOffsetRef.current;
     const current = requestId.current;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
+    let continueLoading = false;
     try {
       const result = await api.fileSearchQuery({
         query: trimmed,
@@ -321,28 +344,73 @@ export function FileSearchPage() {
         offset,
       });
       if (current !== requestId.current) return;
+      if (
+        queryKeyRef.current.query.trim() !== trimmed ||
+        queryKeyRef.current.category !== cat ||
+        queryKeyRef.current.sort !== s
+      ) {
+        return;
+      }
       const incoming = result.items;
+      // Always advance by the server page size so dedupe can't shrink the offset
+      // and re-fetch overlapping windows (which made scroll stop early).
+      nextOffsetRef.current = offset + incoming.length;
+
       const existing = new Set(itemsRef.current.map((item) => item.path));
       const unique = incoming.filter((item) => !existing.has(item.path));
+      if (unique.length === 0 && incoming.length > 0) {
+        emptyUniquePagesRef.current += 1;
+      } else {
+        emptyUniquePagesRef.current = 0;
+      }
+
+      const reachedTotal =
+        typeof result.total === "number" &&
+        result.total > 0 &&
+        nextOffsetRef.current >= result.total;
+      const stuckOnDuplicates =
+        emptyUniquePagesRef.current >= MAX_EMPTY_UNIQUE_PAGES;
+      const more =
+        !reachedTotal &&
+        !stuckOnDuplicates &&
+        incoming.length > 0 &&
+        (result.hasMore ||
+          (typeof result.total === "number" &&
+            result.total > nextOffsetRef.current));
+
+      hasMoreRef.current = more;
+      const nextItems =
+        unique.length > 0 ? [...itemsRef.current, ...unique] : itemsRef.current;
+      itemsRef.current = nextItems;
       startTransition(() => {
         if (unique.length > 0) {
-          setItems((prev) => [...prev, ...unique]);
+          setItems(nextItems);
         }
         setTotal((prev) => {
-          const next = result.total;
-          if (prev == null) return next;
-          return Math.max(prev, next);
+          if (prev == null) return result.total;
+          return Math.max(prev, result.total);
         });
-        // Empty / all-duplicate page → stop to avoid a scroll loop.
-        setHasMore(result.hasMore && unique.length > 0);
+        setHasMore(more);
       });
+
+      // Overlapping page with more results ahead — keep pulling without waiting for scroll.
+      continueLoading = more && unique.length === 0;
     } catch (err) {
       if (current !== requestId.current) return;
       const message = err instanceof Error ? err.message : String(err);
       toast.error(message);
+      hasMoreRef.current = false;
       setHasMore(false);
     } finally {
-      if (current === requestId.current) setLoadingMore(false);
+      if (current === requestId.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    }
+    if (continueLoading && current === requestId.current) {
+      queueMicrotask(() => {
+        if (current === requestId.current) void loadMore();
+      });
     }
   }, [status?.ready]);
 
@@ -363,31 +431,56 @@ export function FileSearchPage() {
     };
   }, [status?.ready, status?.indexing]);
 
+  // Fresh search on category / query / sort — no per-category cache.
   useEffect(() => {
     if (status?.indexing) {
       setSearching(false);
       setError(null);
       return;
     }
-    void runSearch(query, category, sort);
-  }, [query, category, sort, runSearch, status?.indexing]);
+    if (!status?.ready) return;
 
+    setItems([]);
+    setTotal(null);
+    setHasMore(false);
+    setSelectedIndex(0);
+    nextOffsetRef.current = 0;
+    emptyUniquePagesRef.current = 0;
+    void runSearch(query, category, sort);
+  }, [query, category, sort, runSearch, status?.indexing, status?.ready]);
+
+  // Attach once the list is non-empty — not on every page append (avoids 50→100 double-fire).
+  const hasListItems = items.length > 0;
   useEffect(() => {
+    if (searching || !hasMore || !hasListItems) return;
+    const sentinel = loadMoreSentinelRef.current;
+    const root = viewportRef.current;
+    if (!sentinel || !root) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        void loadMore();
+      },
+      {
+        root,
+        rootMargin: `0px 0px ${LOAD_MORE_THRESHOLD_PX}px 0px`,
+        threshold: 0,
+      },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMore, searching, hasMore, hasListItems, category]);
+
+  // Only auto-fill when content does not overflow — never a near-bottom check on items.length.
+  useEffect(() => {
+    if (searching || loadingMore || !hasMore || items.length === 0) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
-
-    const onScroll = () => {
-      const { scrollTop, clientHeight, scrollHeight } = viewport;
-      if (scrollTop + clientHeight >= scrollHeight - LOAD_MORE_THRESHOLD_PX) {
-        void loadMore();
-      }
-    };
-
-    viewport.addEventListener("scroll", onScroll, { passive: true });
-    // If the first page doesn't fill the viewport, keep loading.
-    onScroll();
-    return () => viewport.removeEventListener("scroll", onScroll);
-  }, [loadMore, items.length, searching, hasMore]);
+    if (viewport.scrollHeight <= viewport.clientHeight) {
+      void loadMore();
+    }
+  }, [searching, loadingMore, hasMore, items.length, loadMore, category]);
 
   const selected = items[selectedIndex] ?? null;
 
@@ -429,13 +522,6 @@ export function FileSearchPage() {
     };
   }, [selected, previewEnabled]);
 
-  useEffect(() => {
-    const node = listRef.current?.querySelector<HTMLElement>(
-      `[data-file-search-index="${selectedIndex}"]`,
-    );
-    node?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex]);
-
   const openSelected = async () => {
     if (!selected) return;
     try {
@@ -458,10 +544,26 @@ export function FileSearchPage() {
     if (!items.length) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setSelectedIndex((prev) => Math.min(items.length - 1, prev + 1));
+      setSelectedIndex((prev) => {
+        const next = Math.min(items.length - 1, prev + 1);
+        queueMicrotask(() => {
+          listRef.current
+            ?.querySelector<HTMLElement>(`[data-file-search-index="${next}"]`)
+            ?.scrollIntoView({ block: "nearest" });
+        });
+        return next;
+      });
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setSelectedIndex((prev) => Math.max(0, prev - 1));
+      setSelectedIndex((prev) => {
+        const next = Math.max(0, prev - 1);
+        queueMicrotask(() => {
+          listRef.current
+            ?.querySelector<HTMLElement>(`[data-file-search-index="${next}"]`)
+            ?.scrollIntoView({ block: "nearest" });
+        });
+        return next;
+      });
     } else if (event.key === "Enter") {
       event.preventDefault();
       void openSelected();
@@ -645,7 +747,9 @@ export function FileSearchPage() {
                     {status.indexingMessage ?? "正在建立文件索引…"}
                   </p>
                   <p className="file-search-index-banner__hint">
-                    Everything 首次启动时需要加载数据库，完成后即可搜索
+                    {status.indexingMessage?.includes("加载")
+                      ? "正在从磁盘加载已有索引，通常很快完成"
+                      : "首次建立索引需要一些时间"}
                   </p>
                 </div>
               </div>
@@ -677,7 +781,8 @@ export function FileSearchPage() {
             </div>
           ) : (
             <ScrollArea
-              className="h-full"
+              key={category}
+              className="h-full min-h-0"
               viewportClassName="file-search-list__scroll"
               viewportRef={viewportRef}
             >
@@ -686,7 +791,7 @@ export function FileSearchPage() {
                   const active = index === selectedIndex;
                   return (
                     <button
-                      key={`${item.path}-${index}`}
+                      key={item.path}
                       type="button"
                       data-file-search-index={index}
                       className={cn(
@@ -715,7 +820,11 @@ export function FileSearchPage() {
                   );
                 })}
                 {hasMore || loadingMore ? (
-                  <div className="file-search-list__sentinel" aria-hidden={!loadingMore}>
+                  <div
+                    ref={loadMoreSentinelRef}
+                    className="file-search-list__sentinel"
+                    aria-hidden={!loadingMore}
+                  >
                     {loadingMore ? (
                       <>
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -816,7 +925,7 @@ export function FileSearchPage() {
         <p className="file-search-foot__count">
           {searching && items.length === 0
             ? "检索中..."
-            :`共 ${total ?? items.length} 项` }
+            : `共 ${total ?? items.length} 项`}
         </p>
       </footer>
     </div>

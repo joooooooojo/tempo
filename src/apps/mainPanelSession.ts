@@ -75,10 +75,23 @@ export function clearMainPanelSession() {
   store.clear();
 }
 
-/** Returns a restorable session while the referenced app still exists. */
+/** After this long without reopening, do not restore the last plugin — show search. */
+export const MAIN_PANEL_APP_SESSION_STALE_MS = 60_000;
+
+function isSessionStale(session: MainPanelSession, now = Date.now()): boolean {
+  const updatedAt = Date.parse(session.updatedAt);
+  if (!Number.isFinite(updatedAt)) return true;
+  return now - updatedAt >= MAIN_PANEL_APP_SESSION_STALE_MS;
+}
+
+/** Returns a restorable session while the referenced app still exists and is fresh. */
 export function resolveRestorableMainPanelSession(): MainPanelSession | null {
   const session = readMainPanelSession();
   if (!session) return null;
+  if (isSessionStale(session)) {
+    clearMainPanelSession();
+    return null;
+  }
   const app = getApp(session.appId);
   if (!app) {
     clearMainPanelSession();

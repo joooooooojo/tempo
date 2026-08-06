@@ -86,10 +86,9 @@ struct ShortcutStatusCache {
 pub fn run() {
     logging::install_panic_hook();
 
-    // Single-instance must be registered first so a second launch exits early
-    // and focuses the existing process instead of starting another runtime.
     let mut builder = tauri::Builder::default();
 
+    // Single-instance should stay early so a second launch exits and focuses the existing process.
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -399,6 +398,7 @@ pub fn run() {
             auxiliary_windows::set_main_panel_position,
             auxiliary_windows::save_main_panel_position,
             auxiliary_windows::show_main_panel_window,
+            auxiliary_windows::mark_main_panel_hidden,
             auxiliary_windows::prepare_native_file_dialog,
             auxiliary_windows::restore_after_native_file_dialog,
             auxiliary_windows::sync_main_panel_appearance,
@@ -549,6 +549,14 @@ pub fn run() {
                         auxiliary_windows::show_main_panel(app_handle),
                         "show main panel on startup",
                     );
+                }
+
+                #[cfg(target_os = "windows")]
+                if matches!(
+                    &event,
+                    tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+                ) {
+                    builtin_plugins::file_search::backend_windows::persist_on_app_exit(app_handle);
                 }
 
                 #[cfg(target_os = "macos")]

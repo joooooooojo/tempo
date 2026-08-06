@@ -8,7 +8,7 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder,
 };
 
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MAIN_PANEL_LABEL: &str = "main-panel";
@@ -18,6 +18,11 @@ pub const MAIN_PANEL_INITIAL_HEIGHT: f64 = 370.0;
 pub const MAIN_PANEL_MIN_HEIGHT: f64 = 58.0;
 pub const MAIN_PANEL_MAX_HEIGHT: f64 = 760.0;
 const MAIN_PANEL_POSITION_SETTING: &str = "main_panel_position";
+
+/// Logical show/hide for shortcut toggle. Updated *before* Win32 show/hide so a
+/// quick Alt+Space after mouse blur-hide cannot still see `is_visible() == true`
+/// and hide again instead of reopening.
+static MAIN_PANEL_LOGICALLY_VISIBLE: AtomicBool = AtomicBool::new(false);
 
 pub const SHELF_PICKER_LABEL: &str = "shelf-picker";
 pub const SHELF_HEIGHT: f64 = 292.0;
@@ -85,6 +90,7 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn show_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    MAIN_PANEL_LOGICALLY_VISIBLE.store(true, Ordering::SeqCst);
     let (default_width, default_height) = main_panel_window_size();
     let mut width = default_width;
     let mut height = default_height;
@@ -129,13 +135,22 @@ pub fn show_main_panel(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn is_main_panel_visible(app: &AppHandle) -> bool {
-    app.get_webview_window(MAIN_PANEL_LABEL)
-        .map(|window| window_is_visible(&window, "check main panel visibility"))
-        .unwrap_or(false)
+pub fn is_main_panel_visible(_app: &AppHandle) -> bool {
+    MAIN_PANEL_LOGICALLY_VISIBLE.load(Ordering::SeqCst)
+}
+
+/// Frontend blur-hide uses `WebviewWindow::hide` directly; keep the toggle flag in sync
+/// so the next Alt+Space opens instead of treating the panel as still shown.
+#[tauri::command]
+pub fn mark_main_panel_hidden() {
+    MAIN_PANEL_LOGICALLY_VISIBLE.store(false, Ordering::SeqCst);
+    #[cfg(windows)]
+    crate::shortcut_hook::request_reinstall();
 }
 
 pub fn hide_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    // Mark closed first so a concurrent Alt+Space toggles open, not hide-again.
+    mark_main_panel_hidden();
     crate::launcher_context_menu::hide_with_main_panel(app);
 
     let Some(window) = app.get_webview_window(MAIN_PANEL_LABEL) else {

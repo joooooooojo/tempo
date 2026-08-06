@@ -362,13 +362,32 @@
   width: 100%;
 }
 
-/* Dialog `duration-*` used to leak --tw-duration into children and kill Switch motion. */
+/*
+ * Backup for plugin-config: drive thumb with `transform` (and clear `translate`)
+ * so motion still works even if a parent transition only covers `transform`.
+ * Primary fix is Switch `transition-[transform,translate]`.
+ */
 .plugin-config-dialog [data-slot="switch"] {
   transition: background-color 200ms ease-out;
 }
 
 .plugin-config-dialog [data-slot="switch-thumb"] {
+  translate: none;
   transition: transform 200ms ease-out;
+  will-change: transform;
+}
+
+.plugin-config-dialog [data-slot="switch-thumb"][data-unchecked] {
+  transform: translate3d(2px, 0, 0);
+}
+
+.plugin-config-dialog [data-slot="switch"][data-size="default"] [data-slot="switch-thumb"][data-checked],
+.plugin-config-dialog [data-slot="switch"]:not([data-size]) [data-slot="switch-thumb"][data-checked] {
+  transform: translate3d(22px, 0, 0);
+}
+
+.plugin-config-dialog [data-slot="switch"][data-size="sm"] [data-slot="switch-thumb"][data-checked] {
+  transform: translate3d(18px, 0, 0);
 }
 
 @keyframes settings-panel-in {

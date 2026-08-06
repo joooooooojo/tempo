@@ -215,15 +215,27 @@ export function PluginSettingsSection() {
     const next = new Set(previous);
     if (enabled) next.delete(appId);
     else next.add(appId);
+    // Optimistic + no global busy: busy used to disable every Switch (opacity flash).
     setDisabledBuiltinIds(next);
-    setBusy(true);
     try {
       await api.updateSettings({ disabled_builtin_apps: [...next] });
     } catch (error) {
       setDisabledBuiltinIds(previous);
       toast.error(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
+    }
+  };
+
+  const setPluginEnabled = async (plugin: InstalledPlugin, enabled: boolean) => {
+    const previous = plugins;
+    setPlugins((current) =>
+      current.map((item) => (item.id === plugin.id ? { ...item, enabled } : item))
+    );
+    try {
+      await api.setPluginEnabled(plugin.id, enabled);
+      await refresh();
+    } catch (error) {
+      setPlugins(previous);
+      toast.error(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -318,14 +330,9 @@ export function PluginSettingsSection() {
 
                     <Switch
                       checked={plugin.enabled}
-                      disabled={busy || !plugin.trusted}
+                      disabled={!plugin.trusted}
                       onCheckedChange={(nextEnabled) => {
-                        void api
-                          .setPluginEnabled(plugin.id, nextEnabled)
-                          .then(refresh)
-                          .catch((error) =>
-                            toast.error(error instanceof Error ? error.message : String(error))
-                          );
+                        void setPluginEnabled(plugin, nextEnabled);
                       }}
                     />
 
@@ -431,7 +438,6 @@ export function PluginSettingsSection() {
                   <div className="plugin-item__controls">
                     <Switch
                       checked={enabled}
-                      disabled={busy}
                       onCheckedChange={(nextEnabled) =>
                         void setBuiltinEnabled(app.id, nextEnabled)
                       }
