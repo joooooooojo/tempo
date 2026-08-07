@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
+import { withBlurHideSuppressed, setBlurHideSuppressed } from "@/lib/blurHideGuard";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -40,6 +41,16 @@ import {
 } from "@/builtin-plugins/hosts/pages/HostsDialogs";
 
 type EditorTarget = "system" | { profileId: string };
+
+/** `window.confirm` steals WebView focus; suppress main-panel blur→hide around it. */
+function confirmWithoutBlurHide(message: string): boolean {
+  setBlurHideSuppressed(true);
+  try {
+    return window.confirm(message);
+  } finally {
+    setBlurHideSuppressed(false);
+  }
+}
 
 function sameTarget(a: EditorTarget, b: EditorTarget) {
   if (a === "system" || b === "system") return a === b;
@@ -68,6 +79,10 @@ export function HostsPage() {
   const [formDraft, setFormDraft] = useState<CreateHostsDraft>(EMPTY_CREATE_DRAFT);
   const [backupOpen, setBackupOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<HostsProfile | null>(null);
+  const [pendingToggle, setPendingToggle] = useState<{
+    profile: HostsProfile;
+    active: boolean;
+  } | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const editorViewportRef = useRef<HTMLDivElement>(null);
   const contentCache = useRef(new Map<string, string>());
@@ -209,7 +224,9 @@ export function HostsPage() {
   const openSystem = () => {
     if (!workspace) return;
     if (sameTarget(editorTargetRef.current, "system")) return;
-    if (dirtyRef.current && !confirm("当前编辑未保存，切换将丢弃修改。继续？")) return;
+    if (dirtyRef.current && !confirmWithoutBlurHide("当前编辑未保存，切换将丢弃修改。继续？")) {
+      return;
+    }
     switchTo("system", workspace.systemContent);
     void (async () => {
       try {
@@ -227,7 +244,9 @@ export function HostsPage() {
   const openProfile = (profile: HostsProfile) => {
     const target: EditorTarget = { profileId: profile.id };
     if (sameTarget(editorTargetRef.current, target)) return;
-    if (dirtyRef.current && !confirm("当前编辑未保存，切换将丢弃修改。继续？")) return;
+    if (dirtyRef.current && !confirmWithoutBlurHide("当前编辑未保存，切换将丢弃修改。继续？")) {
+      return;
+    }
 
     const cached = contentCache.current.get(profile.id);
     if (cached !== undefined) {
@@ -250,7 +269,8 @@ export function HostsPage() {
   const authorize = async () => {
     setAuthorizing(true);
     try {
-      const next = await api.authorizeHostsWrite();
+      // UAC / osascript steals focus — keep the main panel open.
+      const next = await withBlurHideSuppressed(() => api.authorizeHostsWrite());
       setWorkspace(next);
       toast.success("授权成功，之后保存无需再提权");
     } catch (error) {
@@ -401,14 +421,7 @@ export function HostsPage() {
 
   const toggleActive = async (profile: HostsProfile, active: boolean) => {
     if (localMutatingRef.current) return;
-    const label = active ? "激活" : "取消激活";
-    if (
-      !confirm(
-        `${label}「${profile.name}」？系统 hosts 将写入「原有内容 + 所有已激活配置」。`,
-      )
-    ) {
-      return;
-    }
+    setPendingToggle(null);
 
     // Optimistic: only this row's Switch/checked icon updates; avoid disabling the
     // whole list (data-disabled:opacity-50 was flashing every thumb).
@@ -488,7 +501,11 @@ export function HostsPage() {
   };
 
   const restoreBackup = async (backup: HostsBackup) => {
-    if (!confirm("恢复该备份将覆盖当前激活集合并写回系统，继续？")) return;
+    if (
+      !confirmWithoutBlurHide("恢复该备份将覆盖当前激活集合并写回系统，继续？")
+    ) {
+      return;
+    }
     setSaving(true);
     try {
       const next = await api.restoreHostsBackup(backup.id);
@@ -618,8 +635,11 @@ export function HostsPage() {
                         "[&_[data-slot=switch-thumb]]:data-checked:!translate-x-[14px]",
                       )}
                       onCheckedChange={(checked) => {
-                        if (localMutatingRef.current) return;
-                        void toggleActive(profile, checked);
+                        if (localMutatingRef.current || saving) return;
+                        if (checked === profile.active) return;
+                        // In-app dialog — native confirm steals focus and blur-hides the panel,
+                        // which also caused a reopen/toggle loop with click-through.
+                        setPendingToggle({ profile, active: checked });
                       }}
                     />
                   </div>
@@ -762,6 +782,50 @@ export function HostsPage() {
         backups={backups}
         onRestore={(backup) => void restoreBackup(backup)}
       />
+
+      <AlertDialog
+        open={pendingToggle !== null}
+        onOpenChange={(open) => {
+          if (!open && !saving) setPendingToggle(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+              <ShieldCheck />
+            </AlertDialogMedia>
+            <AlertDialogTitle>
+              {pendingToggle?.active ? "激活" : "取消激活"}「
+              {pendingToggle?.profile.name ?? ""}」？
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              系统 hosts 将写入「原有内容 + 所有已激活配置」。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={saving || !pendingToggle}
+              onClick={() => {
+                if (pendingToggle) {
+                  void toggleActive(pendingToggle.profile, pendingToggle.active);
+                }
+              }}
+            >
+              {saving ? (
+                <Loader2 data-icon="inline-start" className="animate-spin" />
+              ) : (
+                <ShieldCheck data-icon="inline-start" />
+              )}
+              {saving
+                ? "处理中"
+                : pendingToggle?.active
+                  ? "确认激活"
+                  : "确认取消激活"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={pendingDelete !== null}

@@ -655,7 +655,14 @@ pub(super) fn reconcile_active_profiles(
         }
     }
 
-    let resolved = if parsed.managed && !from_system.is_empty() {
+    // Tempo state is the authority for the active set after init. Preferring
+    // marker ids from the system file used to re-activate profiles when a write
+    // lagged or another tool briefly restored an older hosts file — which then
+    // fought the Switch UI (toast said off, thumb still on).
+    let resolved = if state.active_profile_ids.is_empty()
+        && parsed.managed
+        && !from_system.is_empty()
+    {
         from_system
     } else {
         normalize_active_ids(meta, &state.active_profile_ids)
