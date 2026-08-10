@@ -17,6 +17,7 @@ import {
   setContextMenuBlurHideSuppressed,
   setDevtoolsBlurHideSuppressed,
 } from "@/lib/blurHideGuard";
+import { trapTabKey } from "@/lib/focusTrap";
 import {
   openLauncherContextMenu,
   usageIdForContextTarget,
@@ -1659,6 +1660,16 @@ export function MainPanelPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [backToSearch, mode]);
+
+  // Tab past the last control would leave the WebView and fire window blur → hide.
+  // Cycle focus inside the panel surface (portaled dialogs keep their own cycle).
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      trapTabKey(event, contentRef.current);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   const togglePinnedLauncherApp = async (app: LauncherApp) => {
     if (pendingKey) return;

@@ -617,23 +617,12 @@ export function HostsPage() {
                   </div>
                   <div
                     className="shrink-0"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
                   >
                     <Switch
                       size="sm"
                       checked={profile.active}
                       aria-label={profile.active ? "取消激活" : "激活"}
                       title={profile.active ? "取消激活" : "激活"}
-                      className={cn(
-                        "h-4 w-7 rounded-full bg-foreground/8",
-                        "data-checked:bg-emerald-500/85",
-                        "[&_[data-slot=switch-thumb]]:size-3 [&_[data-slot=switch-thumb]]:rounded-full",
-                        "[&_[data-slot=switch-thumb]]:shadow-none [&_[data-slot=switch-thumb]]:bg-white",
-                        // Override size=sm thumb travel (18px) for this compact track.
-                        "[&_[data-slot=switch-thumb]]:translate-x-[2px]",
-                        "[&_[data-slot=switch-thumb]]:data-checked:!translate-x-[14px]",
-                      )}
                       onCheckedChange={(checked) => {
                         if (localMutatingRef.current || saving) return;
                         if (checked === profile.active) return;
@@ -786,7 +775,20 @@ export function HostsPage() {
       <AlertDialog
         open={pendingToggle !== null}
         onOpenChange={(open) => {
-          if (!open && !saving) setPendingToggle(null);
+          if (!open && !saving) {
+            setPendingToggle(null);
+            // Base UI restores focus to the Switch after close; blur so Esc / chrome
+            // aren't stuck on the control until the user clicks elsewhere.
+            queueMicrotask(() => {
+              const active = document.activeElement;
+              if (
+                active instanceof HTMLElement &&
+                active.closest('[data-slot="switch"]')
+              ) {
+                active.blur();
+              }
+            });
+          }
         }}
       >
         <AlertDialogContent>
