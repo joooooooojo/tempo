@@ -294,8 +294,9 @@ export interface FileSearchStatus {
   engine?: string | null;
   version?: string | null;
   message?: string | null;
-  /** Everything is loading or syncing its database (Windows). */
+  /** Everything is starting or its database is still loading (Windows). */
   indexing?: boolean;
+  /** "正在启动 Everything…" or "数据库准备中…" while indexing. */
   indexingMessage?: string | null;
 }
 

@@ -105,7 +105,6 @@ const RECENT_COLLAPSED_COUNT = GRID_COLUMNS * 2;
 const PINNED_COLLAPSED_COUNT = GRID_COLUMNS;
 const SEARCH_COLLAPSED_COUNT = GRID_COLUMNS * 2;
 const MAX_SEARCH_RESULTS = GRID_COLUMNS * 4;
-const SEARCH_QUERY_DEBOUNCE_MS = 80;
 /** Typing changes result height often; native window resize each time feels like input lag. */
 const MAIN_PANEL_RESIZE_DEBOUNCE_MS = 100;
 /** Pending clipboard chip (text/image/file) is cleared if panel stays closed this long. */
@@ -214,6 +213,7 @@ export function MainPanelPage() {
   const [quickActionsRevision, setQuickActionsRevision] = useState(0);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [matchedSearchApps, setMatchedSearchApps] = useState<SearchAppEntry[]>([]);
+  const [settledSearchQuery, setSettledSearchQuery] = useState("");
   const [searchIndexRevision, setSearchIndexRevision] = useState(0);
   const [launcherIndexRevision, setLauncherIndexRevision] = useState(0);
   const [openRevision, setOpenRevision] = useState(0);
@@ -1039,53 +1039,54 @@ export function MainPanelPage() {
     refreshDisabledBuiltins,
   ]);
 
-  // Rust owns matching and ranking. A short debounce avoids one IPC + SQLite lookup per
-  // keystroke, while cancellation prevents stale responses from replacing current results.
   const normalizedQuery = query.trim();
   const liveNormalizedQuery = normalizedQuery;
   useEffect(() => {
     if (!isTauri || !normalizedQuery || hasClipboardActionContext) {
       setMatchedSearchApps([]);
+      // Clipboard / empty: no app search — settle immediately so actions can show.
+      setSettledSearchQuery(hasClipboardActionContext ? normalizedQuery : "");
       return;
     }
 
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void api
-        .searchMainPanelApps(normalizedQuery, MAX_SEARCH_RESULTS)
-        .then((matches) => {
-          if (cancelled) return;
-          const contributionById = new Map(
-            builtinAppsRef.current.map((app) => [app.id, app])
-          );
-          const results: SearchAppEntry[] = [];
+    void api
+      .searchMainPanelApps(normalizedQuery, MAX_SEARCH_RESULTS)
+      .then((matches) => {
+        if (cancelled) return;
+        const contributionById = new Map(
+          builtinAppsRef.current.map((app) => [app.id, app])
+        );
+        const results: SearchAppEntry[] = [];
 
-          for (const match of matches) {
-            if (match.source === "launcher") {
-              if (match.app) {
-                results.push({ key: `search:${match.app.id}`, kind: "app", app: match.app });
-              }
-              continue;
+        for (const match of matches) {
+          if (match.source === "launcher") {
+            if (match.app) {
+              results.push({ key: `search:${match.app.id}`, kind: "app", app: match.app });
             }
-
-            const app = contributionById.get(match.id);
-            if (app) {
-              results.push({ key: `builtin:${app.id}`, kind: "builtin", app });
-            }
+            continue;
           }
 
-          setMatchedSearchApps(results);
-        })
-        .catch((searchError) => {
-          if (!cancelled) {
-            setError(errorMessage(searchError, "搜索应用失败"));
+          const app = contributionById.get(match.id);
+          if (app) {
+            results.push({ key: `builtin:${app.id}`, kind: "builtin", app });
           }
-        });
-    }, SEARCH_QUERY_DEBOUNCE_MS);
+        }
+
+        setMatchedSearchApps(results);
+        setSettledSearchQuery(normalizedQuery);
+      })
+      .catch((searchError) => {
+        if (!cancelled) {
+          setError(errorMessage(searchError, "搜索应用失败"));
+          // Still settle so we do not leave the UI stuck without actions forever.
+          setMatchedSearchApps([]);
+          setSettledSearchQuery(normalizedQuery);
+        }
+      });
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
   }, [
     hasClipboardActionContext,
@@ -1265,26 +1266,58 @@ export function MainPanelPage() {
     () => resolveQuickActionQuery(liveNormalizedQuery, clipboardSeedForActions),
     [clipboardSeedForActions, liveNormalizedQuery]
   );
+  // Display apps/actions against the settled query so both sections update in one paint.
+  // While a new search is in flight, keep the previous settled frame (or empty on first char).
+  const searchResultsReady =
+    !normalizedQuery ||
+    hasClipboardActionContext ||
+    settledSearchQuery === normalizedQuery;
+  const displaySearchQuery = searchResultsReady
+    ? normalizedQuery
+    : settledSearchQuery;
   const quickActionQuery = useMemo(
-    () => resolveQuickActionQuery(normalizedQuery, clipboardSeedForActions),
-    [clipboardSeedForActions, normalizedQuery]
+    () =>
+      resolveQuickActionQuery(
+        hasClipboardActionContext ? normalizedQuery : displaySearchQuery,
+        clipboardSeedForActions,
+      ),
+    [
+      clipboardSeedForActions,
+      displaySearchQuery,
+      hasClipboardActionContext,
+      normalizedQuery,
+    ],
   );
   const liveQuickActionInput = useMemo(
     () => resolveQuickActionInput(liveNormalizedQuery, clipboardSeedForActions),
     [clipboardSeedForActions, liveNormalizedQuery]
   );
   const quickActionInput = useMemo(
-    () => resolveQuickActionInput(normalizedQuery, clipboardSeedForActions),
-    [clipboardSeedForActions, normalizedQuery]
+    () =>
+      resolveQuickActionInput(
+        hasClipboardActionContext ? normalizedQuery : displaySearchQuery,
+        clipboardSeedForActions,
+      ),
+    [
+      clipboardSeedForActions,
+      displaySearchQuery,
+      hasClipboardActionContext,
+      normalizedQuery,
+    ],
   );
 
   // Recommendations only when there is real input (text / image), never on the empty home.
+  // Tied to settled query — never show「推荐操作」a frame before apps for that query.
   const visibleQuickActions = useMemo(() => {
     if (quickActionInput.kind === "none") return [];
+    if (!hasClipboardActionContext && !searchResultsReady && !settledSearchQuery) {
+      // First keystroke(s): wait until app search settles so both sections appear together.
+      return [];
+    }
     return listVisibleQuickActions(
       quickActionInput,
       quickActionUsageById,
-      hasClipboardActionContext ? normalizedQuery : ""
+      hasClipboardActionContext ? normalizedQuery : "",
     );
   }, [
     hasClipboardActionContext,
@@ -1292,6 +1325,8 @@ export function MainPanelPage() {
     quickActionInput,
     quickActionUsageById,
     quickActionsRevision,
+    searchResultsReady,
+    settledSearchQuery,
   ]);
 
   const showSearchLayout =
@@ -1367,8 +1402,8 @@ export function MainPanelPage() {
     }
   }, [activeApp, devUiReloading]);
 
-  // Include the first result because Rust matches arrive after synchronous quick actions.
-  // When an app/plugin becomes the leading result, selection must move to it automatically.
+  // Include the first result; apps and actions settle together via settledSearchQuery.
+  // When an app/plugin is the leading result, selection lands on it (not a stale action).
   const firstSelectionKey = selections[0]?.key ?? "";
   const searchContextKey = `${showSearchLayout ? 1 : 0}|${normalizedQuery}|${quickActionInput.kind}|${firstSelectionKey}`;
   const prevSearchContextKeyRef = useRef<string | null>(null);

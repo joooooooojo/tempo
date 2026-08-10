@@ -89,6 +89,13 @@ function formatDownloadedBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Hint under the indexing banner. */
+function indexingHint(message: string | null | undefined): string {
+  const text = message?.trim() ?? "";
+  if (/启动/.test(text)) return "正在拉起 Everything 搜索服务，尚未开始检索";
+  return "数据库就绪后将自动开始搜索";
+}
+
 /** Stable app-bar field: owns draft text so chrome updates don't remount on every keystroke. */
 function FileSearchAppBarSearch({
   searching,
@@ -264,7 +271,7 @@ export function FileSearchPage() {
   const runSearch = useCallback(
     async (nextQuery: string, nextCategory: FileSearchCategoryId, nextSort: FileSearchSortId) => {
       const trimmed = nextQuery.trim();
-      if (!status?.ready) return;
+      if (!status?.ready || status.indexing) return;
 
       const current = ++requestId.current;
       setSearching(true);
@@ -306,7 +313,7 @@ export function FileSearchPage() {
         if (current !== requestId.current) return;
         const message = err instanceof Error ? err.message : String(err);
         // Indexing is shown via the banner; avoid flashing a hard error while polling.
-        if (/索引|indexing/i.test(message)) {
+        if (/索引|indexing|数据库准备|启动 Everything/i.test(message)) {
           setError(null);
           setSearching(false);
           void api.fileSearchStatus().then(setStatus).catch(() => {});
@@ -320,7 +327,7 @@ export function FileSearchPage() {
         if (current === requestId.current) setSearching(false);
       }
     },
-    [status?.ready],
+    [status?.ready, status?.indexing],
   );
 
   const loadMore = useCallback(async () => {
@@ -417,16 +424,20 @@ export function FileSearchPage() {
   useEffect(() => {
     if (!status?.ready || !status.indexing) return;
     let cancelled = false;
-    const interval = window.setInterval(() => {
+    const tick = () => {
       void api
         .fileSearchStatus()
         .then((next) => {
           if (!cancelled) setStatus(next);
         })
         .catch(() => {});
-    }, 700);
+    };
+    // First tick soon — startup / DB-load transitions are short.
+    const immediate = window.setTimeout(tick, 200);
+    const interval = window.setInterval(tick, 600);
     return () => {
       cancelled = true;
+      window.clearTimeout(immediate);
       window.clearInterval(interval);
     };
   }, [status?.ready, status?.indexing]);
@@ -744,12 +755,10 @@ export function FileSearchPage() {
                 <Loader2 className="h-4 w-4 animate-spin" />
                 <div>
                   <p className="file-search-index-banner__title">
-                    {status.indexingMessage ?? "正在建立文件索引…"}
+                    {status.indexingMessage ?? "数据库准备中…"}
                   </p>
                   <p className="file-search-index-banner__hint">
-                    {status.indexingMessage?.includes("加载")
-                      ? "正在从磁盘加载已有索引，通常很快完成"
-                      : "首次建立索引需要一些时间"}
+                    {indexingHint(status.indexingMessage)}
                   </p>
                 </div>
               </div>
@@ -766,9 +775,13 @@ export function FileSearchPage() {
                 重试引擎
               </Button>
             </div>
-          ) : status?.indexing && items.length === 0 ? (
+          ) : status?.indexing ? (
             <div className="file-search-empty">
-              <p>索引加载完成后自动开始搜索</p>
+              <p>
+                {status.indexingMessage?.includes("启动")
+                  ? "Everything 启动完成后自动开始搜索"
+                  : "数据库就绪后自动开始搜索"}
+              </p>
             </div>
           ) : items.length === 0 && searching ? (
             <div className="file-search-empty">

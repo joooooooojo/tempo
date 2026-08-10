@@ -21,6 +21,8 @@ const PORTABLE_DB_PERSIST_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 static PORTABLE_DB_PERSISTED: AtomicBool = AtomicBool::new(false);
 static PORTABLE_DB_LAST_PERSIST: Mutex<Option<Instant>> = Mutex::new(None);
+/// Avoid repeatedly spawning Everything while a background start is in flight.
+static EVERYTHING_START_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn status(app: &AppHandle) -> Result<FileSearchStatus, String> {
     // IPC queries do not need ES.exe — only Everything itself.
@@ -29,23 +31,40 @@ pub(crate) fn status(app: &AppHandle) -> Result<FileSearchStatus, String> {
             if runtime.portable {
                 maybe_persist_portable_db(&runtime);
             }
-            let index = everything_index_state_for(&runtime);
+
+            // Exe exists but IPC tray HWND is missing → we are (or should be) starting
+            // Everything. Do NOT report ready-to-search; that made the UI flash「搜索中…」.
+            if !everything_ipc_available() {
+                request_everything_start(app, &runtime);
+                return Ok(FileSearchStatus {
+                    ready: true,
+                    engine: Some("everything".into()),
+                    version: Some(runtime.version),
+                    message: Some("正在启动 Everything…".into()),
+                    indexing: true,
+                    indexing_message: Some("正在启动 Everything…".into()),
+                });
+            }
+            EVERYTHING_START_IN_FLIGHT.store(false, Ordering::Relaxed);
+
+            let index = everything_index_state();
             let indexing = index.indexing();
+            let indexing_message = index.message();
             Ok(FileSearchStatus {
                 ready: true,
                 engine: Some("everything".into()),
                 version: Some(runtime.version),
                 message: Some(if indexing {
-                    index
-                        .message()
-                        .unwrap_or_else(|| "正在建立索引…".into())
+                    indexing_message
+                        .clone()
+                        .unwrap_or_else(|| "数据库准备中…".into())
                 } else if runtime.portable {
                     "已就绪（便携 Everything）".into()
                 } else {
                     "已就绪（系统 Everything）".into()
                 }),
                 indexing,
-                indexing_message: index.message(),
+                indexing_message,
             })
         }
         None => Ok(FileSearchStatus {
@@ -57,6 +76,21 @@ pub(crate) fn status(app: &AppHandle) -> Result<FileSearchStatus, String> {
             indexing_message: None,
         }),
     }
+}
+
+fn request_everything_start(app: &AppHandle, runtime: &EverythingRuntime) {
+    if EVERYTHING_START_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    let runtime = runtime.clone();
+    std::thread::spawn(move || {
+        let result = ensure_everything_running(&app, &runtime, false);
+        if result.is_err() {
+            EVERYTHING_START_IN_FLIGHT.store(false, Ordering::Relaxed);
+        }
+        // On success, the next status() poll clears the flag once IPC is up.
+    });
 }
 
 pub(crate) fn ensure_engine(app: &AppHandle) -> Result<FileSearchStatus, String> {
@@ -139,7 +173,7 @@ pub(crate) fn query(app: &AppHandle, request: FileSearchQuery) -> Result<FileSea
             std::thread::sleep(Duration::from_millis(50));
         }
         if everything_index_state().indexing() {
-            return Err("Everything 正在建立文件索引，请稍候再搜".into());
+            return Err("Everything 数据库准备中，请稍候再搜".into());
         }
     }
 
@@ -320,6 +354,7 @@ fn ensure_everything_running(
 ) -> Result<(), String> {
     // FindWindow IPC only — never `tasklist` (console subsystem flashes a window).
     if everything_ipc_available() {
+        EVERYTHING_START_IN_FLIGHT.store(false, Ordering::Relaxed);
         // Another launch path may have left the search UI visible; keep it hidden.
         if runtime.portable {
             hide_everything_search_windows();
@@ -349,6 +384,7 @@ fn ensure_everything_running(
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
         if everything_ipc_available() {
+            EVERYTHING_START_IN_FLIGHT.store(false, Ordering::Relaxed);
             if runtime.portable {
                 hide_everything_search_windows();
                 schedule_persist_when_ready(runtime.clone());
@@ -357,6 +393,7 @@ fn ensure_everything_running(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    EVERYTHING_START_IN_FLIGHT.store(false, Ordering::Relaxed);
     Err("Everything 启动超时，请确认未被杀软拦截，或手动打开 Everything 后重试".into())
 }
 
@@ -602,13 +639,6 @@ fn schedule_persist_when_ready(runtime: EverythingRuntime) {
         .ok();
 }
 
-fn portable_db_path(runtime: &EverythingRuntime) -> Option<PathBuf> {
-    runtime
-        .everything_exe
-        .parent()
-        .map(|dir| dir.join("Everything.db"))
-}
-
 /// GUI host spawning console tools (tasklist / ES) without this flag flashes a console.
 fn silent_command(program: impl AsRef<Path>) -> Command {
     let mut command = Command::new(program.as_ref());
@@ -619,12 +649,11 @@ fn silent_command(program: impl AsRef<Path>) -> Command {
 /// Official guidance (voidtools): only `IS_DB_LOADED` means the database is still
 /// starting. `IS_DB_BUSY` is true whenever *any* query is running — including our
 /// own ES searches — so it must not be treated as "indexing".
+/// SDK does not expose indexing progress / status-bar text — only this boolean.
 #[derive(Debug, Clone, Copy)]
 struct EverythingIndexState {
     /// `Some(false)` = DB still loading; `Some(true)` = ready; `None` = IPC unavailable.
     loaded: Option<bool>,
-    /// True when a persisted Everything.db already exists (load vs first build).
-    has_saved_db: bool,
 }
 
 impl EverythingIndexState {
@@ -636,22 +665,15 @@ impl EverythingIndexState {
         if !self.indexing() {
             return None;
         }
-        Some(if self.has_saved_db {
-            "正在加载文件索引…".to_string()
-        } else {
-            "正在建立文件索引…".to_string()
-        })
+        Some("数据库准备中…".to_string())
     }
 }
 
 fn with_index_fields_for(
-    runtime: Option<&EverythingRuntime>,
+    _runtime: Option<&EverythingRuntime>,
     mut status: FileSearchStatus,
 ) -> FileSearchStatus {
-    let index = match runtime {
-        Some(runtime) => everything_index_state_for(runtime),
-        None => everything_index_state(),
-    };
+    let index = everything_index_state();
     status.indexing = index.indexing();
     status.indexing_message = index.message();
     if status.indexing {
@@ -685,33 +707,14 @@ fn everything_ipc_available() -> bool {
 /// Query Everything IPC for database load state (Everything 1.4+).
 /// See: https://www.voidtools.com/support/everything/sdk/everything_isdbloaded/
 fn everything_index_state() -> EverythingIndexState {
-    everything_index_state_for_db(None)
-}
-
-fn everything_index_state_for(runtime: &EverythingRuntime) -> EverythingIndexState {
-    everything_index_state_for_db(portable_db_path(runtime))
-}
-
-fn everything_index_state_for_db(db_path: Option<PathBuf>) -> EverythingIndexState {
     // EVERYTHING_IPC_IS_DB_LOADED = 401
     const IPC_IS_DB_LOADED: usize = 401;
 
-    let has_saved_db = db_path.as_ref().is_some_and(|path| path.is_file())
-        || std::env::var("LOCALAPPDATA")
-            .ok()
-            .map(PathBuf::from)
-            .map(|base| base.join("Everything").join("Everything.db").is_file())
-            .unwrap_or(false);
-
     let Some(hwnd) = everything_ipc_hwnd() else {
-        return EverythingIndexState {
-            loaded: None,
-            has_saved_db,
-        };
+        return EverythingIndexState { loaded: None };
     };
     EverythingIndexState {
         loaded: unsafe { send_everything_ipc(hwnd, IPC_IS_DB_LOADED) },
-        has_saved_db,
     }
 }
 
@@ -1074,7 +1077,7 @@ fn run_es(es_path: &Path, args: &[&str]) -> Result<String, String> {
                 let _ = child.wait();
                 let _ = std::fs::remove_file(&export_path);
                 if everything_index_state().indexing() {
-                    return Err("Everything 正在建立文件索引，请稍候再搜".into());
+                    return Err("Everything 数据库准备中，请稍候再搜".into());
                 }
                 return Err("搜索超时，请缩小关键词或稍后再试".into());
             }

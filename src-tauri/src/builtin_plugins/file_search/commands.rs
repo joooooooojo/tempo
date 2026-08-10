@@ -13,10 +13,11 @@ pub struct FileSearchStatus {
     pub engine: Option<String>,
     pub version: Option<String>,
     pub message: Option<String>,
-    /// True while Everything is loading/rebuilding its database (Windows).
+    /// True while Everything is starting or its database is still loading (Windows).
+    /// Not set for ordinary query busy (`IS_DB_BUSY`).
     #[serde(default)]
     pub indexing: bool,
-    /// Human-readable indexing phase for the progress banner.
+    /// "正在启动 Everything…" or "数据库准备中…" while `indexing` is true.
     #[serde(default)]
     pub indexing_message: Option<String>,
 }
