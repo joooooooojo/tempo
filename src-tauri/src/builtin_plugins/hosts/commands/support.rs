@@ -447,8 +447,14 @@ pub(super) fn grant_write_permission(path: &Path) -> Result<(), String> {
 pub(super) fn flush_dns_cache() -> Result<(), String> {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+        // `ipconfig.exe` is console-subsystem: from the GUI host it flashes a console that
+        // takes foreground, and the main panel's blur→hide then closes it mid-activation.
         let output = Command::new("ipconfig")
             .arg("/flushdns")
+            .creation_flags(CREATE_NO_WINDOW.0)
             .output()
             .map_err(|e| format!("刷新 DNS 失败: {e}"))?;
         if !output.status.success() {

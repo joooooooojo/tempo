@@ -444,8 +444,15 @@ export function HostsPage() {
     localMutatingRef.current = true;
     setSaving(true);
     try {
-      if (dirty && typeof editorTarget !== "string" && editorTarget.profileId === profile.id) {
-        if (profile.kind === "local") {
+      // Writing the system hosts shells out to flush DNS and may need elevation — keep the
+      // panel open if any of that briefly takes foreground.
+      const next = await withBlurHideSuppressed(async () => {
+        if (
+          dirty &&
+          typeof editorTarget !== "string" &&
+          editorTarget.profileId === profile.id &&
+          profile.kind === "local"
+        ) {
           await api.saveHostsProfile({
             id: profile.id,
             name: profile.name,
@@ -454,8 +461,8 @@ export function HostsPage() {
           });
           contentCache.current.set(profile.id, content);
         }
-      }
-      const next = await api.setHostsProfileActive(profile.id, active);
+        return api.setHostsProfileActive(profile.id, active);
+      });
       setWorkspace(next);
       if (editorTarget === "system") {
         setContent(next.systemContent);
@@ -775,23 +782,15 @@ export function HostsPage() {
       <AlertDialog
         open={pendingToggle !== null}
         onOpenChange={(open) => {
-          if (!open && !saving) {
-            setPendingToggle(null);
-            // Base UI restores focus to the Switch after close; blur so Esc / chrome
-            // aren't stuck on the control until the user clicks elsewhere.
-            queueMicrotask(() => {
-              const active = document.activeElement;
-              if (
-                active instanceof HTMLElement &&
-                active.closest('[data-slot="switch"]')
-              ) {
-                active.blur();
-              }
-            });
-          }
+          if (!open && !saving) setPendingToggle(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent
+          // Never hand focus back to the Switch. The panel hides on blur while it stays
+          // mounted, so a focused Switch survives until the next open — where the Space
+          // of the Alt+Space chord activated it again and raised the inverse confirm.
+          finalFocus={false}
+        >
           <AlertDialogHeader>
             <AlertDialogMedia className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
               <ShieldCheck />
