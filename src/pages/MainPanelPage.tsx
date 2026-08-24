@@ -17,7 +17,7 @@ import {
   setContextMenuBlurHideSuppressed,
   setDevtoolsBlurHideSuppressed,
 } from "@/lib/blurHideGuard";
-import { trapTabKey } from "@/lib/focusTrap";
+import { isInsidePortalOverlay, trapTabKey } from "@/lib/focusTrap";
 import {
   openLauncherContextMenu,
   usageIdForContextTarget,
@@ -1604,19 +1604,6 @@ export function MainPanelPage() {
     ) {
       return;
     }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (event.currentTarget.value) {
-        clearSearchQuery();
-        return;
-      }
-      if (clipboardChipRef.current) {
-        clearClipboardChip();
-        return;
-      }
-      void hideAndResetMainPanel();
-      return;
-    }
     if (event.key === "Backspace") {
       // Empty query + embedded clipboard chip → clear the chip instead of doing nothing.
       if (!event.currentTarget.value && clipboardChipRef.current) {
@@ -1649,17 +1636,43 @@ export function MainPanelPage() {
     }
   };
 
+  // Esc must not depend on the search input being focused: chrome like 展开/收起
+  // steals focus, and a global RegisterHotKey Escape (shelf-style) would swallow
+  // plugin / dialog Esc and the clear-query-then-close sequence.
   useEffect(() => {
-    if (mode !== "app") return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (
+        imeComposingRef.current ||
+        event.isComposing ||
+        event.keyCode === 229
+      ) {
+        return;
+      }
+      const target =
+        event.target instanceof Element ? event.target : document.activeElement;
+      if (isInsidePortalOverlay(target)) return;
+
       event.preventDefault();
       event.stopPropagation();
-      backToSearch();
+      if (modeRef.current === "app") {
+        backToSearch();
+        return;
+      }
+      if (queryRef.current) {
+        clearSearchQuery();
+        return;
+      }
+      if (clipboardChipRef.current) {
+        clearClipboardChip();
+        return;
+      }
+      void hideAndResetMainPanel();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [backToSearch, mode]);
+  }, [backToSearch, hideAndResetMainPanel]);
 
   // Tab past the last control would leave the WebView and fire window blur → hide.
   // Cycle focus inside the panel surface (portaled dialogs keep their own cycle).
@@ -2640,7 +2653,13 @@ function LauncherSection({
       <div className="main-panel-section-heading">
         <h2 id={id}>{title}</h2>
         {expandable ? (
-          <button type="button" className="main-panel-expand-button" onClick={onToggle}>
+          <button
+            type="button"
+            className="main-panel-expand-button"
+            // Keep the search input focused so typing continues after toggle.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={onToggle}
+          >
             {expanded ? "收起" : `展开 (${total})`}
           </button>
         ) : null}

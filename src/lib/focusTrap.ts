@@ -14,7 +14,7 @@ const FOCUSABLE_SELECTOR = [
 ].join(",");
 
 /** Portaled overlays manage their own Tab cycle — leave them alone. */
-const PORTAL_FOCUS_ROOT_SELECTOR = [
+export const PORTAL_FOCUS_ROOT_SELECTOR = [
   '[data-slot="alert-dialog-content"]',
   '[data-slot="dialog-panel"]',
   '[data-slot="dialog-content"]',
@@ -33,6 +33,10 @@ function isVisibleFocusable(element: HTMLElement): boolean {
   // Allow zero-size native inputs that still accept focus (rare); skip fully collapsed.
   const rects = element.getClientRects();
   return rects.length > 0;
+}
+
+export function isInsidePortalOverlay(node: EventTarget | null | undefined): boolean {
+  return node instanceof Element && Boolean(node.closest(PORTAL_FOCUS_ROOT_SELECTOR));
 }
 
 export function listFocusableElements(root: HTMLElement): HTMLElement[] {
