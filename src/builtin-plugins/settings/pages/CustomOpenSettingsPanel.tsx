@@ -220,7 +220,7 @@ export function CustomOpenSettingsPanel() {
                           <Input
                             autoFocus
                             value={renameValue}
-                            className="h-8 text-[13px]"
+                            className="text-[13px]"
                             onChange={(event) => setRenameValue(event.target.value)}
                             onBlur={() => void commitRename(entry)}
                             onKeyDown={(event) => {

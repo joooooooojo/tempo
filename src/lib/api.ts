@@ -61,6 +61,8 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Partial<Settings>) =>
     invoke<void>("update_settings", { settings }),
+  createMainPanelIconDataUrl: (path: string) =>
+    invoke<string>("create_main_panel_icon_data_url", { path }),
   getShortcutStatuses: () => invoke<ShortcutBindingStatus[]>("get_shortcut_statuses"),
   regenerateMcpToken: () => invoke<Settings>("regenerate_mcp_token"),
   setStorageDir: (storageDir: string) =>

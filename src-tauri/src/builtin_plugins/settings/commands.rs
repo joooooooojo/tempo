@@ -11,6 +11,88 @@ use tauri::{AppHandle, Manager};
 use crate::commands::markdown::{
     markdown_image_reference, markdown_image_sources, markdown_image_url_for_path,
 };
+use base64::Engine as _;
+use image::{DynamicImage, ImageFormat, Limits, Rgba, RgbaImage};
+use std::io::Cursor;
+
+const MAX_MAIN_PANEL_ICON_DATA_URL_BYTES: usize = 512 * 1024;
+const MAX_MAIN_PANEL_ICON_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_MAIN_PANEL_ICON_DIMENSION: u32 = 8192;
+const MAIN_PANEL_ICON_SIZE: u32 = 192;
+
+pub(crate) fn normalize_main_panel_icon_data_url(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    if value.len() > MAX_MAIN_PANEL_ICON_DATA_URL_BYTES {
+        return Err("main panel icon is too large".into());
+    }
+
+    let encoded = value
+        .strip_prefix("data:image/png;base64,")
+        .ok_or_else(|| "main panel icon must be a PNG data URL".to_string())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| "main panel icon contains invalid image data".to_string())?;
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if !bytes.starts_with(PNG_SIGNATURE) {
+        return Err("main panel icon contains invalid PNG data".into());
+    }
+
+    Ok(value.to_string())
+}
+
+pub(crate) fn main_panel_icon_data_url_from_bytes(bytes: &[u8]) -> Result<String, String> {
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| "无法识别图片格式".to_string())?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_MAIN_PANEL_ICON_DIMENSION);
+    limits.max_image_height = Some(MAX_MAIN_PANEL_ICON_DIMENSION);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+
+    let decoded = reader
+        .decode()
+        .map_err(|_| "图片格式无效或尺寸过大".to_string())?;
+    let resized = decoded
+        .thumbnail(MAIN_PANEL_ICON_SIZE, MAIN_PANEL_ICON_SIZE)
+        .to_rgba8();
+    let mut canvas = RgbaImage::from_pixel(
+        MAIN_PANEL_ICON_SIZE,
+        MAIN_PANEL_ICON_SIZE,
+        Rgba([0, 0, 0, 0]),
+    );
+    let x = (MAIN_PANEL_ICON_SIZE - resized.width()) / 2;
+    let y = (MAIN_PANEL_ICON_SIZE - resized.height()) / 2;
+    image::imageops::overlay(&mut canvas, &resized, i64::from(x), i64::from(y));
+
+    let mut png = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(canvas)
+        .write_to(&mut png, ImageFormat::Png)
+        .map_err(|_| "无法处理这张图片".to_string())?;
+    let data_url = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png.into_inner())
+    );
+    normalize_main_panel_icon_data_url(&data_url)
+}
+
+#[tauri::command]
+pub fn create_main_panel_icon_data_url(path: String) -> Result<String, String> {
+    let path = std::path::PathBuf::from(path);
+    let metadata = path.metadata().map_err(|_| "所选图片不存在".to_string())?;
+    if !metadata.is_file() {
+        return Err("请选择图片文件".into());
+    }
+    if metadata.len() > MAX_MAIN_PANEL_ICON_SOURCE_BYTES {
+        return Err("图片不能超过 10 MB".into());
+    }
+
+    let bytes = std::fs::read(path).map_err(|_| "无法读取这张图片".to_string())?;
+    main_panel_icon_data_url_from_bytes(&bytes)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShortcutSetting {
@@ -122,6 +204,12 @@ pub fn update_settings(
     let previous_theme = current.theme.clone();
     if let Some(v) = settings.get("theme").and_then(|v| v.as_str()) {
         current.theme = v.into();
+    }
+    if let Some(value) = settings.get("main_panel_icon_data_url") {
+        let value = value
+            .as_str()
+            .ok_or_else(|| "main_panel_icon_data_url must be a string".to_string())?;
+        current.main_panel_icon_data_url = normalize_main_panel_icon_data_url(value)?;
     }
     if let Some(v) = settings
         .get("clipboard_monitor_enabled")

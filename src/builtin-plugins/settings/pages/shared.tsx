@@ -283,7 +283,7 @@ export function McpCapabilitiesHint() {
       <PopoverTrigger asChild openOnHover delay={200} closeDelay={100}>
         <button
           type="button"
-          className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="查看 MCP 功能"
         >
           <CircleHelp className="size-3.5" />

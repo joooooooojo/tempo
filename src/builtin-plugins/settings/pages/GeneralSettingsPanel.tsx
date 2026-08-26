@@ -30,6 +30,7 @@ import {
   resolveShortcutRowStatus,
 } from "@/builtin-plugins/settings/pages/shared";
 import { PluginRuntimeSection } from "@/builtin-plugins/settings/pages/PluginRuntimeSection";
+import { MainPanelIconSetting } from "@/builtin-plugins/settings/pages/MainPanelIconSetting";
 
 interface GeneralSettingsPanelProps {
   settings: Settings;
@@ -110,7 +111,7 @@ export function GeneralSettingsPanel({
               value={settings.theme}
               onValueChange={(value) => value && void update({ theme: value as Settings["theme"] })}
             >
-              <SelectTrigger className="h-9 w-32 text-[13px]">
+              <SelectTrigger className="w-32 text-[13px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -124,6 +125,10 @@ export function GeneralSettingsPanel({
               </SelectContent>
             </Select>
           </Row>
+          <MainPanelIconSetting
+            dataUrl={settings.main_panel_icon_data_url}
+            update={update}
+          />
         </Card>
       </Section>
 
@@ -201,7 +206,7 @@ export function GeneralSettingsPanel({
                         void update({ mcp_port: port });
                       }
                     }}
-                    className="h-9 w-28 border-0 glass-subtle"
+                    className="w-28 border-0 glass-subtle"
                   />
                   <span className="text-[12px] text-muted-foreground">仅监听 127.0.0.1</span>
                 </div>

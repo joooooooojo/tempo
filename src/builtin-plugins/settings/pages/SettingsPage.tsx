@@ -4,6 +4,7 @@ import { HardDrive, Puzzle, SlidersHorizontal, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { emitThemeChange } from "@/lib/theme";
+import { emitMainPanelIconChange } from "@/lib/mainPanelIcon";
 import { getAppVersion } from "@/lib/update";
 import { useUpdateStore, runCheckUpdate, runInstallUpdate } from "@/lib/updateStore";
 import type { Settings } from "@/types";
@@ -83,6 +84,9 @@ export function SettingsPage() {
       await api.updateSettings(patch);
       if (patch.theme !== undefined) {
         await emitThemeChange(patch.theme);
+      }
+      if (patch.main_panel_icon_data_url !== undefined) {
+        await emitMainPanelIconChange(patch.main_panel_icon_data_url);
       }
       toast.success("已保存");
     } catch (error) {

@@ -75,6 +75,7 @@ import {
 } from "@/apps/types";
 import { api } from "@/lib/api";
 import { notifyUser } from "@/lib/notifications";
+import { subscribeMainPanelIconChanges } from "@/lib/mainPanelIcon";
 import { playNotificationSound } from "@/lib/sound";
 import {
   applyTheme,
@@ -224,6 +225,7 @@ export function MainPanelPage() {
   const [reminder, setReminder] = useState<ReminderEvent | null>(null);
   const [devWindowPinned, setDevWindowPinned] = useState(false);
   const [devUiReloading, setDevUiReloading] = useState(false);
+  const [mainPanelIconDataUrl, setMainPanelIconDataUrl] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const inputMeasureRef = useRef<HTMLSpanElement>(null);
   const inputWrapperRef = useRef<HTMLDivElement>(null);
@@ -365,12 +367,13 @@ export function MainPanelPage() {
     return unsubscribe;
   }, []);
 
-  const refreshDisabledBuiltins = useCallback(() => {
+  const refreshLauncherSettings = useCallback(() => {
     if (!isTauri) return;
     void api
       .getSettings()
       .then((settings) => {
         setDisabledBuiltinIds(new Set(settings.disabled_builtin_apps ?? []));
+        setMainPanelIconDataUrl(settings.main_panel_icon_data_url ?? "");
       })
       .catch(() => {
         /* ignore */
@@ -378,8 +381,13 @@ export function MainPanelPage() {
   }, [isTauri]);
 
   useEffect(() => {
-    refreshDisabledBuiltins();
-  }, [refreshDisabledBuiltins]);
+    refreshLauncherSettings();
+  }, [refreshLauncherSettings]);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    return subscribeMainPanelIconChanges(setMainPanelIconDataUrl);
+  }, [isTauri]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -864,7 +872,7 @@ export function MainPanelPage() {
       window.clearTimeout(armTimer);
       panelVisibleRef.current = true;
       setOpenRevision((current) => current + 1);
-      refreshDisabledBuiltins();
+      refreshLauncherSettings();
       void syncClipboardUrlBrowserActions();
       const restored = restoreSessionIfNeeded();
       if (!restored && modeRef.current === "search") {
@@ -1037,7 +1045,7 @@ export function MainPanelPage() {
     loadApps,
     markClipboardChipHidden,
     openBuiltinApp,
-    refreshDisabledBuiltins,
+    refreshLauncherSettings,
   ]);
 
   const normalizedQuery = query.trim();
@@ -2170,7 +2178,11 @@ export function MainPanelPage() {
                   title="打开设置"
                   onClick={() => openBuiltinApp("settings")}
                 >
-                  <img src="/favicon.png" alt="" className="main-panel-logo" />
+                  <img
+                    src={mainPanelIconDataUrl || "/favicon.png"}
+                    alt=""
+                    className="main-panel-logo"
+                  />
                 </Button>
               </>
             )}

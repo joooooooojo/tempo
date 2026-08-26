@@ -308,7 +308,7 @@ export function PluginSettingsSection() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 px-2 text-[11px]"
+                        className="px-2 text-[11px]"
                         disabled={busy}
                         onClick={() => void promotePending(plugin)}
                       >
@@ -320,7 +320,7 @@ export function PluginSettingsSection() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 px-2.5"
+                        className="px-2.5"
                         disabled={busy}
                         onClick={() => void trustPlugin(plugin)}
                       >
@@ -345,7 +345,7 @@ export function PluginSettingsSection() {
                           type="button"
                           size="icon-sm"
                           variant="ghost"
-                          className="size-7 text-muted-foreground"
+                          className="text-muted-foreground"
                           disabled={busy}
                           aria-label="更多"
                           title="更多"
@@ -451,7 +451,7 @@ export function PluginSettingsSection() {
                           type="button"
                           size="icon-sm"
                           variant="ghost"
-                          className="size-7 text-muted-foreground"
+                          className="text-muted-foreground"
                           disabled={busy}
                           aria-label="更多"
                           title="更多"

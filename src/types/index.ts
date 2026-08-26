@@ -139,6 +139,8 @@ export interface Settings {
   autostart: boolean;
   sound_enabled: boolean;
   theme: "light" | "dark" | "system";
+  /** Custom image shown in the settings shortcut at the right of the main-panel search bar. */
+  main_panel_icon_data_url: string;
   clipboard_monitor_enabled: boolean;
   clipboard_max_entries: number;
   clipboard_paste_mode: "clipboard" | "active_app";

@@ -82,11 +82,71 @@
 }
 
 .settings-main {
+  --settings-control-height: 28px;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
   position: relative;
+}
+
+:is(.settings-main, .plugin-config-dialog) :is(
+  [data-slot="button"],
+  [data-slot="input"],
+  [data-slot="select-trigger"]
+) {
+  height: var(--settings-control-height, 28px);
+  min-height: var(--settings-control-height, 28px);
+}
+
+:is(.settings-main, .plugin-config-dialog) [data-slot="button"] {
+  gap: 4px;
+  padding-inline: 8px;
+}
+
+:is(.settings-main, .plugin-config-dialog) [data-slot="button"][data-size^="icon"] {
+  width: var(--settings-control-height, 28px);
+  padding-inline: 0;
+}
+
+.main-panel-icon-picker {
+  display: inline-flex;
+  width: var(--settings-control-height);
+  height: var(--settings-control-height);
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 2px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 8px;
+  background: hsl(var(--muted) / 0.4);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.main-panel-icon-picker:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--primary) / 0.08);
+}
+
+.main-panel-icon-picker:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.35);
+}
+
+.main-panel-icon-picker:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.main-panel-icon-picker__image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .settings-main__scroll {
@@ -351,6 +411,7 @@
 }
 
 .plugin-config-dialog {
+  --settings-control-height: 28px;
   width: 90vw;
   max-width: 90vw;
   height: 90vh;

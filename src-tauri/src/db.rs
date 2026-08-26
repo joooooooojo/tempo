@@ -133,6 +133,7 @@ pub struct Settings {
     pub autostart: bool,
     pub sound_enabled: bool,
     pub theme: String,
+    pub main_panel_icon_data_url: String,
     pub clipboard_monitor_enabled: bool,
     pub clipboard_max_entries: u32,
     pub clipboard_paste_mode: String,
@@ -160,6 +161,7 @@ impl Default for Settings {
             autostart: false,
             sound_enabled: false,
             theme: "system".into(),
+            main_panel_icon_data_url: String::new(),
             clipboard_monitor_enabled: true,
             clipboard_max_entries: 200,
             clipboard_paste_mode: "clipboard".into(),
@@ -607,6 +609,7 @@ pub fn load_settings(conn: &Connection) -> Settings {
         autostart: get_setting(conn, "autostart", "false") == "true",
         sound_enabled: get_setting(conn, "sound_enabled", "false") == "true",
         theme: get_setting(conn, "theme", "system"),
+        main_panel_icon_data_url: get_setting(conn, "main_panel_icon_data_url", ""),
         clipboard_monitor_enabled: get_setting(conn, "clipboard_monitor_enabled", "true") == "true",
         clipboard_max_entries: get_setting(conn, "clipboard_max_entries", "200")
             .parse()
@@ -655,6 +658,11 @@ pub fn save_settings(conn: &Connection, settings: &Settings) {
     set_setting(conn, "autostart", &settings.autostart.to_string());
     set_setting(conn, "sound_enabled", &settings.sound_enabled.to_string());
     set_setting(conn, "theme", &settings.theme);
+    set_setting(
+        conn,
+        "main_panel_icon_data_url",
+        &settings.main_panel_icon_data_url,
+    );
     set_setting(
         conn,
         "clipboard_monitor_enabled",

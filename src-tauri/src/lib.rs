@@ -368,6 +368,7 @@ pub fn run() {
             builtin_plugins::reports::get_weekly_report,
             builtin_plugins::settings::get_settings,
             builtin_plugins::settings::update_settings,
+            builtin_plugins::settings::create_main_panel_icon_data_url,
             builtin_plugins::settings::get_shortcut_statuses,
             builtin_plugins::settings::regenerate_mcp_token,
             builtin_plugins::settings::set_storage_dir,

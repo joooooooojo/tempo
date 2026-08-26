@@ -280,7 +280,7 @@ function SettingFieldRow({
             if (next != null) onCommit(next);
           }}
         >
-          <SelectTrigger className="h-9 min-w-[9rem] text-[13px]">
+          <SelectTrigger className="min-w-[9rem] text-[13px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent overlayLayer>
@@ -317,7 +317,7 @@ function SettingFieldRow({
             onCommit(Array.isArray(next) ? next : []);
           }}
         >
-          <SelectTrigger className="h-9 min-w-[9rem] max-w-[16rem] text-[13px]">
+          <SelectTrigger className="min-w-[9rem] max-w-[16rem] text-[13px]">
             <SelectValue>
               {selectedLabels.length > 0
                 ? selectedLabels.join("、")
@@ -342,7 +342,7 @@ function SettingFieldRow({
   return (
     <Row label={field.title} desc={field.description ?? undefined}>
       <Input
-        className="h-9 w-48 text-[13px]"
+        className="w-48 text-[13px]"
         value={current}
         placeholder={field.placeholder ?? undefined}
         onChange={(event) => onLocalChange(event.target.value)}
