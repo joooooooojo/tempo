@@ -48,16 +48,30 @@ fn empty_and_duplicate_shortcuts_are_valid_for_persistence() {
 }
 
 #[test]
-fn main_panel_icon_accepts_only_small_png_data_urls() {
-    let png = "data:image/png;base64,iVBORw0KGgo=";
-    assert_eq!(normalize_main_panel_icon_data_url(png).unwrap(), png);
+fn main_panel_icon_accepts_supported_data_urls() {
+    use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+    use std::io::Cursor;
+
+    let mut source = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([24, 160, 88, 255])))
+        .write_to(&mut source, ImageFormat::Png)
+        .expect("encode source png");
+    let data_url =
+        main_panel_icon_data_url_from_bytes(&source.into_inner()).expect("create data url");
+
+    assert_eq!(
+        normalize_main_panel_icon_data_url(&data_url).unwrap(),
+        data_url
+    );
     assert_eq!(normalize_main_panel_icon_data_url("  ").unwrap(), "");
-    assert!(normalize_main_panel_icon_data_url("data:image/jpeg;base64,/9j/").is_err());
-    assert!(normalize_main_panel_icon_data_url("data:image/png;base64,bm90LXBuZw==").is_err());
+    assert!(
+        normalize_main_panel_icon_data_url(&data_url.replace("image/png", "image/gif")).is_err()
+    );
+    assert!(normalize_main_panel_icon_data_url("data:image/png;base64,bm90LWltYWdl").is_err());
 }
 
 #[test]
-fn main_panel_icon_image_is_decoded_and_fitted_to_the_canvas() {
+fn main_panel_icon_preserves_source_format_and_dimensions() {
     use base64::Engine as _;
     use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage};
     use std::io::Cursor;
@@ -66,12 +80,52 @@ fn main_panel_icon_image_is_decoded_and_fitted_to_the_canvas() {
     DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 1, Rgba([24, 160, 88, 255])))
         .write_to(&mut source, ImageFormat::Png)
         .expect("encode source png");
-    let data_url =
-        main_panel_icon_data_url_from_bytes(&source.into_inner()).expect("create icon data url");
+    let source = source.into_inner();
+    let data_url = main_panel_icon_data_url_from_bytes(&source).expect("create icon data url");
     let output = base64::engine::general_purpose::STANDARD
         .decode(data_url.trim_start_matches("data:image/png;base64,"))
         .expect("decode output png");
     let image = image::load_from_memory(&output).expect("read output png");
 
-    assert_eq!(image.dimensions(), (192, 192));
+    assert_eq!(output, source);
+    assert_eq!(image.dimensions(), (2, 1));
+}
+
+#[test]
+fn main_panel_icon_preserves_animated_gif_frames() {
+    use base64::Engine as _;
+    use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
+    use image::{AnimationDecoder, Delay, Frame, Rgba, RgbaImage};
+    use std::io::Cursor;
+
+    let frames = [Rgba([255, 0, 0, 255]), Rgba([0, 255, 0, 255])].map(|color| {
+        Frame::from_parts(
+            RgbaImage::from_pixel(2, 2, color),
+            0,
+            0,
+            Delay::from_numer_denom_ms(80, 1),
+        )
+    });
+    let mut source = Vec::new();
+    {
+        let mut encoder = GifEncoder::new(&mut source);
+        encoder
+            .set_repeat(Repeat::Infinite)
+            .expect("set GIF repeat");
+        encoder.encode_frames(frames).expect("encode animated GIF");
+    }
+
+    let data_url = main_panel_icon_data_url_from_bytes(&source).expect("create GIF data url");
+    assert!(data_url.starts_with("data:image/gif;base64,"));
+    let output = base64::engine::general_purpose::STANDARD
+        .decode(data_url.trim_start_matches("data:image/gif;base64,"))
+        .expect("decode output GIF");
+    let decoded = GifDecoder::new(Cursor::new(&output))
+        .expect("decode GIF")
+        .into_frames()
+        .collect_frames()
+        .expect("collect GIF frames");
+
+    assert_eq!(output, source);
+    assert_eq!(decoded.len(), 2);
 }

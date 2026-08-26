@@ -49,7 +49,7 @@ export function listVisibleQuickActions(
 ): QuickAction[] {
   if (input.kind === "none") return [];
   const searchTerms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const visible = listQuickActions().filter((action) => {
+  const candidates = listQuickActions().filter((action) => {
     if (!action.accepts.includes(input.kind)) return false;
     if (action.isVisible && !action.isVisible(input)) return false;
     if (searchTerms.length === 0) return true;
@@ -59,6 +59,8 @@ export function listVisibleQuickActions(
       .toLowerCase();
     return searchTerms.every((term) => searchable.includes(term));
   });
+  const exclusive = candidates.filter((action) => action.exclusive);
+  const visible = exclusive.length > 0 ? exclusive : candidates;
 
   return visible
     .map((action, index) => ({ action, index }))

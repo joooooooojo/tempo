@@ -192,6 +192,10 @@ export const api = {
     invoke<void>("set_main_panel_position", { x, y }),
   saveMainPanelPosition: () => invoke<void>("save_main_panel_position"),
   showMainPanel: () => invoke<void>("show_main_panel_window"),
+  getMainPanelVisibilityGeneration: () =>
+    invoke<number>("get_main_panel_visibility_generation"),
+  hideMainPanelWindow: (generation: number) =>
+    invoke<boolean>("hide_main_panel_window", { generation }),
   exportTodosBackup: (path: string) =>
     invoke<void>("export_todos_backup", { path }),
   importTodosBackup: (path: string) =>

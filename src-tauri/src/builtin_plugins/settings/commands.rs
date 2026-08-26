@@ -12,13 +12,50 @@ use crate::commands::markdown::{
     markdown_image_reference, markdown_image_sources, markdown_image_url_for_path,
 };
 use base64::Engine as _;
-use image::{DynamicImage, ImageFormat, Limits, Rgba, RgbaImage};
+use image::{ImageFormat, Limits};
 use std::io::Cursor;
 
-const MAX_MAIN_PANEL_ICON_DATA_URL_BYTES: usize = 512 * 1024;
+const MAX_MAIN_PANEL_ICON_DATA_URL_BYTES: usize = 14 * 1024 * 1024;
 const MAX_MAIN_PANEL_ICON_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_MAIN_PANEL_ICON_DIMENSION: u32 = 8192;
-const MAIN_PANEL_ICON_SIZE: u32 = 192;
+
+fn main_panel_icon_mime(format: ImageFormat) -> Option<&'static str> {
+    match format {
+        ImageFormat::Png => Some("image/png"),
+        ImageFormat::Jpeg => Some("image/jpeg"),
+        ImageFormat::Gif => Some("image/gif"),
+        ImageFormat::WebP => Some("image/webp"),
+        ImageFormat::Bmp => Some("image/bmp"),
+        ImageFormat::Ico => Some("image/x-icon"),
+        _ => None,
+    }
+}
+
+fn validate_main_panel_icon_bytes(bytes: &[u8]) -> Result<ImageFormat, String> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_MAIN_PANEL_ICON_SOURCE_BYTES {
+        return Err("图片不能超过 10 MB".into());
+    }
+
+    let format = image::guess_format(bytes).map_err(|_| "无法识别图片格式".to_string())?;
+    if main_panel_icon_mime(format).is_none() {
+        return Err("不支持这种图片格式".into());
+    }
+
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_MAIN_PANEL_ICON_DIMENSION);
+    limits.max_image_height = Some(MAX_MAIN_PANEL_ICON_DIMENSION);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|_| "图片格式无效或尺寸过大".to_string())?;
+    if width == 0 || height == 0 {
+        return Err("图片尺寸无效".into());
+    }
+
+    Ok(format)
+}
 
 pub(crate) fn normalize_main_panel_icon_data_url(value: &str) -> Result<String, String> {
     let value = value.trim();
@@ -29,54 +66,31 @@ pub(crate) fn normalize_main_panel_icon_data_url(value: &str) -> Result<String, 
         return Err("main panel icon is too large".into());
     }
 
-    let encoded = value
-        .strip_prefix("data:image/png;base64,")
-        .ok_or_else(|| "main panel icon must be a PNG data URL".to_string())?;
+    let (header, encoded) = value
+        .split_once(',')
+        .ok_or_else(|| "main panel icon must be an image data URL".to_string())?;
+    let mime = header
+        .strip_prefix("data:")
+        .and_then(|value| value.strip_suffix(";base64"))
+        .ok_or_else(|| "main panel icon must be a base64 image data URL".to_string())?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|_| "main panel icon contains invalid image data".to_string())?;
-    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
-    if !bytes.starts_with(PNG_SIGNATURE) {
-        return Err("main panel icon contains invalid PNG data".into());
+    let format = validate_main_panel_icon_bytes(&bytes)?;
+    if main_panel_icon_mime(format) != Some(mime) {
+        return Err("main panel icon MIME type does not match its image data".into());
     }
 
     Ok(value.to_string())
 }
 
 pub(crate) fn main_panel_icon_data_url_from_bytes(bytes: &[u8]) -> Result<String, String> {
-    let mut reader = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|_| "无法识别图片格式".to_string())?;
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(MAX_MAIN_PANEL_ICON_DIMENSION);
-    limits.max_image_height = Some(MAX_MAIN_PANEL_ICON_DIMENSION);
-    limits.max_alloc = Some(128 * 1024 * 1024);
-    reader.limits(limits);
-
-    let decoded = reader
-        .decode()
-        .map_err(|_| "图片格式无效或尺寸过大".to_string())?;
-    let resized = decoded
-        .thumbnail(MAIN_PANEL_ICON_SIZE, MAIN_PANEL_ICON_SIZE)
-        .to_rgba8();
-    let mut canvas = RgbaImage::from_pixel(
-        MAIN_PANEL_ICON_SIZE,
-        MAIN_PANEL_ICON_SIZE,
-        Rgba([0, 0, 0, 0]),
-    );
-    let x = (MAIN_PANEL_ICON_SIZE - resized.width()) / 2;
-    let y = (MAIN_PANEL_ICON_SIZE - resized.height()) / 2;
-    image::imageops::overlay(&mut canvas, &resized, i64::from(x), i64::from(y));
-
-    let mut png = Cursor::new(Vec::new());
-    DynamicImage::ImageRgba8(canvas)
-        .write_to(&mut png, ImageFormat::Png)
-        .map_err(|_| "无法处理这张图片".to_string())?;
-    let data_url = format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(png.into_inner())
-    );
-    normalize_main_panel_icon_data_url(&data_url)
+    let format = validate_main_panel_icon_bytes(bytes)?;
+    let mime = main_panel_icon_mime(format).ok_or_else(|| "不支持这种图片格式".to_string())?;
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 #[tauri::command]

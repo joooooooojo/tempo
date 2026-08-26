@@ -111,8 +111,8 @@
 
 .main-panel-icon-picker {
   display: inline-flex;
-  width: var(--settings-control-height);
-  height: var(--settings-control-height);
+  width: 36px;
+  height: 36px;
   flex: none;
   align-items: center;
   justify-content: center;
@@ -147,6 +147,7 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+  border-radius: inherit;
 }
 
 .settings-main__scroll {

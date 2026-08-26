@@ -8,6 +8,7 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder,
 };
 
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,10 @@ const MAIN_PANEL_POSITION_SETTING: &str = "main_panel_position";
 /// quick Alt+Space after mouse blur-hide cannot still see `is_visible() == true`
 /// and hide again instead of reopening.
 static MAIN_PANEL_LOGICALLY_VISIBLE: AtomicBool = AtomicBool::new(false);
+/// Invalidates a blur-hide request whenever the panel is opened again.
+static MAIN_PANEL_VISIBILITY_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Keep native show/hide and the corresponding logical state transition atomic.
+static MAIN_PANEL_VISIBILITY_TRANSITION: Mutex<()> = Mutex::new(());
 
 pub const SHELF_PICKER_LABEL: &str = "shelf-picker";
 pub const SHELF_HEIGHT: f64 = 292.0;
@@ -90,6 +95,14 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn show_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    let _transition = MAIN_PANEL_VISIBILITY_TRANSITION.lock();
+    show_main_panel_locked(app)
+}
+
+fn show_main_panel_locked(app: &AppHandle) -> tauri::Result<()> {
+    let generation = MAIN_PANEL_VISIBILITY_GENERATION
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1);
     MAIN_PANEL_LOGICALLY_VISIBLE.store(true, Ordering::SeqCst);
     let (default_width, default_height) = main_panel_window_size();
     let mut width = default_width;
@@ -130,7 +143,7 @@ pub fn show_main_panel(app: &AppHandle) -> tauri::Result<()> {
         window.set_focus()?;
     }
 
-    emit_to_debug(app, MAIN_PANEL_LABEL, "main-panel:open", ());
+    emit_to_debug(app, MAIN_PANEL_LABEL, "main-panel:open", generation);
     crate::commands::launcher::request_launcher_index_refresh(app);
     Ok(())
 }
@@ -139,9 +152,7 @@ pub fn is_main_panel_visible(_app: &AppHandle) -> bool {
     MAIN_PANEL_LOGICALLY_VISIBLE.load(Ordering::SeqCst)
 }
 
-/// Frontend blur-hide uses `WebviewWindow::hide` directly; keep the toggle flag in sync
-/// so the next Alt+Space opens instead of treating the panel as still shown.
-#[tauri::command]
+/// Update the shortcut toggle state before the native window is hidden.
 pub fn mark_main_panel_hidden() {
     MAIN_PANEL_LOGICALLY_VISIBLE.store(false, Ordering::SeqCst);
     #[cfg(windows)]
@@ -149,6 +160,11 @@ pub fn mark_main_panel_hidden() {
 }
 
 pub fn hide_main_panel(app: &AppHandle) -> tauri::Result<()> {
+    let _transition = MAIN_PANEL_VISIBILITY_TRANSITION.lock();
+    hide_main_panel_locked(app, true)
+}
+
+fn hide_main_panel_locked(app: &AppHandle, emit_shortcut_event: bool) -> tauri::Result<()> {
     // Mark closed first so a concurrent Alt+Space toggles open, not hide-again.
     mark_main_panel_hidden();
     crate::launcher_context_menu::hide_with_main_panel(app);
@@ -168,15 +184,24 @@ pub fn hide_main_panel(app: &AppHandle) -> tauri::Result<()> {
         window.hide()?;
     }
 
-    emit_to_debug(app, MAIN_PANEL_LABEL, "main-panel:shortcut-hide", ());
+    if emit_shortcut_event {
+        emit_to_debug(app, MAIN_PANEL_LABEL, "main-panel:shortcut-hide", ());
+    }
     Ok(())
 }
 
 pub fn toggle_main_panel(app: &AppHandle) -> tauri::Result<()> {
-    if is_main_panel_visible(app) {
-        hide_main_panel(app)
+    let _transition = MAIN_PANEL_VISIBILITY_TRANSITION.lock();
+    let focused = app
+        .get_webview_window(MAIN_PANEL_LABEL)
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    // Once focus has moved elsewhere, Alt+Space means "bring back" even if the
+    // frontend blur-hide command has not reached Rust yet.
+    if is_main_panel_visible(app) && focused {
+        hide_main_panel_locked(app, true)
     } else {
-        show_main_panel(app)
+        show_main_panel_locked(app)
     }
 }
 
@@ -390,6 +415,24 @@ fn resize_main_panel_height_only(
 #[tauri::command]
 pub fn show_main_panel_window(app: AppHandle) -> Result<(), String> {
     show_main_panel(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_main_panel_visibility_generation() -> u64 {
+    MAIN_PANEL_VISIBILITY_GENERATION.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub fn hide_main_panel_window(app: AppHandle, generation: u64) -> Result<bool, String> {
+    let _transition = MAIN_PANEL_VISIBILITY_TRANSITION.lock();
+    if !MAIN_PANEL_LOGICALLY_VISIBLE.load(Ordering::SeqCst)
+        || MAIN_PANEL_VISIBILITY_GENERATION.load(Ordering::SeqCst) != generation
+    {
+        return Ok(false);
+    }
+
+    hide_main_panel_locked(&app, false).map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 /// Prepare overlay panels so macOS NSOpenPanel sheets are visible (ZTools uses modal-panel

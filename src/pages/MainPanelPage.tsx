@@ -9,7 +9,6 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   isBlurHideSuppressed,
@@ -238,6 +237,7 @@ export function MainPanelPage() {
   /** Timestamp when panel was hidden while a plugin/app was open. */
   const appSessionHiddenAtRef = useRef<number | null>(null);
   const panelVisibleRef = useRef(true);
+  const panelVisibilityGenerationRef = useRef(0);
   const contentRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<string | null>(null);
   const modeRef = useRef<MainPanelMode>("search");
@@ -590,25 +590,28 @@ export function MainPanelPage() {
     panelVisibleRef.current = false;
     setDevtoolsBlurHideSuppressed(false);
     dismissClipboardSeed();
-    await hideMainPanel();
+    const generation = panelVisibilityGenerationRef.current;
+    await hideMainPanel(generation);
     resetMainPanelState();
     // Search layout ResizeObserver updates size while the window is still hidden.
   }, [dismissClipboardSeed, resetMainPanelState]);
 
   /** Blur / outside click: keep search chip/query (and app session) for the next open. */
-  const hidePreservingSession = useCallback(async () => {
+  const hidePreservingSession = useCallback(async (generation?: number) => {
+    const hideGeneration = generation ?? panelVisibilityGenerationRef.current;
+    if (hideGeneration !== panelVisibilityGenerationRef.current) return;
     const appId = activeAppIdRef.current;
     if (modeRef.current === "app" && appId) {
       writeMainPanelSession(appId);
       appSessionHiddenAtRef.current = Date.now();
       panelVisibleRef.current = false;
       setDevtoolsBlurHideSuppressed(false);
-      await hideMainPanel();
+      await hideMainPanel(hideGeneration);
       return;
     }
     markClipboardChipHidden();
     setDevtoolsBlurHideSuppressed(false);
-    await hideMainPanel();
+    await hideMainPanel(hideGeneration);
   }, [markClipboardChipHidden]);
 
   const backToSearch = useCallback(() => {
@@ -867,7 +870,9 @@ export function MainPanelPage() {
       return true;
     };
 
-    const prepareForOpen = () => {
+    const prepareForOpen = (generation: number) => {
+      if (generation <= panelVisibilityGenerationRef.current) return;
+      panelVisibilityGenerationRef.current = generation;
       armed = false;
       window.clearTimeout(armTimer);
       panelVisibleRef.current = true;
@@ -912,6 +917,7 @@ export function MainPanelPage() {
       }
       armTimer = window.setTimeout(() => {
         armed = true;
+        const generation = panelVisibilityGenerationRef.current;
         void appWindow.isFocused().then((focused) => {
           if (
             disposed ||
@@ -923,12 +929,14 @@ export function MainPanelPage() {
           ) {
             return;
           }
-          void hidePreservingSession();
+          void hidePreservingSession(generation);
         });
       }, 220);
     };
 
-    const unlistenOpen = listen("main-panel:open", prepareForOpen);
+    const unlistenOpen = listen<number>("main-panel:open", (event) => {
+      prepareForOpen(event.payload);
+    });
     const unlistenShortcutHide = listen("main-panel:shortcut-hide", () => {
       const appId = activeAppIdRef.current;
       if (modeRef.current === "app" && appId) {
@@ -980,7 +988,11 @@ export function MainPanelPage() {
       .onFocusChanged(({ payload: focused }) => {
         // Native file sheets steal focus; suppress blur→hide while they are open (ZTools pattern).
         if (!focused && armed && !pendingRef.current && !devWindowPinnedRef.current) {
+          const generation = panelVisibilityGenerationRef.current;
           void (async () => {
+            // Windows can deliver the previous blur after Alt+Space has already
+            // reopened and focused the panel. Discard that stale notification.
+            if (await appWindow.isFocused().catch(() => false)) return;
             // DevTools path only when already suppressed (F12 sticky / known open).
             // Never delay the normal blur→hide path with EnumWindows + sleeps.
             if (isDevtoolsBlurHideSuppressed()) {
@@ -996,7 +1008,7 @@ export function MainPanelPage() {
               setDevtoolsBlurHideSuppressed(false);
             }
             if (isBlurHideSuppressed()) return;
-            await hidePreservingSession();
+            await hidePreservingSession(generation);
           })();
           return;
         }
@@ -1024,7 +1036,15 @@ export function MainPanelPage() {
         unlistenBlur = unlisten;
       });
 
-    prepareForOpen();
+    // The startup open event can fire before this WebView registers its listener.
+    // Read the current generation after registration to close that gap without
+    // replaying an older open over a newer shortcut-triggered one.
+    void unlistenOpen
+      .then(() => api.getMainPanelVisibilityGeneration())
+      .then((generation) => {
+        if (!disposed) prepareForOpen(generation);
+      })
+      .catch(() => undefined);
     return () => {
       disposed = true;
       window.clearTimeout(armTimer);
@@ -1250,12 +1270,6 @@ export function MainPanelPage() {
     [launcherPinnedById, matchedSearchApps],
   );
 
-  const visibleSearchApps = hasClipboardActionContext
-    ? []
-    : searchExpanded
-      ? hydratedSearchApps
-      : hydratedSearchApps.slice(0, SEARCH_COLLAPSED_COUNT);
-
   const quickActionUsageById = useMemo(() => {
     const map = new Map<
       string,
@@ -1337,6 +1351,12 @@ export function MainPanelPage() {
     searchResultsReady,
     settledSearchQuery,
   ]);
+  const hasExclusiveQuickAction = visibleQuickActions.some((action) => action.exclusive);
+  const visibleSearchApps = hasClipboardActionContext || hasExclusiveQuickAction
+    ? []
+    : searchExpanded
+      ? hydratedSearchApps
+      : hydratedSearchApps.slice(0, SEARCH_COLLAPSED_COUNT);
 
   const showSearchLayout =
     Boolean(normalizedQuery) || quickActionInput.kind !== "none";
@@ -1925,10 +1945,11 @@ export function MainPanelPage() {
         setContextMenuBlurHideSuppressed(false);
         const reason = event.payload?.reason;
         if (reason === "blur") {
+          const generation = panelVisibilityGenerationRef.current;
           void getCurrentWindow()
             .isFocused()
             .then((focused) => {
-              if (!focused) void hidePreservingSession();
+              if (!focused) void hidePreservingSession(generation);
             })
             .catch(() => undefined);
           return;
@@ -2181,7 +2202,10 @@ export function MainPanelPage() {
                   <img
                     src={mainPanelIconDataUrl || "/favicon.png"}
                     alt=""
-                    className="main-panel-logo"
+                    className={cn(
+                      "main-panel-logo",
+                      mainPanelIconDataUrl && "main-panel-logo--custom"
+                    )}
                   />
                 </Button>
               </>
@@ -2210,7 +2234,11 @@ export function MainPanelPage() {
             ) : showSearchLayout ? (
               <SearchResults
                 apps={visibleSearchApps}
-                totalAppCount={hasClipboardActionContext ? 0 : matchedSearchApps.length}
+                totalAppCount={
+                  hasClipboardActionContext || hasExclusiveQuickAction
+                    ? 0
+                    : matchedSearchApps.length
+                }
                 quickActions={visibleQuickActions}
                 expanded={searchExpanded}
                 query={quickActionQuery}
@@ -2604,6 +2632,7 @@ function QuickActionTiles({
         const key = `action:${action.id}`;
         const validationError = action.validate?.(query) ?? null;
         const pending = pendingKey === key;
+        const title = action.title?.(query) ?? action.name;
         return (
           <button
             key={key}
@@ -2611,7 +2640,8 @@ function QuickActionTiles({
             className="main-panel-action-tile"
             data-selected={selectedKey === key || undefined}
             disabled={Boolean(validationError) || pending}
-            title={validationError ?? action.title?.(query) ?? action.name}
+            title={validationError ?? title}
+            aria-label={validationError ?? title}
             onClick={() => onExecute({ key, kind: "action", action })}
           >
             <span
@@ -2884,11 +2914,9 @@ function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-async function hideMainPanel() {
-  if (!isTauriRuntime()) return;
-  // Clear Rust toggle state *before* OS hide so a concurrent Alt+Space opens.
-  await invoke("mark_main_panel_hidden").catch(() => undefined);
-  await getCurrentWindow().hide();
+async function hideMainPanel(generation: number): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  return api.hideMainPanelWindow(generation).catch(() => false);
 }
 
 function errorMessage(error: unknown, fallback: string): string {

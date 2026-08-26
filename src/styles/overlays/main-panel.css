@@ -242,6 +242,10 @@ html.main-panel-window #root {
   object-fit: contain;
 }
 
+.main-panel-logo--custom {
+  border-radius: inherit;
+}
+
 .main-panel-content {
   display: flex;
   min-width: 0;

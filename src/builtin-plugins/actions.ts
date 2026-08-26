@@ -1,9 +1,33 @@
-import { CheckSquare2, Languages } from "lucide-react";
+import { Calculator, CheckSquare2, Languages } from "lucide-react";
 import { lucideIcon, type QuickAction } from "@/apps/types";
 import { openLinkAction } from "@/builtin-plugins/clipboard/openLink";
+import { calculateExpression } from "@/lib/calculator";
 import { api } from "@/lib/api";
 
 export const TODO_TITLE_LIMIT = 120;
+
+const calculateAction: QuickAction = {
+  id: "calculate",
+  name: "复制计算结果",
+  keywords: ["calculator", "calculate", "计算", "算式"],
+  icon: lucideIcon(Calculator),
+  source: "builtin",
+  accepts: ["text"],
+  priority: 200,
+  exclusive: true,
+  isVisible: (input) =>
+    input.kind === "text" && calculateExpression(input.text) !== null,
+  title: (query) => {
+    const calculation = calculateExpression(query);
+    return calculation ? `复制计算结果：${calculation.result}` : "复制计算结果";
+  },
+  async run({ query, hideAndReset }) {
+    const calculation = calculateExpression(query);
+    if (!calculation) throw new Error("算式无效");
+    await navigator.clipboard.writeText(calculation.result);
+    await hideAndReset();
+  },
+};
 
 const createTodoAction: QuickAction = {
   id: "create-todo",
@@ -36,6 +60,7 @@ const translateAction: QuickAction = {
 
 /** Built-in quick actions. Plugins can call `registerQuickAction` later. */
 export const BUILTIN_QUICK_ACTIONS: QuickAction[] = [
+  calculateAction,
   openLinkAction,
   createTodoAction,
   translateAction,

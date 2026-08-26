@@ -124,6 +124,8 @@ export interface QuickAction {
    * Use for context-specific actions (e.g. open-link when clipboard is a URL).
    */
   priority?: number;
+  /** When visible, hide ordinary search results and other quick actions. */
+  exclusive?: boolean;
   /** Return an error message to block execution / mark the tile invalid. */
   validate?: (query: string) => string | null;
   title?: (query: string) => string;
