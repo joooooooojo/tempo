@@ -1,9 +1,10 @@
 # Dependencies
 node_modules/
 
-# Frontend build
-dist/
-dist-ssr/
+# Frontend build (app root only). Plugin repository templates must commit dist/.
+/dist/
+/dist-ssr/
+templates/plugins/**/dist/
 
 # VitePress
 docs/.vitepress/dist

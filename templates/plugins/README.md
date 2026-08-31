@@ -10,4 +10,6 @@ pnpm plugin-assets:build
 
 命令会把当前版本写入 `docs/public/plugin-assets/releases/<version>`，生成带文件大小和 SHA-256 的 `catalog.json`，并复制对应的版本化 Manifest Schema。
 
+Git 插件仓库模板在 [`../plugin-repository`](../plugin-repository)，给维护者创建可被 Tempo 添加的插件源，不走这套远端发布流程。
+
 已发布版本不可原地修改。模板、Bridge 或 Schema 发生变化时，先提升 `release.json` 的 `version`，再生成新 release。历史 release 会保留在远端目录中，旧版 Tempo 可以继续选择它支持的最新版本。

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "com.example.tempo-plugins",
+  "name": "Invalid backslash path",
+  "plugins": [
+    {
+      "id": "com.example.notes",
+      "path": "plugins\\com.example.notes"
+    }
+  ]
+}

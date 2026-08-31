@@ -35,7 +35,12 @@ export const SHORTCUT_SETTING_KEYS = [
 
 export type ShortcutSettingKey = (typeof SHORTCUT_SETTING_KEYS)[number];
 
-export type SettingsSectionId = "general" | "plugins" | "storage" | "custom-open";
+export type SettingsSectionId =
+  | "general"
+  | "plugins"
+  | "plugin-repositories"
+  | "storage"
+  | "custom-open";
 
 export const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId;
@@ -43,6 +48,7 @@ export const SETTINGS_SECTIONS: Array<{
 }> = [
   { id: "general", label: "通用设置" },
   { id: "plugins", label: "插件管理" },
+  { id: "plugin-repositories", label: "插件仓库" },
   { id: "custom-open", label: "自定义打开" },
   { id: "storage", label: "存储管理" },
 ];
@@ -120,7 +126,13 @@ export function clipboardRetentionLabel(value: Settings["clipboard_history_reten
 }
 
 export function parseSettingsSectionId(value: string | null | undefined): SettingsSectionId | null {
-  if (value === "general" || value === "plugins" || value === "storage" || value === "custom-open") {
+  if (
+    value === "general" ||
+    value === "plugins" ||
+    value === "plugin-repositories" ||
+    value === "storage" ||
+    value === "custom-open"
+  ) {
     return value;
   }
   return null;

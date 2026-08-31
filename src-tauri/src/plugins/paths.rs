@@ -37,6 +37,14 @@ pub fn trash_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(plugins_root(app)?.join("_trash"))
 }
 
+pub fn repositories_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(plugins_root(app)?.join("_repositories"))
+}
+
+pub fn repository_cache_dir(app: &AppHandle, repository_id: &str) -> Result<PathBuf, String> {
+    Ok(repositories_dir(app)?.join(repository_id))
+}
+
 pub fn plugin_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(storage_root(app)?.join("plugin-runtime"))
 }

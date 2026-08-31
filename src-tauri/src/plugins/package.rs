@@ -26,6 +26,29 @@ pub struct InstalledPackage {
     pub requires_node_runtime: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct InspectedPackage {
+    pub manifest: PluginManifest,
+    pub package_hash: String,
+}
+
+/// Validate a package directory without publishing it. Repository sync uses this to inspect
+/// an indexed `dist/` tree before it becomes visible in the catalog.
+pub fn inspect_package(root: &Path) -> Result<InspectedPackage, String> {
+    if !root.is_dir() {
+        return Err(format!("not a directory: {}", root.display()));
+    }
+    let raw = fs::read_to_string(root.join("manifest.json"))
+        .map_err(|e| format!("read manifest.json: {e}"))?;
+    let manifest = PluginManifest::parse_str(&raw)?;
+    verify_entry_files(root, &manifest)?;
+    let package_hash = compute_package_hash(root)?;
+    Ok(InspectedPackage {
+        manifest,
+        package_hash,
+    })
+}
+
 /// Import a local plugin directory into staging, validate, hash, and publish under packages/.
 pub fn import_directory(app: &AppHandle, source: &Path) -> Result<InstalledPackage, String> {
     if !source.is_dir() {
@@ -82,11 +105,9 @@ fn new_staging_root(app: &AppHandle) -> Result<PathBuf, String> {
 /// atomically publish it under `packages/{id}/{version}` as an untrusted, disabled install
 /// (design §8.4). No plugin code runs during this step.
 fn publish_staged(app: &AppHandle, staging_root: &Path) -> Result<InstalledPackage, String> {
-    let staged_manifest = fs::read_to_string(staging_root.join("manifest.json"))
-        .map_err(|e| format!("read staged manifest: {e}"))?;
-    let staged = PluginManifest::parse_str(&staged_manifest)?;
-    verify_entry_files(staging_root, &staged)?;
-    let package_hash = compute_package_hash(staging_root)?;
+    let inspected = inspect_package(staging_root)?;
+    let staged = inspected.manifest;
+    let package_hash = inspected.package_hash;
     let dest = packages_dir(app)?.join(&staged.id).join(&staged.version);
     if dest.exists() {
         let existing_hash = compute_package_hash(&dest)?;

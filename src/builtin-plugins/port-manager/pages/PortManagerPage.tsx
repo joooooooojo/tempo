@@ -1,4 +1,12 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -61,6 +69,7 @@ import {
   MIN_MANUAL_REFRESH_FEEDBACK_MS,
   PAGE_SIZE,
   PROTOCOL_ITEMS,
+  recordIdentity,
   recordKey,
   SCOPE_ITEMS,
   STATE_LABELS,
@@ -87,6 +96,13 @@ export function PortManagerPage() {
   const [page, setPage] = useState(0);
   const [pendingTermination, setPendingTermination] = useState<PortRecord | null>(null);
   const [terminating, setTerminating] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const confirmActionRef = useRef<HTMLButtonElement>(null);
+  const terminatingRef = useRef(false);
+  const imeComposingRef = useRef(false);
+  const selectedKeyRef = useRef<string | null>(null);
+  const pendingTerminationRef = useRef<PortRecord | null>(null);
 
   const load = useCallback(async (mode: LoadMode = "initial") => {
     const requestedScope = scope;
@@ -206,6 +222,45 @@ export function PortManagerPage() {
     () => filteredRecords.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
     [currentPage, filteredRecords]
   );
+  const visibleRecordsRef = useRef(visibleRecords);
+  visibleRecordsRef.current = visibleRecords;
+  selectedKeyRef.current = selectedKey;
+  pendingTerminationRef.current = pendingTermination;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (visibleRecords.length === 0) {
+      setSelectedKey(null);
+      return;
+    }
+    setSelectedKey((current) => {
+      if (current && visibleRecords.some((record) => recordIdentity(record) === current)) {
+        return current;
+      }
+      return recordIdentity(visibleRecords[0]);
+    });
+  }, [visibleRecords]);
+
+  useEffect(() => {
+    if (!selectedKey) return;
+    const escaped =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(selectedKey)
+        : selectedKey;
+    tableViewportRef.current
+      ?.querySelector<HTMLElement>(`[data-port-row="${escaped}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selectedKey, currentPage]);
+
+  useEffect(() => {
+    if (!pendingTermination) return;
+    const timer = window.setTimeout(() => confirmActionRef.current?.focus(), 50);
+    return () => window.clearTimeout(timer);
+  }, [pendingTermination]);
 
   const processCount = useMemo(
     () => new Set(filteredRecords.flatMap((record) => (record.pid ? [record.pid] : []))).size,
@@ -214,11 +269,13 @@ export function PortManagerPage() {
   const listeningCount = useMemo(() => records.filter(isListening).length, [records]);
 
   const terminateProcess = async () => {
-    const record = pendingTermination;
+    if (terminatingRef.current) return;
+    const record = pendingTerminationRef.current;
     if (!record?.pid || record.processStartedAt === null || record.processStartedAt === undefined) {
       return;
     }
 
+    terminatingRef.current = true;
     setTerminating(true);
     try {
       await api.terminatePortProcess({
@@ -235,8 +292,69 @@ export function PortManagerPage() {
     } catch (terminateError) {
       toast.error(terminateError instanceof Error ? terminateError.message : String(terminateError));
     } finally {
+      terminatingRef.current = false;
       setTerminating(false);
     }
+  };
+
+  const isImeKey = (event: { nativeEvent?: { isComposing?: boolean }; isComposing?: boolean; keyCode?: number }) =>
+    imeComposingRef.current ||
+    event.nativeEvent?.isComposing ||
+    event.isComposing ||
+    event.keyCode === 229;
+
+  const requestTerminateSelected = () => {
+    if (pendingTerminationRef.current) return;
+    const key = selectedKeyRef.current;
+    const record =
+      visibleRecordsRef.current.find((item) => recordIdentity(item) === key) ??
+      visibleRecordsRef.current[0];
+    if (!record) return;
+    if (!record.canTerminate) {
+      toast.error(record.protectedReason ?? "该进程不可结束");
+      return;
+    }
+    setPendingTermination(record);
+  };
+
+  const moveSelection = (delta: number) => {
+    const rows = visibleRecordsRef.current;
+    if (rows.length === 0) return;
+    const currentIndex = rows.findIndex((item) => recordIdentity(item) === selectedKeyRef.current);
+    const nextIndex = Math.min(
+      rows.length - 1,
+      Math.max(0, (currentIndex < 0 ? 0 : currentIndex) + delta),
+    );
+    setSelectedKey(recordIdentity(rows[nextIndex]));
+  };
+
+  const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (isImeKey(event)) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveSelection(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSelection(-1);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (pendingTerminationRef.current) {
+        void terminateProcess();
+        return;
+      }
+      requestTerminateSelected();
+    }
+  };
+
+  const handleConfirmKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" || isImeKey(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void terminateProcess();
   };
 
   const emptyContent = error ? (
@@ -271,10 +389,22 @@ export function PortManagerPage() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-3">
         <Input
+          ref={searchInputRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          onCompositionStart={() => {
+            imeComposingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            window.requestAnimationFrame(() => {
+              imeComposingRef.current = false;
+            });
+          }}
           placeholder="搜索端口、PID 或进程"
           aria-label="搜索端口、PID 或进程"
+          autoComplete="off"
+          autoFocus
           className="min-w-52 flex-1 sm:max-w-sm"
         />
         <Select
@@ -402,8 +532,18 @@ export function PortManagerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleRecords.map((record, index) => (
-                <TableRow key={recordKey(record, currentPage * PAGE_SIZE + index)}>
+              {visibleRecords.map((record, index) => {
+                const identity = recordIdentity(record);
+                const selected = identity === selectedKey;
+                return (
+                  <TableRow
+                    key={recordKey(record, currentPage * PAGE_SIZE + index)}
+                    data-port-row={identity}
+                    data-state={selected ? "selected" : undefined}
+                    aria-selected={selected}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedKey(identity)}
+                  >
                   <TableCell className="w-24 pl-4">
                     <div className="font-mono text-[14px] font-semibold tabular-nums">
                       {record.localPort}
@@ -463,8 +603,9 @@ export function PortManagerPage() {
                       </Button>
                     )}
                   </TableCell>
-                </TableRow>
-              ))}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </DataTable>
@@ -476,7 +617,10 @@ export function PortManagerPage() {
           if (!open && !terminating) setPendingTermination(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent
+          onKeyDown={handleConfirmKeyDown}
+          initialFocus={confirmActionRef}
+        >
           <AlertDialogHeader>
             <AlertDialogMedia>
               <TriangleAlert />
@@ -490,9 +634,14 @@ export function PortManagerPage() {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={terminating}>取消</AlertDialogCancel>
             <AlertDialogAction
+              ref={confirmActionRef}
               variant="destructive"
               disabled={terminating}
-              onClick={() => void terminateProcess()}
+              autoFocus
+              onClick={(event) => {
+                event.preventDefault();
+                void terminateProcess();
+              }}
             >
               {terminating ? (
                 <Loader2 className="animate-spin" data-icon="inline-start" />

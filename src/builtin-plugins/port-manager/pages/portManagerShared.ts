@@ -38,14 +38,17 @@ export function isListening(record: PortRecord) {
   return record.protocol === "UDP" || record.state === "LISTEN";
 }
 
-export function recordKey(record: PortRecord, index: number) {
+export function recordIdentity(record: PortRecord) {
   return [
     record.protocol,
     record.localAddress,
     record.localPort,
-    record.remoteAddress,
-    record.remotePort,
-    record.pid,
-    index,
+    record.remoteAddress ?? "",
+    record.remotePort ?? "",
+    record.pid ?? "",
   ].join(":");
+}
+
+export function recordKey(record: PortRecord, index: number) {
+  return `${recordIdentity(record)}:${index}`;
 }

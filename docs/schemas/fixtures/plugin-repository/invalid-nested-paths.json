@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "com.example.tempo-plugins",
+  "name": "Invalid nested paths",
+  "plugins": [
+    {
+      "id": "com.example.notes",
+      "path": "plugins/notes"
+    },
+    {
+      "id": "com.example.timer",
+      "path": "plugins/notes/timer"
+    }
+  ]
+}

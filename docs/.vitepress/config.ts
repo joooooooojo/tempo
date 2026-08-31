@@ -47,6 +47,7 @@ export default defineConfig({
             { text: "做出第一个插件", link: "/developer/first-plugin" },
             { text: "插件类型与生命周期", link: "/developer/plugin-lifecycle" },
             { text: "加入后台能力", link: "/developer/runtime" },
+            { text: "维护插件仓库", link: "/developer/plugin-repository" },
           ],
         },
         {

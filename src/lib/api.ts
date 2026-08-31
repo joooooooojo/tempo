@@ -21,6 +21,19 @@ import type {
   PluginSettingsBundle,
   BuiltinMcpStatus,
   PluginRuntimeStatus,
+  PluginRepository,
+  AddPluginRepositoryInput,
+  CreatePluginRepositoryTemplateInput,
+  CreatedPluginRepository,
+  UpdatePluginRepositoryInput,
+  RepositoryCredentialProfile,
+  SaveRepositoryCredentialInput,
+  RepositoryCatalogPlugin,
+  RepositoryIssue,
+  RepositoryOperation,
+  OperationStarted,
+  RepositoryConnectionTest,
+  TrustRepositoryConnectionInput,
   PluginDevConnectionStatus,
   PluginDevPreferences,
   PluginDevProbeResult,
@@ -367,6 +380,62 @@ export const api = {
     invoke<PluginMcpToolInfo[]>("list_plugin_mcp_tools", { pluginId }),
   promotePluginPendingVersion: (pluginId: string) =>
     invoke<string>("promote_plugin_pending_version", { pluginId }),
+
+  // Git-backed plugin repositories
+  listPluginRepositories: () =>
+    invoke<PluginRepository[]>("list_plugin_repositories"),
+  addPluginRepository: (args: AddPluginRepositoryInput) =>
+    invoke<PluginRepository>("add_plugin_repository", { args }),
+  updatePluginRepository: (args: UpdatePluginRepositoryInput) =>
+    invoke<PluginRepository>("update_plugin_repository", { args }),
+  reorderPluginRepositories: (repositoryIds: string[]) =>
+    invoke<void>("reorder_plugin_repositories", { args: { repositoryIds } }),
+  setPluginRepositoryEnabled: (repositoryId: string, enabled: boolean) =>
+    invoke<void>("set_plugin_repository_enabled", {
+      args: { repositoryId, enabled: Boolean(enabled) },
+    }),
+  removePluginRepository: (repositoryId: string) =>
+    invoke<void>("remove_plugin_repository", { args: { repositoryId } }),
+  syncPluginRepository: (repositoryId: string) =>
+    invoke<OperationStarted>("sync_plugin_repository", { args: { repositoryId } }),
+  syncAllPluginRepositories: () =>
+    invoke<OperationStarted[]>("sync_all_plugin_repositories"),
+  testPluginRepositoryConnection: (repositoryId: string) =>
+    invoke<RepositoryConnectionTest>("test_plugin_repository_connection", {
+      args: { repositoryId },
+    }),
+  trustPluginRepositoryTlsCertificate: (args: TrustRepositoryConnectionInput) =>
+    invoke<void>("trust_plugin_repository_tls_certificate", { args }),
+  trustPluginRepositorySshHostKey: (args: TrustRepositoryConnectionInput) =>
+    invoke<void>("trust_plugin_repository_ssh_host_key", { args }),
+  listPluginRepositoryOperations: () =>
+    invoke<RepositoryOperation[]>("list_plugin_repository_operations"),
+  searchRepositoryPlugins: (query?: string) =>
+    invoke<RepositoryCatalogPlugin[]>("search_repository_plugins", {
+      query: query?.trim() || null,
+    }),
+  listPluginRepositoryIssues: (repositoryId: string) =>
+    invoke<RepositoryIssue[]>("list_plugin_repository_issues", {
+      args: { repositoryId },
+    }),
+  installRepositoryPlugin: (
+    repositoryId: string,
+    pluginId: string,
+    expectedCommit?: string | null,
+  ) =>
+    invoke<OperationStarted>("install_repository_plugin", {
+      args: { repositoryId, pluginId, expectedCommit: expectedCommit ?? null },
+    }),
+  listPluginRepositoryCredentials: () =>
+    invoke<RepositoryCredentialProfile[]>("list_plugin_repository_credentials"),
+  savePluginRepositoryCredential: (args: SaveRepositoryCredentialInput) =>
+    invoke<RepositoryCredentialProfile>("save_plugin_repository_credential", { args }),
+  deletePluginRepositoryCredential: (credentialId: string) =>
+    invoke<void>("delete_plugin_repository_credential", {
+      args: { credentialId },
+    }),
+  createPluginRepositoryFromTemplate: (args: CreatePluginRepositoryTemplateInput) =>
+    invoke<CreatedPluginRepository>("create_plugin_repository_from_template", { args }),
 
   getPluginSettingsBundle: (pluginId: string) =>
     invoke<PluginSettingsBundle>("get_plugin_settings_bundle", { pluginId }),

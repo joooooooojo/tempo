@@ -57,6 +57,7 @@ UI ------ window.ipcRenderer ------ globalThis.ipcMain ------ Runtime
 4. [插件全局 API](/reference/plugin-api)：查 UI 与 Runtime 注入了什么。
 5. [平台 API](/reference/plugin-host-api)：查 `tempo` 的方法和参数。
 6. [Manifest](/reference/manifest-schema)：查 Apps、Commands、Actions、MCP Tools 和 Settings。
+7. [维护插件仓库](/developer/plugin-repository)：在 Tempo 里从官方模板创建 Git 插件源。
 
 ## 版本字段
 

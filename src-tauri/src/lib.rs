@@ -254,6 +254,9 @@ pub fn run() {
                 if let Err(error) = plugins::trust::ensure_plugin_tables(&conn) {
                     tracing::warn!(error = %error, "failed to prepare plugin tables");
                 }
+                if let Err(error) = plugins::repository::ensure_repository_tables(&conn) {
+                    tracing::warn!(error = %error, "failed to prepare plugin repository tables");
+                }
                 if let Err(error) = plugins::trust::normalize_runtime_states_on_boot(&conn) {
                     tracing::warn!(error = %error, "failed to normalize plugin runtime states");
                 }
@@ -484,6 +487,25 @@ pub fn run() {
             commands::plugins::list_plugin_mcp_tools,
             commands::plugins::get_plugin_settings_bundle,
             commands::plugins::set_plugin_settings_values,
+            commands::plugin_repositories::list_plugin_repositories,
+            commands::plugin_repositories::add_plugin_repository,
+            commands::plugin_repositories::update_plugin_repository,
+            commands::plugin_repositories::reorder_plugin_repositories,
+            commands::plugin_repositories::set_plugin_repository_enabled,
+            commands::plugin_repositories::remove_plugin_repository,
+            commands::plugin_repositories::sync_plugin_repository,
+            commands::plugin_repositories::sync_all_plugin_repositories,
+            commands::plugin_repositories::test_plugin_repository_connection,
+            commands::plugin_repositories::trust_plugin_repository_tls_certificate,
+            commands::plugin_repositories::trust_plugin_repository_ssh_host_key,
+            commands::plugin_repositories::list_plugin_repository_operations,
+            commands::plugin_repositories::search_repository_plugins,
+            commands::plugin_repositories::list_plugin_repository_issues,
+            commands::plugin_repositories::install_repository_plugin,
+            commands::plugin_repositories::list_plugin_repository_credentials,
+            commands::plugin_repositories::save_plugin_repository_credential,
+            commands::plugin_repositories::delete_plugin_repository_credential,
+            commands::plugin_repositories::create_plugin_repository_from_template,
             builtin_plugins::plugin_dev::plugin_dev_list_projects,
             builtin_plugins::plugin_dev::plugin_dev_create_project,
             builtin_plugins::plugin_dev::plugin_dev_open_project,

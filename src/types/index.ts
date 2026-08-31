@@ -416,6 +416,154 @@ export interface InstalledPackage {
   requiresNodeRuntime: boolean;
 }
 
+export interface PluginRepository {
+  id: string;
+  url: string;
+  transport: "http" | "https" | "ssh" | string;
+  gitRef: string;
+  indexPath: string;
+  authenticationMode: "anonymous" | "credential" | string;
+  credentialId?: string | null;
+  credentialStatus: "anonymous" | "ready" | "missing" | "failed" | "session-missing" | string;
+  allowInsecureTransport: boolean;
+  allowInsecureCredentials: boolean;
+  displayName?: string | null;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  snapshotCommit?: string | null;
+  validPluginCount: number;
+  issueCount: number;
+  connectionVerifiedAt?: string | null;
+  lastSyncAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string | null;
+  hasCachedCatalog: boolean;
+}
+
+export interface AddPluginRepositoryInput {
+  url: string;
+  gitRef: string;
+  indexPath: string;
+  displayName?: string | null;
+  authenticationMode: "anonymous" | "credential";
+  credentialId?: string | null;
+  allowInsecureTransport: boolean;
+  allowInsecureCredentials: boolean;
+}
+
+export interface CreatePluginRepositoryTemplateInput {
+  parentPath: string;
+  folderName?: string | null;
+  description?: string | null;
+  homepage?: string | null;
+}
+
+export interface CreatedPluginRepository {
+  path: string;
+  repositoryId: string;
+  gitInitialized: boolean;
+}
+
+export interface UpdatePluginRepositoryInput extends AddPluginRepositoryInput {
+  repositoryId: string;
+}
+
+export interface RepositoryCredentialProfile {
+  id: string;
+  displayName: string;
+  scopeOrigin: string;
+  authKind: "http-token" | "ssh-agent" | "ssh-key" | string;
+  username?: string | null;
+  sshPrivateKeyPath?: string | null;
+  secretStorage: "none" | "keyring" | "session" | string;
+  available: boolean;
+  referencedRepositoryCount: number;
+}
+
+export interface SaveRepositoryCredentialInput {
+  id?: string | null;
+  displayName: string;
+  scopeUrl: string;
+  authKind: "http-token" | "ssh-agent" | "ssh-key";
+  username?: string | null;
+  sshPrivateKeyPath?: string | null;
+  secret?: string | null;
+  persist: boolean;
+}
+
+export interface RepositoryCatalogPlugin {
+  id: string;
+  name: string;
+  publisher?: string | null;
+  description?: string | null;
+  iconUrl?: string | null;
+  categories: string[];
+  version: string;
+  packageHash: string;
+  sourceCommit: string;
+  repositoryId: string;
+  repositoryName: string;
+  compatible: boolean;
+  incompatibleReason?: string | null;
+  installedVersion?: string | null;
+  pendingVersion?: string | null;
+  action: "install" | "update" | "installed" | "pending" | "conflict" | "unavailable" | string;
+}
+
+export interface RepositoryIssue {
+  repositoryId: string;
+  pluginId?: string | null;
+  pluginRoot?: string | null;
+  error: string;
+  sourceCommit: string;
+}
+
+export interface RepositoryOperation {
+  operationId: string;
+  kind: "sync" | "install" | string;
+  repositoryId: string;
+  pluginId?: string | null;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | string;
+  phase: string;
+  message: string;
+  transferredBytes: number;
+  totalItems?: number | null;
+  completedItems: number;
+  error?: string | null;
+}
+
+export interface OperationStarted {
+  operationId: string;
+  reusedExisting: boolean;
+}
+
+export interface RepositoryTrustChallenge {
+  kind: "tls-certificate" | "ssh-host-key" | string;
+  host: string;
+  port: number;
+  fingerprintSha256: string;
+  keyType?: string | null;
+  subject?: string | null;
+  issuer?: string | null;
+  notAfter?: string | null;
+  confirmationNonce: string;
+}
+
+export interface RepositoryConnectionTest {
+  repositoryId: string;
+  status: "ok" | "trust-required" | "failed" | string;
+  message: string;
+  challenge?: RepositoryTrustChallenge | null;
+}
+
+export interface TrustRepositoryConnectionInput {
+  confirmationNonce: string;
+  host: string;
+  port: number;
+  fingerprintSha256: string;
+}
+
 export interface InstalledPlugin {
   id: string;
   name: string;

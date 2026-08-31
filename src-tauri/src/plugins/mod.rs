@@ -11,6 +11,8 @@ pub mod mcp_bridge;
 pub mod package;
 pub mod paths;
 pub mod runtime;
+pub mod repository;
+pub mod repository_template;
 pub mod settings;
 pub mod storage;
 pub mod supervisor;

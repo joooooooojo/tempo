@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "7c2f1a90-4b3e-4d8a-9c1b-2e5f6a7b8c9d",
+  "description": "A minimal valid repository index.",
+  "homepage": "https://git.example.com/tempo/plugins",
+  "plugins": [
+    {
+      "id": "com.example.notes",
+      "path": "plugins/com.example.notes"
+    },
+    {
+      "id": "com.example.timer",
+      "path": "packages/timer"
+    }
+  ]
+}
