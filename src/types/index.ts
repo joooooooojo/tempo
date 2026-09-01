@@ -489,7 +489,6 @@ export interface SaveRepositoryCredentialInput {
   username?: string | null;
   sshPrivateKeyPath?: string | null;
   secret?: string | null;
-  persist: boolean;
 }
 
 export interface RepositoryCatalogPlugin {
@@ -539,7 +538,7 @@ export interface OperationStarted {
 }
 
 export interface RepositoryTrustChallenge {
-  kind: "tls-certificate" | "ssh-host-key" | string;
+  kind: "ssh-host-key" | string;
   host: string;
   port: number;
   fingerprintSha256: string;

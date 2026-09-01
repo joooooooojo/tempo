@@ -404,8 +404,6 @@ export const api = {
     invoke<RepositoryConnectionTest>("test_plugin_repository_connection", {
       args: { repositoryId },
     }),
-  trustPluginRepositoryTlsCertificate: (args: TrustRepositoryConnectionInput) =>
-    invoke<void>("trust_plugin_repository_tls_certificate", { args }),
   trustPluginRepositorySshHostKey: (args: TrustRepositoryConnectionInput) =>
     invoke<void>("trust_plugin_repository_ssh_host_key", { args }),
   listPluginRepositoryOperations: () =>

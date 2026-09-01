@@ -39,7 +39,6 @@ const MAX_GIT_PACKAGE_BYTES: usize = 500 * 1024 * 1024;
 const MAX_ICON_BYTES: usize = 256 * 1024;
 const MAX_GIT_TRANSFER_BYTES: usize = 1024 * 1024 * 1024;
 const GIT_FETCH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const KEYRING_SERVICE: &str = "Tempo.PluginRepository";
 pub const OPERATION_EVENT: &str = "plugin-repository-operation-progress";
 
 #[derive(Debug, Clone, Serialize)]
@@ -138,8 +137,6 @@ pub struct SaveCredentialInput {
     pub ssh_private_key_path: Option<String>,
     #[serde(default)]
     pub secret: Option<String>,
-    #[serde(default = "default_true")]
-    pub persist: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -277,7 +274,6 @@ struct CredentialRecord {
     username: Option<String>,
     ssh_private_key_path: Option<String>,
     secret_storage: String,
-    secret_locator: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -318,7 +314,6 @@ struct CatalogRecord {
 
 #[derive(Debug, Clone, Default)]
 struct TransportTrust {
-    tls_fingerprint: Option<String>,
     ssh_host_keys: HashSet<(String, String)>,
 }
 
@@ -350,15 +345,8 @@ impl std::fmt::Display for FetchRepositoryError {
             Self::Message(message) => formatter.write_str(message),
             Self::TrustRequired(challenge) => write!(
                 formatter,
-                "{} {}:{} 尚未信任（{}）",
-                if challenge.kind == "ssh-host-key" {
-                    "SSH 主机密钥"
-                } else {
-                    "TLS 证书"
-                },
-                challenge.host,
-                challenge.port,
-                challenge.fingerprint_sha256
+                "SSH 主机密钥 {}:{} 尚未信任（{}）",
+                challenge.host, challenge.port, challenge.fingerprint_sha256
             ),
         }
     }
@@ -477,10 +465,6 @@ fn default_git_ref() -> String {
 
 fn default_index_path() -> String {
     INDEX_FILE.into()
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn validate_display_name(value: Option<&str>) -> Result<Option<String>, String> {
@@ -739,20 +723,6 @@ fn fingerprint_sha256(bytes: &[u8]) -> String {
     )
 }
 
-fn tls_challenge(remote: &ParsedRemote, der: &[u8]) -> RepositoryTrustChallenge {
-    RepositoryTrustChallenge {
-        kind: "tls-certificate".into(),
-        host: remote.host.clone(),
-        port: remote.port,
-        fingerprint_sha256: fingerprint_sha256(der),
-        key_type: None,
-        subject: None,
-        issuer: None,
-        not_after: None,
-        confirmation_nonce: generate_id("trust"),
-    }
-}
-
 fn ssh_challenge(
     remote: &ParsedRemote,
     key_type: &str,
@@ -775,15 +745,6 @@ fn load_transport_trust(
     conn: &Connection,
     remote: &ParsedRemote,
 ) -> Result<TransportTrust, String> {
-    let tls_fingerprint = conn
-        .query_row(
-            "SELECT fingerprint_sha256 FROM plugin_repository_tls_pins
-             WHERE host = ?1 AND port = ?2",
-            params![remote.host, remote.port as i64],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
     let mut statement = conn
         .prepare(
             "SELECT key_type, fingerprint_sha256 FROM plugin_repository_ssh_host_keys
@@ -798,10 +759,7 @@ fn load_transport_trust(
     let ssh_host_keys = rows
         .map(|row| row.map_err(|error| error.to_string()))
         .collect::<Result<_, _>>()?;
-    Ok(TransportTrust {
-        tls_fingerprint,
-        ssh_host_keys,
-    })
+    Ok(TransportTrust { ssh_host_keys })
 }
 
 fn remember_pending_trust(challenge: RepositoryTrustChallenge) {
@@ -838,36 +796,6 @@ fn consume_pending_trust(
     Ok(challenge)
 }
 
-pub fn trust_tls_certificate(
-    conn: &Connection,
-    input: TrustRepositoryConnectionInput,
-) -> Result<(), String> {
-    ensure_repository_tables(conn)?;
-    let challenge = consume_pending_trust(&input, "tls-certificate")?;
-    conn.execute(
-        "INSERT INTO plugin_repository_tls_pins (
-           host, port, fingerprint_sha256, subject, issuer, not_after, trusted_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(host, port) DO UPDATE SET
-           fingerprint_sha256 = excluded.fingerprint_sha256,
-           subject = excluded.subject,
-           issuer = excluded.issuer,
-           not_after = excluded.not_after,
-           trusted_at = excluded.trusted_at",
-        params![
-            challenge.host,
-            challenge.port as i64,
-            challenge.fingerprint_sha256,
-            challenge.subject,
-            challenge.issuer,
-            challenge.not_after,
-            chrono::Utc::now().to_rfc3339(),
-        ],
-    )
-    .map_err(|error| format!("保存 TLS 证书指纹失败: {error}"))?;
-    Ok(())
-}
-
 pub fn trust_ssh_host_key(
     conn: &Connection,
     input: TrustRepositoryConnectionInput,
@@ -895,11 +823,6 @@ pub fn trust_ssh_host_key(
     )
     .map_err(|error| format!("保存 SSH 主机密钥失败: {error}"))?;
     Ok(())
-}
-
-fn keyring_entry(locator: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, locator)
-        .map_err(|error| format!("打开系统凭证库失败: {error}"))
 }
 
 pub fn save_credential(
@@ -947,53 +870,28 @@ pub fn save_credential(
         }
     }
     let id = input.id.unwrap_or_else(|| generate_id("credential"));
-    let previous_storage = conn
-        .query_row(
-            "SELECT secret_storage FROM plugin_repository_credentials WHERE id = ?1",
-            [&id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
     let secret = input
         .secret
         .filter(|value| !value.is_empty())
         .map(Zeroizing::new);
-    let secret_storage = if auth_kind == "ssh-agent" || (auth_kind == "ssh-key" && secret.is_none())
-    {
-        "none"
-    } else if input.persist {
-        if let Some(value) = secret.as_ref() {
-            keyring_entry(&id)?
-                .set_password(value.as_str())
-                .map_err(|error| format!("保存系统凭证失败: {error}"))?;
+    let secret_storage =
+        if auth_kind == "ssh-agent" || (auth_kind == "ssh-key" && secret.is_none()) {
+            session_secrets().lock().remove(&id);
+            "none"
+        } else if let Some(value) = secret {
+            session_secrets().lock().insert(id.clone(), value);
+            "session"
+        } else if session_secrets().lock().contains_key(&id) {
+            "session"
         } else {
-            let existing = conn
-                .query_row(
-                    "SELECT secret_locator FROM plugin_repository_credentials WHERE id = ?1",
-                    [&id],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()
-                .map_err(|error| error.to_string())?
-                .flatten();
-            if existing.is_none() {
-                return Err("请输入 Token、密码或私钥口令".into());
-            }
-        }
-        session_secrets().lock().remove(&id);
-        "keyring"
-    } else {
-        let value = secret.ok_or_else(|| "请输入 Token、密码或私钥口令".to_string())?;
-        session_secrets().lock().insert(id.clone(), value);
-        "session"
-    };
+            return Err("请输入 Token、密码或私钥口令".into());
+        };
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO plugin_repository_credentials (
            id, display_name, scope_scheme, scope_host, scope_port, auth_kind,
            username, ssh_private_key_path, secret_storage, secret_locator, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?10)
          ON CONFLICT(id) DO UPDATE SET
            display_name = excluded.display_name,
            scope_scheme = excluded.scope_scheme,
@@ -1003,7 +901,7 @@ pub fn save_credential(
            username = excluded.username,
            ssh_private_key_path = excluded.ssh_private_key_path,
            secret_storage = excluded.secret_storage,
-           secret_locator = excluded.secret_locator,
+           secret_locator = NULL,
            updated_at = excluded.updated_at",
         params![
             id,
@@ -1015,20 +913,10 @@ pub fn save_credential(
             username,
             key_path,
             secret_storage,
-            if secret_storage == "keyring" {
-                Some(id.as_str())
-            } else {
-                None
-            },
             now,
         ],
     )
     .map_err(|error| format!("保存凭证元数据失败: {error}"))?;
-    if previous_storage.as_deref() == Some("keyring") && secret_storage != "keyring" {
-        if let Ok(entry) = keyring_entry(&id) {
-            let _ = entry.delete_credential();
-        }
-    }
     get_credential_profile(conn, &id)?.ok_or_else(|| "保存凭证失败".into())
 }
 
@@ -1048,9 +936,7 @@ pub fn list_credentials(conn: &Connection) -> Result<Vec<RepositoryCredentialPro
         .query_map([], |row| {
             let id: String = row.get(0)?;
             let storage: String = row.get(8)?;
-            let available = storage == "none"
-                || storage == "keyring"
-                || session_secrets().lock().contains_key(&id);
+            let available = storage == "none" || session_secrets().lock().contains_key(&id);
             Ok(RepositoryCredentialProfile {
                 id,
                 display_name: row.get(1)?,
@@ -1084,19 +970,6 @@ fn get_credential_profile(
 
 pub fn delete_credential(conn: &Connection, id: &str) -> Result<(), String> {
     ensure_repository_tables(conn)?;
-    let storage: Option<String> = conn
-        .query_row(
-            "SELECT secret_storage FROM plugin_repository_credentials WHERE id = ?1",
-            [id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-    if storage.as_deref() == Some("keyring") {
-        if let Ok(entry) = keyring_entry(id) {
-            let _ = entry.delete_credential();
-        }
-    }
     session_secrets().lock().remove(id);
     conn.execute(
         "DELETE FROM plugin_repository_credentials WHERE id = ?1",
@@ -1109,7 +982,7 @@ pub fn delete_credential(conn: &Connection, id: &str) -> Result<(), String> {
 fn load_credential_record(conn: &Connection, id: &str) -> Result<CredentialRecord, String> {
     conn.query_row(
         "SELECT id, scope_scheme, scope_host, scope_port, auth_kind, username,
-                ssh_private_key_path, secret_storage, secret_locator
+                ssh_private_key_path, secret_storage
          FROM plugin_repository_credentials WHERE id = ?1",
         [id],
         |row| {
@@ -1122,7 +995,6 @@ fn load_credential_record(conn: &Connection, id: &str) -> Result<CredentialRecor
                 username: row.get(5)?,
                 ssh_private_key_path: row.get(6)?,
                 secret_storage: row.get(7)?,
-                secret_locator: row.get(8)?,
             })
         },
     )
@@ -1132,20 +1004,12 @@ fn load_credential_record(conn: &Connection, id: &str) -> Result<CredentialRecor
 fn credential_secret(record: &CredentialRecord) -> Result<Option<Zeroizing<String>>, String> {
     match record.secret_storage.as_str() {
         "none" => Ok(None),
-        "session" => session_secrets()
+        "session" | "keyring" => session_secrets()
             .lock()
             .get(&record.id)
             .map(|secret| Zeroizing::new(secret.to_string()))
             .ok_or_else(|| "会话凭证已失效，请重新输入".into())
             .map(Some),
-        "keyring" => {
-            let locator = record.secret_locator.as_deref().unwrap_or(&record.id);
-            keyring_entry(locator)?
-                .get_password()
-                .map(Zeroizing::new)
-                .map(Some)
-                .map_err(|error| format!("读取系统凭证失败: {error}"))
-        }
         _ => Err("无效的凭证存储类型".into()),
     }
 }
@@ -1468,7 +1332,12 @@ pub fn list_repositories(conn: &Connection) -> Result<Vec<PluginRepository>, Str
             } else {
                 match credential_id.as_ref().and_then(|value| profiles.get(value)) {
                     Some(profile) if profile.available => "ready",
-                    Some(profile) if profile.secret_storage == "session" => "session-missing",
+                    Some(profile)
+                        if profile.secret_storage == "session"
+                            || profile.secret_storage == "keyring" =>
+                    {
+                        "session-missing"
+                    }
                     Some(_) => "failed",
                     None => "missing",
                 }
@@ -1709,11 +1578,7 @@ pub fn test_repository_connection(
         Err(FetchRepositoryError::TrustRequired(challenge)) => Ok(RepositoryConnectionTest {
             repository_id: repository_id.to_string(),
             status: "trust-required".into(),
-            message: if challenge.kind == "ssh-host-key" {
-                "需要确认 SSH 主机密钥".into()
-            } else {
-                "需要确认 TLS 证书".into()
-            },
+            message: "需要确认 SSH 主机密钥".into(),
             challenge: Some(challenge),
         }),
         Err(FetchRepositoryError::Message(message)) => Ok(RepositoryConnectionTest {
@@ -1874,29 +1739,16 @@ fn fetch_repository(
     let certificate_outcome = Arc::new(Mutex::new(None::<CertificateOutcome>));
     let callback_outcome = certificate_outcome.clone();
     callbacks.certificate_check(move |certificate, hostname| {
+        if certificate.as_x509().is_some() {
+            return Ok(CertificateCheckStatus::CertificatePassthrough);
+        }
         if !hostname.eq_ignore_ascii_case(&certificate_remote.host) {
             *callback_outcome.lock() = Some(CertificateOutcome::Changed(format!(
-                "远程连接跳转到了其他主机 {hostname}，已阻止证书或主机密钥确认"
+                "远程连接跳转到了其他主机 {hostname}，已阻止主机密钥确认"
             )));
             return Err(git2::Error::from_str(
                 "certificate callback host does not match repository host",
             ));
-        }
-        if let Some(x509) = certificate.as_x509() {
-            let challenge = tls_challenge(&certificate_remote, x509.data());
-            if trust.tls_fingerprint.as_deref() == Some(challenge.fingerprint_sha256.as_str()) {
-                return Ok(CertificateCheckStatus::CertificateOk);
-            }
-            let outcome = if trust.tls_fingerprint.is_some() {
-                CertificateOutcome::Changed(format!(
-                    "TLS 证书已变化，已阻止连接。当前指纹：{}",
-                    challenge.fingerprint_sha256
-                ))
-            } else {
-                CertificateOutcome::TrustRequired(challenge)
-            };
-            *callback_outcome.lock() = Some(outcome);
-            return Err(git2::Error::from_str("TLS certificate is not trusted"));
         }
         if let Some(host_key) = certificate.as_hostkey() {
             let fingerprint = host_key

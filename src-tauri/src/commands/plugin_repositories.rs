@@ -121,14 +121,6 @@ pub async fn test_plugin_repository_connection(
 }
 
 #[tauri::command]
-pub fn trust_plugin_repository_tls_certificate(
-    state: State<'_, AppState>,
-    args: TrustRepositoryConnectionInput,
-) -> Result<(), String> {
-    repository::trust_tls_certificate(&state.db.lock(), args)
-}
-
-#[tauri::command]
 pub fn trust_plugin_repository_ssh_host_key(
     state: State<'_, AppState>,
     args: TrustRepositoryConnectionInput,

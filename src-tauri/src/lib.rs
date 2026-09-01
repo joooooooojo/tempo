@@ -496,7 +496,6 @@ pub fn run() {
             commands::plugin_repositories::sync_plugin_repository,
             commands::plugin_repositories::sync_all_plugin_repositories,
             commands::plugin_repositories::test_plugin_repository_connection,
-            commands::plugin_repositories::trust_plugin_repository_tls_certificate,
             commands::plugin_repositories::trust_plugin_repository_ssh_host_key,
             commands::plugin_repositories::list_plugin_repository_operations,
             commands::plugin_repositories::search_repository_plugins,

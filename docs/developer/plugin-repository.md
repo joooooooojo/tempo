@@ -25,7 +25,7 @@ Tempo 可以从 Git 仓库发现和安装插件。仓库是一个普通 monorepo
 - `node scripts/validate.mjs` 本地 / CI 校验
 - GitHub Actions 工作流
 
-私有仓库在 Tempo 里配置 PAT 或 SSH 凭证。
+私有仓库在 Tempo 里配置 PAT 或 SSH 凭证。秘密只留在当前应用会话，退出后需重新输入。
 
 ## 仓库约定
 

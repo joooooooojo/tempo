@@ -760,18 +760,6 @@
   gap: 6px;
 }
 
-.plugin-credential-persist {
-  min-height: 38px;
-  padding: 6px 0;
-}
-
-.plugin-credential-form__actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-top: 2px;
-}
-
 .plugin-repository-issue-list {
   display: flex;
   flex-direction: column;

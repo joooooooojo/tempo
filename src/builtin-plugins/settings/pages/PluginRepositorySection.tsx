@@ -122,7 +122,6 @@ const EMPTY_CREDENTIAL_DRAFT: SaveRepositoryCredentialInput = {
   username: "",
   sshPrivateKeyPath: "",
   secret: "",
-  persist: true,
 };
 
 const REPOSITORY_AUTH_OPTIONS = [
@@ -620,11 +619,12 @@ export function PluginRepositorySection() {
         port: challenge.port,
         fingerprintSha256: challenge.fingerprintSha256,
       };
-      if (challenge.kind === "ssh-host-key") {
-        await api.trustPluginRepositorySshHostKey(input);
-      } else {
-        await api.trustPluginRepositoryTlsCertificate(input);
+      if (challenge.kind !== "ssh-host-key") {
+        toast.error("当前连接不需要确认证书");
+        setTrustPrompt(null);
+        return;
       }
+      await api.trustPluginRepositorySshHostKey(input);
       setTrustPrompt(null);
       await testConnection(repository, syncAfter, !syncAfter);
     } catch (error) {
@@ -722,7 +722,6 @@ export function PluginRepositorySection() {
       username: credential.username || "",
       sshPrivateKeyPath: credential.sshPrivateKeyPath || "",
       secret: "",
-      persist: credential.secretStorage !== "session",
     });
   };
 
@@ -745,6 +744,7 @@ export function PluginRepositorySection() {
         credentialId: current.credentialId || saved.id,
       }));
       toast.success("凭证已保存");
+      setCredentialsOpen(false);
     } catch (error) {
       toast.error(errorText(error));
     } finally {
@@ -1448,9 +1448,6 @@ export function PluginRepositorySection() {
         <DialogPanel showOverlay={false} className="plugin-repository-dialog sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>仓库凭证</DialogTitle>
-            <DialogDescription>
-              秘密保存在系统凭证库或当前应用会话中，不会写入仓库地址和数据库。
-            </DialogDescription>
           </DialogHeader>
           <DialogContent className="plugin-credential-dialog__content">
             <div className="plugin-credential-layout">
@@ -1599,63 +1596,47 @@ export function PluginRepositorySection() {
                         }))
                       }
                     />
+                    <FieldDescription>只保存在当前应用会话，退出 Tempo 后需要重新输入。</FieldDescription>
                   </Field>
                 ) : null}
-                {credentialNeedsSecret ? (
-                  <Field orientation="horizontal" className="plugin-credential-persist">
-                    <div className="min-w-0 flex-1">
-                      <FieldLabel htmlFor="plugin-credential-persist">保存在系统凭证库</FieldLabel>
-                      <FieldDescription>关闭后，秘密仅在当前应用会话中可用。</FieldDescription>
-                    </div>
-                    <Switch
-                      id="plugin-credential-persist"
-                      checked={credentialDraft.persist}
-                      onCheckedChange={(checked) =>
-                        setCredentialDraft((current) => ({ ...current, persist: checked }))
-                      }
-                    />
-                  </Field>
-                ) : null}
-                <div className="plugin-credential-form__actions">
-                  {credentialDraft.id ? (
-                    <Button
-                      variant="destructive"
-                      onClick={() => {
-                        const credential = credentials.find(
-                          (item) => item.id === credentialDraft.id,
-                        );
-                        if (credential) void deleteCredential(credential);
-                      }}
-                    >
-                      <Trash2 data-icon="inline-start" />
-                      删除
-                    </Button>
-                  ) : null}
-                  <Button
-                    className="ml-auto"
-                    disabled={
-                      savingCredential ||
-                      !credentialDraft.displayName.trim() ||
-                      !credentialDraft.scopeUrl.trim() ||
-                      !credentialDraft.username?.trim() ||
-                      (credentialDraft.authKind === "ssh-key" &&
-                        !credentialDraft.sshPrivateKeyPath?.trim()) ||
-                      (credentialDraft.authKind === "http-token" &&
-                        !credentialDraft.id &&
-                        !credentialDraft.secret)
-                    }
-                    onClick={() => void saveCredential()}
-                  >
-                    {savingCredential ? <Spinner data-icon="inline-start" /> : null}
-                    {credentialDraft.id ? "保存修改" : "保存凭证"}
-                  </Button>
-                </div>
               </FieldGroup>
             </div>
           </DialogContent>
           <DialogFooter>
+            {credentialDraft.id ? (
+              <Button
+                variant="destructive"
+                className="sm:mr-auto"
+                onClick={() => {
+                  const credential = credentials.find(
+                    (item) => item.id === credentialDraft.id,
+                  );
+                  if (credential) void deleteCredential(credential);
+                }}
+              >
+                <Trash2 data-icon="inline-start" />
+                删除
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => setCredentialsOpen(false)}>
-              完成
+              取消
+            </Button>
+            <Button
+              disabled={
+                savingCredential ||
+                !credentialDraft.displayName.trim() ||
+                !credentialDraft.scopeUrl.trim() ||
+                !credentialDraft.username?.trim() ||
+                (credentialDraft.authKind === "ssh-key" &&
+                  !credentialDraft.sshPrivateKeyPath?.trim()) ||
+                (credentialDraft.authKind === "http-token" &&
+                  !credentialDraft.id &&
+                  !credentialDraft.secret)
+              }
+              onClick={() => void saveCredential()}
+            >
+              {savingCredential ? <Spinner data-icon="inline-start" /> : null}
+              {credentialDraft.id ? "保存修改" : "保存凭证"}
             </Button>
           </DialogFooter>
         </DialogPanel>
@@ -1669,11 +1650,7 @@ export function PluginRepositorySection() {
       >
         <DialogPanel showOverlay={false} className="plugin-repository-dialog sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>
-              {trustPrompt?.challenge.kind === "ssh-host-key"
-                ? "确认 SSH 主机密钥"
-                : "确认 TLS 证书"}
-            </DialogTitle>
+            <DialogTitle>确认 SSH 主机密钥</DialogTitle>
             <DialogDescription>
               请通过仓库管理员或可信渠道核对完整指纹。确认后只信任这个主机和端口。
             </DialogDescription>
@@ -1696,26 +1673,6 @@ export function PluginRepositorySection() {
                       id="plugin-repository-trust-key-type"
                       readOnly
                       value={trustPrompt.challenge.keyType}
-                    />
-                  </Field>
-                ) : null}
-                {trustPrompt.challenge.subject ? (
-                  <Field orientation="horizontal">
-                    <FieldLabel htmlFor="plugin-repository-trust-subject">证书主体</FieldLabel>
-                    <Input
-                      id="plugin-repository-trust-subject"
-                      readOnly
-                      value={trustPrompt.challenge.subject}
-                    />
-                  </Field>
-                ) : null}
-                {trustPrompt.challenge.issuer ? (
-                  <Field orientation="horizontal">
-                    <FieldLabel htmlFor="plugin-repository-trust-issuer">签发者</FieldLabel>
-                    <Input
-                      id="plugin-repository-trust-issuer"
-                      readOnly
-                      value={trustPrompt.challenge.issuer}
                     />
                   </Field>
                 ) : null}
