@@ -337,7 +337,7 @@ function ClipboardTableRow({
             className="inline-flex max-w-full items-center gap-2"
             title={filePaths.join("\n")}
           >
-            <span className="flex h-10 w-9 shrink-0 items-center justify-center">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-visible">
               <ClipboardFileGlyph paths={filePaths} size="chip" />
             </span>
             <pre className="m-0 block min-w-0 truncate font-sans text-[12px] leading-[17px] text-foreground/88">

@@ -83,6 +83,11 @@ html.main-panel-window #root {
   overflow: hidden;
 }
 
+.main-panel-clipboard-chip:has(.clipboard-file-glyph) .follow-tooltip-trigger {
+  flex: none;
+  overflow: visible;
+}
+
 .main-panel-clipboard-chip-label {
   display: block;
   min-width: 0;
@@ -454,10 +459,11 @@ html.main-panel-window #root {
 .main-panel-clipboard-chip-file {
   display: inline-flex;
   align-items: center;
+  overflow: visible;
 }
 
 .main-panel-clipboard-chip:has(.clipboard-file-glyph) {
-  padding: 4px 8px;
+  padding: 2px 4px 2px 6px;
 }
 
 .follow-tooltip-trigger {

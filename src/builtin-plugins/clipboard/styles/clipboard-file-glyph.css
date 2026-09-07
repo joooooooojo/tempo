@@ -54,6 +54,7 @@
   position: absolute;
   top: -6px;
   right: -8px;
+  z-index: 1;
   min-width: 22px;
   height: 22px;
   padding: 0 5px;
@@ -92,6 +93,8 @@
   width: auto;
   height: auto;
   gap: 0;
+  padding: 6px 8px 0 0;
+  overflow: visible;
 }
 
 .clipboard-file-glyph--chip .clipboard-file-glyph__sheet {
