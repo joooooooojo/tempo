@@ -11,9 +11,10 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  armContextMenuPointerSuppress,
+  endContextMenuSession,
   isBlurHideSuppressed,
   isDevtoolsBlurHideSuppressed,
-  setContextMenuBlurHideSuppressed,
   setDevtoolsBlurHideSuppressed,
 } from "@/lib/blurHideGuard";
 import { isInsidePortalOverlay, trapTabKey } from "@/lib/focusTrap";
@@ -1857,8 +1858,15 @@ export function MainPanelPage() {
     const onContextMenu = (event: Event) => {
       event.preventDefault();
     };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 2) armContextMenuPointerSuppress();
+    };
     document.addEventListener("contextmenu", onContextMenu, true);
-    return () => document.removeEventListener("contextmenu", onContextMenu, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("contextmenu", onContextMenu, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
   }, []);
 
   useEffect(() => {
@@ -1942,16 +1950,18 @@ export function MainPanelPage() {
     const unlistenClosed = listen<LauncherContextMenuClosed>(
       "launcher-context-menu:closed",
       (event) => {
-        setContextMenuBlurHideSuppressed(false);
+        endContextMenuSession();
         const reason = event.payload?.reason;
         if (reason === "blur") {
           const generation = panelVisibilityGenerationRef.current;
-          void getCurrentWindow()
-            .isFocused()
-            .then((focused) => {
-              if (!focused) void hidePreservingSession(generation);
-            })
-            .catch(() => undefined);
+          window.setTimeout(() => {
+            void getCurrentWindow()
+              .isFocused()
+              .then((focused) => {
+                if (!focused) void hidePreservingSession(generation);
+              })
+              .catch(() => undefined);
+          }, 50);
           return;
         }
         if (reason === "escape" || reason === "dismiss") {
@@ -1971,7 +1981,7 @@ export function MainPanelPage() {
     target: LauncherContextMenuTarget,
   ) => {
     void openLauncherContextMenu(event, target).catch((menuError) => {
-      setContextMenuBlurHideSuppressed(false);
+      endContextMenuSession();
       setError(errorMessage(menuError, "无法打开右键菜单"));
     });
   };

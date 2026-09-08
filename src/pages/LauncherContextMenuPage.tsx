@@ -24,32 +24,38 @@ export function LauncherContextMenuPage() {
       setReady(true);
     };
 
+    let armed = false;
+    let armTimer = 0;
+    const disarmBlurClose = () => {
+      armed = false;
+      window.clearTimeout(armTimer);
+    };
+    const armBlurClose = () => {
+      disarmBlurClose();
+      armTimer = window.setTimeout(() => {
+        armed = true;
+      }, 200);
+    };
+
     const unlistenPrepare = listen<LauncherContextMenuPayload>(
       "launcher-context-menu:prepare",
       (event) => applyPayload(event.payload),
     );
     const unlistenOpen = listen<LauncherContextMenuPayload>(
       "launcher-context-menu:open",
-      (event) => applyPayload(event.payload),
+      (event) => {
+        applyPayload(event.payload);
+        armBlurClose();
+      },
     );
     const unlistenHide = listen("launcher-context-menu:hide", () => {
+      disarmBlurClose();
       setReady(false);
       setItems([]);
       setTarget(null);
     });
 
     const appWindow = getCurrentWindow();
-    let armed = false;
-    let armTimer = 0;
-    const armBlurClose = () => {
-      window.clearTimeout(armTimer);
-      armTimer = window.setTimeout(() => {
-        armed = true;
-      }, 120);
-    };
-
-    void unlistenOpen.then(() => armBlurClose());
-
     let unlistenBlur: (() => void) | undefined;
     void appWindow
       .onFocusChanged(({ payload: focused }) => {
@@ -68,14 +74,11 @@ export function LauncherContextMenuPage() {
     };
     window.addEventListener("keydown", onKeyDown);
 
-    // Prevent the native WebView menu inside this window as well.
     const onContextMenu = (event: Event) => event.preventDefault();
     document.addEventListener("contextmenu", onContextMenu, true);
 
-    armBlurClose();
-
     return () => {
-      window.clearTimeout(armTimer);
+      disarmBlurClose();
       window.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("contextmenu", onContextMenu, true);
       void unlistenPrepare.then((fn) => fn());

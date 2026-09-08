@@ -1,6 +1,6 @@
 import type { MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { setContextMenuBlurHideSuppressed } from "@/lib/blurHideGuard";
+import { beginContextMenuSession, endContextMenuSession } from "@/lib/blurHideGuard";
 import { api } from "@/lib/api";
 
 export type LauncherContextMenuTarget =
@@ -90,12 +90,7 @@ export async function openLauncherContextMenu(
   event.stopPropagation();
   if (!isTauriRuntime()) return;
 
-  setContextMenuBlurHideSuppressed(true);
-  // Backup: if the menu never emits closed (or show hangs without freezing JS),
-  // don't leave main-panel blur-hide permanently suppressed.
-  window.setTimeout(() => {
-    setContextMenuBlurHideSuppressed(false);
-  }, 8000);
+  beginContextMenuSession();
 
   try {
     const win = getCurrentWindow();
@@ -109,7 +104,7 @@ export async function openLauncherContextMenu(
       target,
     });
   } catch (error) {
-    setContextMenuBlurHideSuppressed(false);
+    endContextMenuSession();
     throw error;
   }
 }

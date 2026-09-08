@@ -2,6 +2,9 @@
 
 let suppressDepth = 0;
 let contextMenuSuppressActive = false;
+let contextMenuSession = false;
+let contextMenuReleaseTimer = 0;
+let contextMenuBackupTimer = 0;
 let devtoolsSuppressActive = false;
 
 export function isBlurHideSuppressed(): boolean {
@@ -25,6 +28,42 @@ export function setContextMenuBlurHideSuppressed(active: boolean): void {
   if (active === contextMenuSuppressActive) return;
   contextMenuSuppressActive = active;
   setBlurHideSuppressed(active);
+}
+
+function clearContextMenuTimers(): void {
+  if (typeof window === "undefined") return;
+  window.clearTimeout(contextMenuReleaseTimer);
+  window.clearTimeout(contextMenuBackupTimer);
+  contextMenuReleaseTimer = 0;
+  contextMenuBackupTimer = 0;
+}
+
+/** Right-click started: ignore blur-hide until a menu session begins or this expires. */
+export function armContextMenuPointerSuppress(): void {
+  setContextMenuBlurHideSuppressed(true);
+  if (typeof window === "undefined") return;
+  window.clearTimeout(contextMenuReleaseTimer);
+  contextMenuReleaseTimer = window.setTimeout(() => {
+    if (!contextMenuSession) setContextMenuBlurHideSuppressed(false);
+  }, 500);
+}
+
+/** Menu is opening: keep blur-hide suppressed until `endContextMenuSession`. */
+export function beginContextMenuSession(): void {
+  contextMenuSession = true;
+  setContextMenuBlurHideSuppressed(true);
+  if (typeof window === "undefined") return;
+  window.clearTimeout(contextMenuReleaseTimer);
+  window.clearTimeout(contextMenuBackupTimer);
+  contextMenuBackupTimer = window.setTimeout(() => {
+    endContextMenuSession();
+  }, 8000);
+}
+
+export function endContextMenuSession(): void {
+  contextMenuSession = false;
+  clearContextMenuTimers();
+  setContextMenuBlurHideSuppressed(false);
 }
 
 /**
