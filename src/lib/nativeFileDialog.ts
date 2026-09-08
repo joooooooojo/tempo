@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, type OpenDialogOptions } from "@tauri-apps/plugin-dialog";
-import { withBlurHideSuppressed } from "@/lib/blurHideGuard";
+import { withMainPanelHold } from "@/lib/mainPanelHold";
 
 function isWindowsHost(): boolean {
   return /Windows/i.test(navigator.userAgent);
@@ -48,13 +48,13 @@ function normalizeDialogResult(
 
 /**
  * Native file/folder picker for overlay windows (main panel / shelf).
- * Matches ZTools: parent dialogs to the overlay at modal-panel level, and suppress
- * blur→hide so opening NSOpenPanel does not dismiss the main panel.
+ * Matches ZTools: parent dialogs to the overlay at modal-panel level, and hold
+ * the main panel open in case the picker counts as another app taking over.
  */
 export async function openNativeFileDialog(
   options: OpenDialogOptions,
 ): Promise<string | string[] | null> {
-  return withBlurHideSuppressed(async () => {
+  return withMainPanelHold("native-file-dialog", async () => {
     try {
       await invoke("prepare_native_file_dialog");
     } catch {

@@ -53,7 +53,7 @@ struct LauncherContextMenuPreparePayload {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct LauncherContextMenuClosedPayload {
+struct LauncherContextMenuHidePayload {
     reason: String,
 }
 
@@ -198,14 +198,10 @@ fn place_launcher_context_menu(
     Ok(())
 }
 
-fn emit_closed(app: &AppHandle, reason: &str) {
-    let payload = LauncherContextMenuClosedPayload {
+fn emit_hide(app: &AppHandle, reason: &str) {
+    let payload = LauncherContextMenuHidePayload {
         reason: reason.to_string(),
     };
-    crate::logging::debug_if_err(
-        app.emit_to(MAIN_PANEL_LABEL, "launcher-context-menu:closed", &payload),
-        "emit launcher-context-menu:closed",
-    );
     crate::logging::debug_if_err(
         app.emit_to(
             LAUNCHER_CONTEXT_MENU_LABEL,
@@ -214,6 +210,18 @@ fn emit_closed(app: &AppHandle, reason: &str) {
         ),
         "emit launcher-context-menu:hide",
     );
+}
+
+/// Hand keyboard focus back to the panel once the menu goes away on its own
+/// (Esc / item chosen). Outside clicks are left alone: the panel's activation
+/// tracking decides whether Tempo is still the active app.
+fn refocus_main_panel(app: &AppHandle) {
+    if !crate::main_panel::is_visible() {
+        return;
+    }
+    if let Some(main) = app.get_webview_window(MAIN_PANEL_LABEL) {
+        crate::logging::debug_if_err(main.set_focus(), "refocus main panel after context menu");
+    }
 }
 
 /// Async so a fallback window create on Windows cannot deadlock the IPC thread.
@@ -276,14 +284,19 @@ pub fn hide_launcher_context_menu_window(
     app: &AppHandle,
     reason: &str,
 ) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window(LAUNCHER_CONTEXT_MENU_LABEL) {
-        if window.is_visible().unwrap_or(false) {
+    let was_visible = app
+        .get_webview_window(LAUNCHER_CONTEXT_MENU_LABEL)
+        .filter(|window| window.is_visible().unwrap_or(false))
+        .map(|window| {
             crate::logging::debug_if_err(window.hide(), "hide launcher context menu");
-        }
-    }
+        })
+        .is_some();
 
-    // Always notify so main-panel blur-hide suppress is released even if already hidden.
-    emit_closed(app, reason);
+    // Always notify so the menu webview resets even if it was already hidden.
+    emit_hide(app, reason);
+    if was_visible && reason == "escape" {
+        refocus_main_panel(app);
+    }
     Ok(())
 }
 
@@ -311,9 +324,6 @@ pub async fn launcher_context_menu_action(
         "emit launcher-context-menu:action",
     );
     hide_launcher_context_menu_window(&app, "action").map_err(|error| error.to_string())?;
-
-    if let Some(main) = app.get_webview_window(MAIN_PANEL_LABEL) {
-        let _ = main.set_focus();
-    }
+    refocus_main_panel(&app);
     Ok(())
 }

@@ -1,7 +1,4 @@
 import { useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isBlurHideSuppressed } from "@/lib/blurHideGuard";
 import {
   applyTheme,
   applyThemeAsync,
@@ -49,44 +46,6 @@ export function useAuxiliaryWindowShell(className: string) {
 /** Re-read settings and apply theme — call when an overlay becomes visible. */
 export async function refreshAuxiliaryWindowTheme(): Promise<Settings["theme"]> {
   return applyThemeFromSettings();
-}
-
-export function useShelfBlurClose(openEvent: string, busy = false) {
-  useEffect(() => {
-    const appWindow = getCurrentWindow();
-    let armed = false;
-    let armTimer = 0;
-
-    const armBlurClose = () => {
-      window.clearTimeout(armTimer);
-      armTimer = window.setTimeout(() => {
-        armed = true;
-      }, 200);
-    };
-
-    const unlistenOpen = listen(openEvent, () => {
-      armBlurClose();
-    });
-
-    let unlistenBlur: (() => void) | undefined;
-    void appWindow
-      .onFocusChanged(({ payload: focused }) => {
-        if (!focused && armed && !busy && !isBlurHideSuppressed()) {
-          void appWindow.hide();
-        }
-      })
-      .then((fn) => {
-        unlistenBlur = fn;
-      });
-
-    armBlurClose();
-
-    return () => {
-      window.clearTimeout(armTimer);
-      void unlistenOpen.then((fn) => fn());
-      unlistenBlur?.();
-    };
-  }, [openEvent, busy]);
 }
 
 async function applyThemeFromSettings(): Promise<Settings["theme"]> {

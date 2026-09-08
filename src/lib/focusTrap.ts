@@ -47,7 +47,7 @@ export function listFocusableElements(root: HTMLElement): HTMLElement[] {
 
 /**
  * Keep Tab / Shift+Tab cycling inside `root` so focus cannot leave the WebView
- * (which would fire window blur → main-panel hide).
+ * and park on native window chrome where typing goes nowhere.
  * Returns true when the event was handled.
  */
 export function trapTabKey(

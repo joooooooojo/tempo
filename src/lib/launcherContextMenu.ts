@@ -1,6 +1,5 @@
 import type { MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { beginContextMenuSession, endContextMenuSession } from "@/lib/blurHideGuard";
 import { api } from "@/lib/api";
 
 export type LauncherContextMenuTarget =
@@ -37,10 +36,6 @@ export type LauncherContextMenuPayload = {
 export type LauncherContextMenuAction = {
   actionId: string;
   target: LauncherContextMenuTarget;
-};
-
-export type LauncherContextMenuClosed = {
-  reason: "action" | "blur" | "escape" | "dismiss";
 };
 
 export function buildTileContextMenuItems(
@@ -81,7 +76,11 @@ function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-/** Open the floating launcher context-menu window at the cursor. */
+/**
+ * Open the floating launcher context-menu window at the cursor.
+ * The menu is a Tempo window, so it taking focus never counts as app
+ * deactivation — no blur suppression is needed around it.
+ */
 export async function openLauncherContextMenu(
   event: MouseEvent,
   target: LauncherContextMenuTarget,
@@ -90,21 +89,14 @@ export async function openLauncherContextMenu(
   event.stopPropagation();
   if (!isTauriRuntime()) return;
 
-  beginContextMenuSession();
-
-  try {
-    const win = getCurrentWindow();
-    const [factor, pos] = await Promise.all([win.scaleFactor(), win.innerPosition()]);
-    const x = pos.x + Math.round(event.clientX * factor);
-    const y = pos.y + Math.round(event.clientY * factor);
-    await api.showLauncherContextMenu({
-      x,
-      y,
-      items: buildTileContextMenuItems(target),
-      target,
-    });
-  } catch (error) {
-    endContextMenuSession();
-    throw error;
-  }
+  const win = getCurrentWindow();
+  const [factor, pos] = await Promise.all([win.scaleFactor(), win.innerPosition()]);
+  const x = pos.x + Math.round(event.clientX * factor);
+  const y = pos.y + Math.round(event.clientY * factor);
+  await api.showLauncherContextMenu({
+    x,
+    y,
+    items: buildTileContextMenuItems(target),
+    target,
+  });
 }

@@ -11,6 +11,7 @@ mod auxiliary_windows;
 mod launcher_context_menu;
 mod logging;
 mod launcher_search;
+mod main_panel;
 #[cfg(target_os = "macos")]
 mod macos_dock;
 #[cfg(target_os = "macos")]
@@ -93,7 +94,7 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             logging::warn_if_err(
-                auxiliary_windows::show_main_panel(app),
+                main_panel::show(app, main_panel::ShowReason::SecondInstance),
                 "focus existing window on second launch",
             );
         }));
@@ -357,6 +358,7 @@ pub fn run() {
                 }
             }
             auxiliary_windows::precache_auxiliary_windows(app.handle())?;
+            main_panel::init(app.handle());
 
             #[cfg(target_os = "macos")]
             {
@@ -366,6 +368,7 @@ pub fn run() {
 
             Ok(())
         })
+        .on_window_event(main_panel::on_window_event)
         .invoke_handler(tauri::generate_handler![
             builtin_plugins::reports::get_daily_report,
             builtin_plugins::reports::get_weekly_report,
@@ -401,9 +404,11 @@ pub fn run() {
             auxiliary_windows::get_main_panel_position,
             auxiliary_windows::set_main_panel_position,
             auxiliary_windows::save_main_panel_position,
-            auxiliary_windows::show_main_panel_window,
-            auxiliary_windows::get_main_panel_visibility_generation,
-            auxiliary_windows::hide_main_panel_window,
+            main_panel::main_panel_show,
+            main_panel::main_panel_hide,
+            main_panel::main_panel_state,
+            main_panel::main_panel_hold,
+            main_panel::main_panel_release,
             auxiliary_windows::prepare_native_file_dialog,
             auxiliary_windows::restore_after_native_file_dialog,
             auxiliary_windows::sync_main_panel_appearance,
@@ -430,8 +435,6 @@ pub fn run() {
             commands::window::quit_app,
             commands::window::debug_log,
             commands::window::system_prefers_dark,
-            commands::window::open_main_panel_devtools,
-            commands::window::is_main_panel_devtools_open,
             notify::show_user_notification,
             builtin_plugins::port_manager::get_port_records,
             builtin_plugins::port_manager::terminate_port_process,
@@ -569,7 +572,7 @@ pub fn run() {
                     notify::prime_macos_authorization(app_handle);
 
                     logging::warn_if_err(
-                        auxiliary_windows::show_main_panel(app_handle),
+                        main_panel::show(app_handle, main_panel::ShowReason::Startup),
                         "show main panel on startup",
                     );
                 }
@@ -591,7 +594,7 @@ pub fn run() {
                     // App reopen (e.g. from Finder) with no visible windows: open quick panel.
                     if !*has_visible_windows {
                         logging::warn_if_err(
-                            auxiliary_windows::show_main_panel(app_handle),
+                            main_panel::show(app_handle, main_panel::ShowReason::Reopen),
                             "show main panel on macos reopen",
                         );
                     }
@@ -618,7 +621,7 @@ pub(crate) fn dispatch_shortcut_action(
     action: &str,
 ) -> Result<(), String> {
     let result = match action {
-        ACTION_MAIN_PANEL => auxiliary_windows::toggle_main_panel(app),
+        ACTION_MAIN_PANEL => main_panel::toggle(app),
         ACTION_CLIPBOARD_PICKER => auxiliary_windows::show_clipboard_picker_window(app),
         ACTION_SNIPPET_PICKER => auxiliary_windows::show_snippet_picker_window(app),
         ACTION_SHELF_ESCAPE => auxiliary_windows::hide_shelf_picker_window(app),

@@ -1,6 +1,6 @@
-use crate::auxiliary_windows;
 use crate::commands;
 use crate::db::AppState;
+use crate::main_panel;
 #[cfg(not(target_os = "macos"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{
@@ -29,7 +29,7 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 crate::logging::warn_if_err(
-                    auxiliary_windows::show_main_panel(app),
+                    main_panel::show(app, main_panel::ShowReason::Tray),
                     "tray show main panel",
                 );
             }
@@ -61,7 +61,7 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             {
                 let app = tray.app_handle();
                 crate::logging::warn_if_err(
-                    auxiliary_windows::show_main_panel(app),
+                    main_panel::show(app, main_panel::ShowReason::Tray),
                     "tray click show main panel",
                 );
             }

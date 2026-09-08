@@ -49,6 +49,42 @@ export interface MainPanelSearchMatch {
   app: LauncherApp | null;
 }
 
+/** Why the Rust controller showed the main panel (`main-panel:shown`). */
+export type MainPanelShowReason =
+  | "startup"
+  | "shortcut"
+  | "tray"
+  | "command"
+  | "second-instance"
+  | "reopen";
+
+/** Why the Rust controller hid the main panel (`main-panel:hidden`). */
+export type MainPanelHideReason =
+  /** Another application became active. */
+  | "deactivated"
+  /** Global shortcut toggled the panel closed. */
+  | "shortcut"
+  /** The panel webview asked to close (Esc, item launched, ...). */
+  | "command"
+  /** A plugin called `mainPanel.hide`. */
+  | "plugin";
+
+export interface MainPanelShownPayload {
+  generation: number;
+  reason: MainPanelShowReason;
+}
+
+export interface MainPanelHiddenPayload {
+  generation: number;
+  reason: MainPanelHideReason;
+}
+
+export interface MainPanelState {
+  visible: boolean;
+  generation: number;
+  holds: string[];
+}
+
 export interface HourlyData {
   hour: number;
   seconds: number;

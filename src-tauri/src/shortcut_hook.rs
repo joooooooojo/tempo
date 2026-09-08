@@ -49,7 +49,7 @@ const WM_TEMPO_REINSTALL_HOOK: u32 = WM_APP + 42;
 const REINSTALL_INTERVAL: Duration = Duration::from_millis(800);
 /// Only needs to collapse RegisterHotKey + LL-hook double delivery for the *same*
 /// physical press (a few ms apart). A longer window ate intentional reopen after
-/// mouse blur-hide (Alt+Space → click away → Alt+Space within ~280ms).
+/// a click-away auto-hide (Alt+Space → click away → Alt+Space within ~280ms).
 const DISPATCH_DEBOUNCE: Duration = Duration::from_millis(80);
 
 type ChordKey = (u16, u32); // (mods, vk)
@@ -111,7 +111,7 @@ pub fn sync_bindings(bindings: &[(String, &'static str)]) {
 }
 
 /// Ask the hook thread to reinstall at the front of the LL chain (e.g. after
-/// main-panel blur-hide, when competing tools often reinstall their own hooks).
+/// the main panel hides, when competing tools often reinstall their own hooks).
 pub fn request_reinstall() {
     let thread_id = shared().lock().hook_thread_id;
     if let Some(thread_id) = thread_id {

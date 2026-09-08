@@ -314,7 +314,7 @@ async fn dispatch_host_method(
 ) -> Result<Value, RpcError> {
     match method {
         "mainPanel.hide" => {
-            crate::auxiliary_windows::hide_main_panel(app)
+            crate::main_panel::hide(app, crate::main_panel::HideReason::Plugin)
                 .map_err(|e| RpcError::internal("mainPanel.hide", e))?;
             Ok(Value::Null)
         }

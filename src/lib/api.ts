@@ -13,6 +13,7 @@ import type {
   LauncherApp,
   MainPanelSearchContribution,
   MainPanelSearchMatch,
+  MainPanelState,
   LauncherUsageItem,
   CustomLauncherEntry,
   PluginContributionBundle,
@@ -204,11 +205,11 @@ export const api = {
   setMainPanelPosition: (x: number, y: number) =>
     invoke<void>("set_main_panel_position", { x, y }),
   saveMainPanelPosition: () => invoke<void>("save_main_panel_position"),
-  showMainPanel: () => invoke<void>("show_main_panel_window"),
-  getMainPanelVisibilityGeneration: () =>
-    invoke<number>("get_main_panel_visibility_generation"),
-  hideMainPanelWindow: (generation: number) =>
-    invoke<boolean>("hide_main_panel_window", { generation }),
+  showMainPanel: () => invoke<void>("main_panel_show"),
+  /** Pass the generation from `main-panel:shown` so a stale hide cannot close a newer session. */
+  hideMainPanel: (generation?: number) =>
+    invoke<boolean>("main_panel_hide", { generation: generation ?? null }),
+  getMainPanelState: () => invoke<MainPanelState>("main_panel_state"),
   exportTodosBackup: (path: string) =>
     invoke<void>("export_todos_backup", { path }),
   importTodosBackup: (path: string) =>
@@ -217,8 +218,6 @@ export const api = {
     invoke<string>("save_markdown_image", { dataUrl, mimeType }),
   debugLog: (scope: string, message: string) =>
     invoke<void>("debug_log", { scope, message }),
-  openMainPanelDevtools: () => invoke<void>("open_main_panel_devtools"),
-  isMainPanelDevtoolsOpen: () => invoke<boolean>("is_main_panel_devtools_open"),
   getClipboardHistory: (query?: string, limit?: number, offset?: number) =>
     invoke<ClipboardHistoryPage>("get_clipboard_history", { query, limit, offset }),
   deleteClipboardEntry: (id: number) =>

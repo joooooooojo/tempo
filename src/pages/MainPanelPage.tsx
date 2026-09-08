@@ -10,21 +10,15 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import {
-  armContextMenuPointerSuppress,
-  endContextMenuSession,
-  isBlurHideSuppressed,
-  isDevtoolsBlurHideSuppressed,
-  setDevtoolsBlurHideSuppressed,
-} from "@/lib/blurHideGuard";
+import { useMainPanelVisibility } from "@/hooks/useMainPanelVisibility";
 import { isInsidePortalOverlay, trapTabKey } from "@/lib/focusTrap";
 import {
   openLauncherContextMenu,
   usageIdForContextTarget,
   type LauncherContextMenuAction,
-  type LauncherContextMenuClosed,
   type LauncherContextMenuTarget,
 } from "@/lib/launcherContextMenu";
+import { acquireMainPanelHold } from "@/lib/mainPanelHold";
 import {
   LoaderCircle,
   Pin,
@@ -96,6 +90,7 @@ import { syncClipboardUrlBrowserActions } from "@/builtin-plugins/clipboard/acti
 import { cn } from "@/lib/utils";
 import type {
   MainPanelClipboardSeed,
+  MainPanelHiddenPayload,
   LauncherApp,
   LauncherUsageItem,
   ReminderEvent,
@@ -237,8 +232,6 @@ export function MainPanelPage() {
   const clipboardChipHiddenAtRef = useRef<number | null>(null);
   /** Timestamp when panel was hidden while a plugin/app was open. */
   const appSessionHiddenAtRef = useRef<number | null>(null);
-  const panelVisibleRef = useRef(true);
-  const panelVisibilityGenerationRef = useRef(0);
   const contentRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef<string | null>(null);
   const modeRef = useRef<MainPanelMode>("search");
@@ -248,10 +241,31 @@ export function MainPanelPage() {
   const needsSearchSizeRef = useRef(false);
   const isTauri = isTauriRuntime();
 
+  // Rust owns show/hide (native app activation); this webview mirrors the
+  // session generation and reacts to shown/hidden. Handlers are wired through
+  // refs because they depend on callbacks declared further down.
+  const prepareForOpenRef = useRef<() => void>(() => {});
+  const onPanelHiddenRef = useRef<(payload: MainPanelHiddenPayload) => void>(() => {});
+  const {
+    visibleRef: panelVisibleRef,
+    hide: hidePanelWindow,
+  } = useMainPanelVisibility({
+    enabled: isTauri,
+    onShown: () => prepareForOpenRef.current(),
+    onHidden: (payload) => onPanelHiddenRef.current(payload),
+  });
+
   const updateDevWindowPinned = useCallback((pinned: boolean) => {
     devWindowPinnedRef.current = pinned;
     setDevWindowPinned(pinned);
   }, []);
+
+  // "Pin window" keeps the panel open even when another app takes over.
+  useEffect(() => {
+    if (!isTauri || !devWindowPinned) return;
+    const hold = acquireMainPanelHold("dev-window-pin");
+    return () => hold.release();
+  }, [devWindowPinned, isTauri]);
 
   const focusSearchInputAtEnd = useCallback(() => {
     const input = inputRef.current;
@@ -559,7 +573,6 @@ export function MainPanelPage() {
     if (clipboardChipRef.current) {
       clipboardChipHiddenAtRef.current = Date.now();
     }
-    panelVisibleRef.current = false;
   }, []);
 
   const clipboardSeedForActions = useMemo((): MainPanelClipboardSeed | null => {
@@ -588,32 +601,35 @@ export function MainPanelPage() {
     clearMainPanelSession();
     clipboardChipHiddenAtRef.current = null;
     appSessionHiddenAtRef.current = null;
-    panelVisibleRef.current = false;
-    setDevtoolsBlurHideSuppressed(false);
     dismissClipboardSeed();
-    const generation = panelVisibilityGenerationRef.current;
-    await hideMainPanel(generation);
+    await hidePanelWindow();
     resetMainPanelState();
     // Search layout ResizeObserver updates size while the window is still hidden.
-  }, [dismissClipboardSeed, resetMainPanelState]);
+  }, [dismissClipboardSeed, hidePanelWindow, resetMainPanelState]);
 
-  /** Blur / outside click: keep search chip/query (and app session) for the next open. */
-  const hidePreservingSession = useCallback(async (generation?: number) => {
-    const hideGeneration = generation ?? panelVisibilityGenerationRef.current;
-    if (hideGeneration !== panelVisibilityGenerationRef.current) return;
+  /** Keep the search chip/query (or the open app) so the next open resumes where the user left. */
+  const preserveSessionForHide = useCallback(() => {
     const appId = activeAppIdRef.current;
     if (modeRef.current === "app" && appId) {
       writeMainPanelSession(appId);
       appSessionHiddenAtRef.current = Date.now();
-      panelVisibleRef.current = false;
-      setDevtoolsBlurHideSuppressed(false);
-      await hideMainPanel(hideGeneration);
       return;
     }
+    clearMainPanelSession();
     markClipboardChipHidden();
-    setDevtoolsBlurHideSuppressed(false);
-    await hideMainPanel(hideGeneration);
   }, [markClipboardChipHidden]);
+
+  const hidePreservingSession = useCallback(async () => {
+    preserveSessionForHide();
+    await hidePanelWindow();
+  }, [hidePanelWindow, preserveSessionForHide]);
+
+  // Rust hid the panel (app deactivated / shortcut / plugin): only bookkeeping.
+  // `command` hides originate here and already did theirs.
+  onPanelHiddenRef.current = (payload) => {
+    if (payload.reason === "command") return;
+    preserveSessionForHide();
+  };
 
   const backToSearch = useCallback(() => {
     toast.dismiss();
@@ -833,6 +849,80 @@ export function MainPanelPage() {
     };
   }, [isTauri, openBuiltinApp]);
 
+  const restoreSessionIfNeeded = useCallback(() => {
+    if (modeRef.current === "app" && activeAppIdRef.current) {
+      const hiddenAt = appSessionHiddenAtRef.current;
+      appSessionHiddenAtRef.current = null;
+      // Panel stayed mounted in app mode after an external hide; drop if idle too long.
+      if (
+        hiddenAt != null &&
+        Date.now() - hiddenAt >= MAIN_PANEL_APP_SESSION_STALE_MS
+      ) {
+        clearMainPanelSession();
+        backToSearch();
+        return false;
+      }
+      // Fresh reopen counts as use — restart the idle clock for the next hide.
+      writeMainPanelSession(activeAppIdRef.current);
+      // Keep current size — resizing here after show causes a visible flash.
+      return true;
+    }
+    const session = resolveRestorableMainPanelSession();
+    if (!session) return false;
+    openBuiltinApp(session.appId, { restore: true });
+    return true;
+  }, [backToSearch, openBuiltinApp]);
+
+  /** A new visible session started (`main-panel:shown`). */
+  const prepareForOpen = useCallback(() => {
+    setOpenRevision((current) => current + 1);
+    refreshLauncherSettings();
+    void syncClipboardUrlBrowserActions();
+    const restored = restoreSessionIfNeeded();
+    if (restored || modeRef.current !== "search") return;
+
+    setSelectedKey(null);
+
+    const hiddenAt = clipboardChipHiddenAtRef.current;
+    clipboardChipHiddenAtRef.current = null;
+    const chipStale =
+      Boolean(clipboardChipRef.current) &&
+      hiddenAt != null &&
+      Date.now() - hiddenAt >= CLIPBOARD_CHIP_STALE_MS;
+
+    if (chipStale) {
+      // Closed >30s with a pending chip: drop preserved UI, then allow a fresh seed.
+      clearClipboardChipLocal();
+      setQuery("");
+      queryRef.current = "";
+      void applyClipboardSeedFromBackend();
+    } else if (clipboardChipRef.current) {
+      // Panel was hidden (not visible): newer copies while closed may replace the chip.
+      // Never replace while the panel stays open — copying panel content must not swap the seed.
+      void applyClipboardSeedFromBackend({ replace: true });
+    } else if (!queryRef.current.trim()) {
+      void applyClipboardSeedFromBackend();
+    }
+
+    // The native window can lose focus while its startup page is still visible. DOM focus
+    // alone cannot recover from that state, so reactivate the window before focusing input.
+    void getCurrentWindow()
+      .setFocus()
+      .catch(() => undefined)
+      .finally(() => {
+        window.requestAnimationFrame(focusSearchInputAtEnd);
+        // WebView focus can settle one tick after the native window becomes active.
+        window.setTimeout(focusSearchInputAtEnd, 50);
+      });
+  }, [
+    applyClipboardSeedFromBackend,
+    clearClipboardChipLocal,
+    focusSearchInputAtEnd,
+    refreshLauncherSettings,
+    restoreSessionIfNeeded,
+  ]);
+  prepareForOpenRef.current = prepareForOpen;
+
   useEffect(() => {
     if (!isTauri) {
       inputRef.current?.focus();
@@ -840,116 +930,6 @@ export function MainPanelPage() {
     }
 
     let disposed = false;
-    let armed = false;
-    let armTimer = 0;
-    let unlistenBlur: (() => void) | undefined;
-    const appWindow = getCurrentWindow();
-
-    const focusSearchInput = focusSearchInputAtEnd;
-
-    const restoreSessionIfNeeded = () => {
-      if (modeRef.current === "app" && activeAppIdRef.current) {
-        const hiddenAt = appSessionHiddenAtRef.current;
-        appSessionHiddenAtRef.current = null;
-        // Panel stayed mounted in app mode after blur-hide; drop if idle too long.
-        if (
-          hiddenAt != null &&
-          Date.now() - hiddenAt >= MAIN_PANEL_APP_SESSION_STALE_MS
-        ) {
-          clearMainPanelSession();
-          backToSearch();
-          return false;
-        }
-        // Fresh reopen counts as use — restart the idle clock for the next hide.
-        writeMainPanelSession(activeAppIdRef.current);
-        // Keep current size — resizing here after show causes a visible flash.
-        return true;
-      }
-      const session = resolveRestorableMainPanelSession();
-      if (!session) return false;
-      openBuiltinApp(session.appId, { restore: true });
-      return true;
-    };
-
-    const prepareForOpen = (generation: number) => {
-      if (generation <= panelVisibilityGenerationRef.current) return;
-      panelVisibilityGenerationRef.current = generation;
-      armed = false;
-      window.clearTimeout(armTimer);
-      panelVisibleRef.current = true;
-      setOpenRevision((current) => current + 1);
-      refreshLauncherSettings();
-      void syncClipboardUrlBrowserActions();
-      const restored = restoreSessionIfNeeded();
-      if (!restored && modeRef.current === "search") {
-        setSelectedKey(null);
-
-        const hiddenAt = clipboardChipHiddenAtRef.current;
-        clipboardChipHiddenAtRef.current = null;
-        const chipStale =
-          Boolean(clipboardChipRef.current) &&
-          hiddenAt != null &&
-          Date.now() - hiddenAt >= CLIPBOARD_CHIP_STALE_MS;
-
-        if (chipStale) {
-          // Closed >30s with a pending chip: drop preserved UI, then allow a fresh seed.
-          clearClipboardChipLocal();
-          setQuery("");
-          queryRef.current = "";
-          void applyClipboardSeedFromBackend();
-        } else if (clipboardChipRef.current) {
-          // Panel was hidden (not visible): newer copies while closed may replace the chip.
-          // Never replace while the panel stays open — copying panel content must not swap the seed.
-          void applyClipboardSeedFromBackend({ replace: true });
-        } else if (!queryRef.current.trim()) {
-          void applyClipboardSeedFromBackend();
-        }
-
-        // The native window can lose focus while its startup page is still visible. DOM focus
-        // alone cannot recover from that state, so reactivate the window before focusing input.
-        void appWindow
-          .setFocus()
-          .catch(() => undefined)
-          .finally(() => {
-            window.requestAnimationFrame(focusSearchInput);
-            // WebView focus can settle one tick after the native window becomes active.
-            window.setTimeout(focusSearchInput, 50);
-          });
-      }
-      armTimer = window.setTimeout(() => {
-        armed = true;
-        const generation = panelVisibilityGenerationRef.current;
-        void appWindow.isFocused().then((focused) => {
-          if (
-            disposed ||
-            focused ||
-            !armed ||
-            pendingRef.current ||
-            devWindowPinnedRef.current ||
-            isBlurHideSuppressed()
-          ) {
-            return;
-          }
-          void hidePreservingSession(generation);
-        });
-      }, 220);
-    };
-
-    const unlistenOpen = listen<number>("main-panel:open", (event) => {
-      prepareForOpen(event.payload);
-    });
-    const unlistenShortcutHide = listen("main-panel:shortcut-hide", () => {
-      const appId = activeAppIdRef.current;
-      if (modeRef.current === "app" && appId) {
-        writeMainPanelSession(appId);
-        appSessionHiddenAtRef.current = Date.now();
-        panelVisibleRef.current = false;
-        return;
-      }
-      clearMainPanelSession();
-      // Keep search chip/query across shortcut hide, same as blur.
-      markClipboardChipHidden();
-    });
     const unlistenClipboard = listen("clipboard-update", () => {
       // While visible: never replace an existing chip (copying panel content must not swap it).
       // If the chip was cleared, allow a new/same copy to fill again.
@@ -965,109 +945,35 @@ export function MainPanelPage() {
     void unlistenIndex.then(() => {
       if (!disposed) void loadApps();
     });
-    // Opening DevTools steals focus; arm suppress before the HWND appears (no polling).
-    let devtoolsStickyUntil = 0;
-    const onDevtoolsShortcut = (event: globalThis.KeyboardEvent) => {
-      if (!import.meta.env.DEV) return;
-      const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
-      const openInspector =
-        key === "F12" ||
-        ((event.ctrlKey || event.metaKey) &&
-          event.shiftKey &&
-          (key === "I" || key === "J")) ||
-        (event.metaKey && event.altKey && key === "I");
-      if (openInspector) {
-        setDevtoolsBlurHideSuppressed(true);
-        // Only cover HWND creation race — a long sticky made the first blur after
-        // closing DevTools a no-op, so a second blur was needed to hide.
-        devtoolsStickyUntil = Date.now() + 800;
-      }
-    };
-    window.addEventListener("keydown", onDevtoolsShortcut, true);
 
-    void appWindow
-      .onFocusChanged(({ payload: focused }) => {
-        // Native file sheets steal focus; suppress blur→hide while they are open (ZTools pattern).
-        if (!focused && armed && !pendingRef.current && !devWindowPinnedRef.current) {
-          const generation = panelVisibilityGenerationRef.current;
-          void (async () => {
-            // Windows can deliver the previous blur after Alt+Space has already
-            // reopened and focused the panel. Discard that stale notification.
-            if (await appWindow.isFocused().catch(() => false)) return;
-            // DevTools path only when already suppressed (F12 sticky / known open).
-            // Never delay the normal blur→hide path with EnumWindows + sleeps.
-            if (isDevtoolsBlurHideSuppressed()) {
-              let open = false;
-              try {
-                open = await api.isMainPanelDevtoolsOpen();
-              } catch {
-                /* ignore */
-              }
-              if (open) return;
-              // HWND may not exist yet right after F12 — keep panel briefly.
-              if (Date.now() < devtoolsStickyUntil) return;
-              setDevtoolsBlurHideSuppressed(false);
-            }
-            if (isBlurHideSuppressed()) return;
-            await hidePreservingSession(generation);
-          })();
-          return;
-        }
-        if (focused) {
-          // Closing DevTools usually focuses the panel first — drop suppress so the
-          // next outside click hides immediately (avoid a wasted clear-only blur).
-          if (
-            import.meta.env.DEV &&
-            isDevtoolsBlurHideSuppressed() &&
-            Date.now() >= devtoolsStickyUntil
-          ) {
-            void api
-              .isMainPanelDevtoolsOpen()
-              .then((open) => {
-                if (!open) setDevtoolsBlurHideSuppressed(false);
-              })
-              .catch(() => undefined);
-          }
-          if (modeRef.current === "search") {
-            window.requestAnimationFrame(focusSearchInput);
-          }
-        }
-      })
-      .then((unlisten) => {
-        unlistenBlur = unlisten;
-      });
-
-    // The startup open event can fire before this WebView registers its listener.
-    // Read the current generation after registration to close that gap without
-    // replaying an older open over a newer shortcut-triggered one.
-    void unlistenOpen
-      .then(() => api.getMainPanelVisibilityGeneration())
-      .then((generation) => {
-        if (!disposed) prepareForOpen(generation);
-      })
-      .catch(() => undefined);
     return () => {
       disposed = true;
-      window.clearTimeout(armTimer);
-      void unlistenOpen.then((unlisten) => unlisten());
-      void unlistenShortcutHide.then((unlisten) => unlisten());
       void unlistenClipboard.then((unlisten) => unlisten());
       void unlistenIndex.then((unlisten) => unlisten());
-      unlistenBlur?.();
-      window.removeEventListener("keydown", onDevtoolsShortcut, true);
     };
-  }, [
-    applyClipboardSeedFromBackend,
-    backToSearch,
-    clearClipboardChipLocal,
-    focusSearchInputAtEnd,
-    hidePreservingSession,
-    isTauri,
-    loadApps,
-    markClipboardChipHidden,
-    openBuiltinApp,
-    refreshLauncherSettings,
-  ]);
+  }, [applyClipboardSeedFromBackend, isTauri, loadApps, panelVisibleRef]);
+
+  // Focus can return from a companion window (context menu, plugin window,
+  // DevTools) without a new show; land it back in the search field.
+  useEffect(() => {
+    if (!isTauri) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused && modeRef.current === "search") {
+          window.requestAnimationFrame(focusSearchInputAtEnd);
+        }
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [focusSearchInputAtEnd, isTauri]);
 
   const normalizedQuery = query.trim();
   const liveNormalizedQuery = normalizedQuery;
@@ -1703,8 +1609,9 @@ export function MainPanelPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [backToSearch, hideAndResetMainPanel]);
 
-  // Tab past the last control would leave the WebView and fire window blur → hide.
-  // Cycle focus inside the panel surface (portaled dialogs keep their own cycle).
+  // Tab past the last control would park focus on native window chrome where
+  // typing goes nowhere. Cycle inside the panel surface (portaled dialogs keep
+  // their own cycle).
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       trapTabKey(event, contentRef.current);
@@ -1858,14 +1765,9 @@ export function MainPanelPage() {
     const onContextMenu = (event: Event) => {
       event.preventDefault();
     };
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.button === 2) armContextMenuPointerSuppress();
-    };
     document.addEventListener("contextmenu", onContextMenu, true);
-    document.addEventListener("pointerdown", onPointerDown, true);
     return () => {
       document.removeEventListener("contextmenu", onContextMenu, true);
-      document.removeEventListener("pointerdown", onPointerDown, true);
     };
   }, []);
 
@@ -1947,32 +1849,8 @@ export function MainPanelPage() {
       },
     );
 
-    const unlistenClosed = listen<LauncherContextMenuClosed>(
-      "launcher-context-menu:closed",
-      (event) => {
-        endContextMenuSession();
-        const reason = event.payload?.reason;
-        if (reason === "blur") {
-          const generation = panelVisibilityGenerationRef.current;
-          window.setTimeout(() => {
-            void getCurrentWindow()
-              .isFocused()
-              .then((focused) => {
-                if (!focused) void hidePreservingSession(generation);
-              })
-              .catch(() => undefined);
-          }, 50);
-          return;
-        }
-        if (reason === "escape" || reason === "dismiss") {
-          void getCurrentWindow().setFocus().catch(() => undefined);
-        }
-      },
-    );
-
     return () => {
       void unlistenAction.then((fn) => fn());
-      void unlistenClosed.then((fn) => fn());
     };
   }, [hidePreservingSession, isTauri]);
 
@@ -1981,7 +1859,6 @@ export function MainPanelPage() {
     target: LauncherContextMenuTarget,
   ) => {
     void openLauncherContextMenu(event, target).catch((menuError) => {
-      endContextMenuSession();
       setError(errorMessage(menuError, "无法打开右键菜单"));
     });
   };
@@ -2922,11 +2799,6 @@ function resolveRectDimension(
 
 function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
-}
-
-async function hideMainPanel(generation: number): Promise<boolean> {
-  if (!isTauriRuntime()) return false;
-  return api.hideMainPanelWindow(generation).catch(() => false);
 }
 
 function errorMessage(error: unknown, fallback: string): string {

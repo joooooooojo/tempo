@@ -28,7 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import { withBlurHideSuppressed, setBlurHideSuppressed } from "@/lib/blurHideGuard";
+import { acquireMainPanelHold, withMainPanelHold } from "@/lib/mainPanelHold";
 import { openNativeFileDialog } from "@/lib/nativeFileDialog";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -42,13 +42,13 @@ import {
 
 type EditorTarget = "system" | { profileId: string };
 
-/** `window.confirm` steals WebView focus; suppress main-panel blur→hide around it. */
-function confirmWithoutBlurHide(message: string): boolean {
-  setBlurHideSuppressed(true);
+/** The native confirm belongs to Tempo's process tree; the hold is a safety net for odd hosts. */
+function confirmKeepingMainPanel(message: string): boolean {
+  const hold = acquireMainPanelHold("hosts-confirm");
   try {
     return window.confirm(message);
   } finally {
-    setBlurHideSuppressed(false);
+    hold.release();
   }
 }
 
@@ -224,7 +224,7 @@ export function HostsPage() {
   const openSystem = () => {
     if (!workspace) return;
     if (sameTarget(editorTargetRef.current, "system")) return;
-    if (dirtyRef.current && !confirmWithoutBlurHide("当前编辑未保存，切换将丢弃修改。继续？")) {
+    if (dirtyRef.current && !confirmKeepingMainPanel("当前编辑未保存，切换将丢弃修改。继续？")) {
       return;
     }
     switchTo("system", workspace.systemContent);
@@ -244,7 +244,7 @@ export function HostsPage() {
   const openProfile = (profile: HostsProfile) => {
     const target: EditorTarget = { profileId: profile.id };
     if (sameTarget(editorTargetRef.current, target)) return;
-    if (dirtyRef.current && !confirmWithoutBlurHide("当前编辑未保存，切换将丢弃修改。继续？")) {
+    if (dirtyRef.current && !confirmKeepingMainPanel("当前编辑未保存，切换将丢弃修改。继续？")) {
       return;
     }
 
@@ -269,8 +269,10 @@ export function HostsPage() {
   const authorize = async () => {
     setAuthorizing(true);
     try {
-      // UAC / osascript steals focus — keep the main panel open.
-      const next = await withBlurHideSuppressed(() => api.authorizeHostsWrite());
+      // UAC / osascript runs as another app — keep the main panel open.
+      const next = await withMainPanelHold("hosts-authorize", () =>
+        api.authorizeHostsWrite(),
+      );
       setWorkspace(next);
       toast.success("授权成功，之后保存无需再提权");
     } catch (error) {
@@ -446,7 +448,7 @@ export function HostsPage() {
     try {
       // Writing the system hosts shells out to flush DNS and may need elevation — keep the
       // panel open if any of that briefly takes foreground.
-      const next = await withBlurHideSuppressed(async () => {
+      const next = await withMainPanelHold("hosts-apply", async () => {
         if (
           dirty &&
           typeof editorTarget !== "string" &&
@@ -509,7 +511,7 @@ export function HostsPage() {
 
   const restoreBackup = async (backup: HostsBackup) => {
     if (
-      !confirmWithoutBlurHide("恢复该备份将覆盖当前激活集合并写回系统，继续？")
+      !confirmKeepingMainPanel("恢复该备份将覆盖当前激活集合并写回系统，继续？")
     ) {
       return;
     }
@@ -633,8 +635,8 @@ export function HostsPage() {
                       onCheckedChange={(checked) => {
                         if (localMutatingRef.current || saving) return;
                         if (checked === profile.active) return;
-                        // In-app dialog — native confirm steals focus and blur-hides the panel,
-                        // which also caused a reopen/toggle loop with click-through.
+                        // In-app dialog — a native confirm would deactivate the app and hide
+                        // the panel, which also caused a reopen/toggle loop with click-through.
                         setPendingToggle({ profile, active: checked });
                       }}
                     />

@@ -314,7 +314,7 @@ export function TranslatePage({ initialTranslateText }: BuiltinAppProps) {
 
   useEffect(() => {
     let disposed = false;
-    const unlisten = listen("main-panel:open", () => {
+    const unlisten = listen("main-panel:shown", () => {
       void (async () => {
         try {
           const page = await api.getClipboardHistory(undefined, 1, 0);
