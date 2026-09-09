@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::db::AppState;
 use crate::plugins::bridge::{self, ConnectionContext, RpcError};
 use crate::plugins::host::PluginHost;
+use crate::plugins::icons;
 use crate::plugins::ids::{is_valid_local_id, is_valid_plugin_id, runtime_id};
 use crate::plugins::loader::{
     scan_enabled_contributions, with_development_contributions, PluginContributionBundle,
@@ -143,46 +144,13 @@ pub fn list_plugins(
                                 .iter()
                                 .find_map(|action| action.icon.as_ref())
                         });
-                    row.icon_url =
-                        icon_rel.and_then(|icon| plugin_icon_data_url(&install_path, icon));
+                    row.icon_url = icon_rel
+                        .and_then(|icon| icons::data_url_from_package_file(&install_path, icon));
                 }
             }
         }
     }
     Ok(rows)
-}
-
-fn plugin_icon_data_url(install_path: &std::path::Path, rel_path: &str) -> Option<String> {
-    use base64::Engine as _;
-
-    let candidate = install_path.join(rel_path);
-    let canonical_root = install_path.canonicalize().ok()?;
-    let canonical_path = candidate.canonicalize().ok()?;
-    if !canonical_path.starts_with(&canonical_root) || !canonical_path.is_file() {
-        return None;
-    }
-    let bytes = std::fs::read(&canonical_path).ok()?;
-    if bytes.len() > 256 * 1024 {
-        return None;
-    }
-    let mime = match canonical_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => "application/octet-stream",
-    };
-    Some(format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
 }
 
 #[derive(Debug, serde::Deserialize)]

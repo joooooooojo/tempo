@@ -91,5 +91,6 @@ scripts/
 - 每个索引项必须有 `dist/manifest.json`，且 Manifest `id` 与索引 `id` 完全一致。
 - `dist/` 不得包含符号链接或 Git LFS pointer。
 - UI 插件需要 `dist/index.html`；含 Runtime 的插件需要 Manifest 声明的 `main` 文件。
+- App / Action 图标支持 SVG、PNG、JPEG（`.jpg` / `.jpeg`）、WebP、GIF；图标必须存在于 `dist/` 且不超过 256 KiB。
 
 更完整的约定见 Tempo 文档：[维护插件仓库](https://joooooooojo.github.io/tempo/developer/plugin-repository)。

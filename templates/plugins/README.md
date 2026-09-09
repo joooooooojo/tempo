@@ -2,7 +2,7 @@
 
 `ui`、`hybrid` 和 `headless` 是下一次发布的模板源。`release.json` 独立维护模板版本、最低 Host API 和公开资源根地址。
 
-当前模板 2.0.4 使用 Manifest v2、Host API ^2.1.0，要求 Tempo >=2.2.6。后台运行于 Deno 2.9.6；Node/npm/TypeScript/Vite 仅用于构建，默认继续输出自包含 ESM `main.mjs`。
+当前模板 2.0.5 使用 Manifest v2、Host API ^2.1.0，要求 Tempo >=2.2.6。后台运行于 Deno 2.9.6；Node/npm/TypeScript/Vite 仅用于构建，默认继续输出自包含 ESM `main.mjs`。
 
 Hybrid 的 `tsconfig.json`、`tsconfig.ui.json`、`tsconfig.runtime.json` 均位于项目根目录。根配置通过 `references` 组织两个独立类型环境，`pnpm typecheck` 使用 `tsc -b` 统一检查；也可执行 `typecheck:ui` 或 `typecheck:runtime` 单独检查。增量缓存写入 `node_modules/.cache`，不生成运行时代码。
 
@@ -13,6 +13,8 @@ Hybrid 的 `tsconfig.json`、`tsconfig.ui.json`、`tsconfig.runtime.json` 均位
 | Headless | Deno | 无额外权限 |
 
 所有模板的 `build` 都先检查类型。插件私有文件优先使用无需声明权限的 `tempo.files`；Runtime 直接调用 Deno 文件 API 时再声明 `permissions.read`/`write: ["$DATA"]`。网络使用精确 host:port，同一白名单同时用于 Runtime 和托管 UI。确实需要 Deno 全部能力时可单独声明 `permissions.all: true`。
+
+`contributes.apps[].icon` 与 `contributes.actions[].icon` 使用包内相对路径，支持 SVG、PNG、JPEG（`.jpg` / `.jpeg`）、WebP 和 GIF；声明的文件必须随构建产物一起发布，且不超过 256 KiB。
 
 在仓库根目录设置 `TEMPO_PLUGIN_DENO_PATH` 后执行 `node --test scripts/test-plugin-templates.mjs`，可验证模板构建以及 Hello 演示的实际 Deno 调用。
 

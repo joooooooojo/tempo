@@ -24,6 +24,7 @@ use zeroize::Zeroizing;
 use crate::db::AppState;
 
 use super::bridge::HOST_API_VERSION;
+use super::icons;
 use super::ids::{is_valid_plugin_id, is_valid_repository_index_id};
 use super::manifest::{current_host_platform, PluginManifest};
 use super::package::{import_directory, inspect_package};
@@ -36,7 +37,6 @@ const MAX_REPOSITORY_PLUGINS: usize = 5_000;
 const MAX_GIT_FILES: usize = 10_000;
 const MAX_GIT_FILE_BYTES: usize = 200 * 1024 * 1024;
 const MAX_GIT_PACKAGE_BYTES: usize = 500 * 1024 * 1024;
-const MAX_ICON_BYTES: usize = 256 * 1024;
 const MAX_GIT_TRANSFER_BYTES: usize = 1024 * 1024 * 1024;
 const GIT_FETCH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const OPERATION_EVENT: &str = "plugin-repository-operation-progress";
@@ -2371,33 +2371,7 @@ fn manifest_icon_data_url(root: &Path, manifest: &PluginManifest) -> Option<Stri
                 .iter()
                 .find_map(|action| action.icon.as_deref())
         })?;
-    let candidate = root.join(relative);
-    let canonical_root = root.canonicalize().ok()?;
-    let canonical_path = candidate.canonicalize().ok()?;
-    if !canonical_path.starts_with(&canonical_root) || !canonical_path.is_file() {
-        return None;
-    }
-    let bytes = fs::read(&canonical_path).ok()?;
-    if bytes.len() > MAX_ICON_BYTES {
-        return None;
-    }
-    let mime = match canonical_path
-        .extension()?
-        .to_str()?
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => return None,
-    };
-    Some(format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
+    icons::data_url_from_package_file(root, relative)
 }
 
 pub fn list_catalog_plugins(

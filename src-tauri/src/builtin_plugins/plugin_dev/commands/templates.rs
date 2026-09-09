@@ -18,8 +18,10 @@ const MAX_CATALOG_BYTES: usize = 512 * 1024;
 const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TEMPLATE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TEMPLATE_FILES: usize = 256;
+#[cfg(test)]
+const BUNDLED_TEMPLATE_VERSION: &str = "2.0.5";
 static BUNDLED_DENO_TEMPLATES: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../docs/public/plugin-assets/releases/2.0.4");
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../docs/public/plugin-assets/releases/2.0.5");
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -635,7 +637,10 @@ mod tests {
         assert!(manifest["$schema"]
             .as_str()
             .unwrap()
-            .starts_with(&format!("http://{address}/releases/2.0.4/")));
+            .starts_with(&format!(
+                "http://{address}/releases/{}/",
+                super::BUNDLED_TEMPLATE_VERSION
+            )));
 
         server.abort();
         let _ = server.await;

@@ -154,7 +154,7 @@ Apps 声明插件可以打开的页面。每个 App 都会成为 Tempo 可注册
 | `name` | 是 | 页面名称 |
 | `entry` | 是 | 当前必须是包根目录的 `index.html` |
 | `keywords` | 否 | 搜索关键词 |
-| `icon` | 否 | 包内图标相对路径 |
+| `icon` | 否 | 包内图标相对路径；支持 SVG、PNG、JPEG（`.jpg` / `.jpeg`）、WebP、GIF |
 | `windowMode` | 否 | `normal` 主面板或 `standalone` 独立窗口 |
 | `rect` | 否 | 窗口宽、高与位置 |
 | `sessionVersion` | 否 | Session 结构变化时递增，必须为正整数 |
@@ -217,7 +217,7 @@ Action 是主面板中的用户操作。每个 Action 必须在 `app` 和 `comma
 | `id` | 是 | 插件内唯一 Action ID |
 | `name` | 是 | 主面板显示名称 |
 | `keywords` | 否 | 搜索关键词 |
-| `icon` | 否 | 包内图标相对路径 |
+| `icon` | 否 | 包内图标相对路径；支持 SVG、PNG、JPEG（`.jpg` / `.jpeg`）、WebP、GIF |
 | `accepts` | 否 | `text`、`image`、`file`，默认 `text` |
 | `titleTemplate` | 否 | 根据输入生成操作标题 |
 | `app` | 二选一 | 引用 `apps[].id` |

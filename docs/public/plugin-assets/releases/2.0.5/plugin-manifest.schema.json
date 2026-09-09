@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://tempo.local/schemas/plugin-manifest-v2.schema.json",
+  "$id": "https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.5/plugin-manifest.schema.json",
   "title": "Tempo Plugin Manifest",
   "description": "Structural schema for Tempo manifestVersion 2 plugin packages. Command references, duplicate ids and package file existence are additionally validated by Tempo during import.",
   "type": "object",
@@ -148,7 +148,9 @@
       "allOf": [
         {
           "if": {
-            "required": ["all"],
+            "required": [
+              "all"
+            ],
             "properties": {
               "all": {
                 "const": true
@@ -159,20 +161,44 @@
             "not": {
               "anyOf": [
                 {
-                  "required": ["read"],
-                  "properties": { "read": { "minItems": 1 } }
+                  "required": [
+                    "read"
+                  ],
+                  "properties": {
+                    "read": {
+                      "minItems": 1
+                    }
+                  }
                 },
                 {
-                  "required": ["write"],
-                  "properties": { "write": { "minItems": 1 } }
+                  "required": [
+                    "write"
+                  ],
+                  "properties": {
+                    "write": {
+                      "minItems": 1
+                    }
+                  }
                 },
                 {
-                  "required": ["net"],
-                  "properties": { "net": { "minItems": 1 } }
+                  "required": [
+                    "net"
+                  ],
+                  "properties": {
+                    "net": {
+                      "minItems": 1
+                    }
+                  }
                 },
                 {
-                  "required": ["env"],
-                  "properties": { "env": { "minItems": 1 } }
+                  "required": [
+                    "env"
+                  ],
+                  "properties": {
+                    "env": {
+                      "minItems": 1
+                    }
+                  }
                 }
               ]
             }

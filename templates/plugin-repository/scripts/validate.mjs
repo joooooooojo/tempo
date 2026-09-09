@@ -50,6 +50,8 @@ const ENTRY_KEYS = new Set(["id", "path"]);
 const PLUGIN_ID = /^(?!(?:builtin|tempo)(?:\.|$))[a-z0-9]+(?:\.[a-z0-9-]+)+$/;
 const REPOSITORY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const LFS_POINTER = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\b/;
+const PLUGIN_ICON = /\.(?:svg|png|jpe?g|webp|gif)$/i;
+const MAX_ICON_BYTES = 256 * 1024;
 
 const errors = [];
 
@@ -90,6 +92,24 @@ function assertSafePath(value, label) {
     return null;
   }
   return pathValue;
+}
+
+function validatePluginIcon(dist, contribution, label) {
+  if (contribution?.icon === undefined) return;
+  const icon = assertSafePath(contribution.icon, `${label} icon`);
+  if (!icon) return;
+  if (!PLUGIN_ICON.test(icon)) {
+    fail(`${label} icon 仅支持 SVG、PNG、JPEG、WebP 或 GIF: ${icon}`);
+    return;
+  }
+  const iconPath = path.join(dist, ...icon.split("/"));
+  if (!fs.existsSync(iconPath) || !fs.statSync(iconPath).isFile()) {
+    fail(`${label} icon 不存在: ${icon}`);
+    return;
+  }
+  if (fs.statSync(iconPath).size > MAX_ICON_BYTES) {
+    fail(`${label} icon 超过 256 KiB: ${icon}`);
+  }
 }
 
 function parseJsonRejectDuplicates(text, label) {
@@ -317,6 +337,13 @@ function validateDist(pluginId, pluginRoot) {
   for (const app of apps) {
     if (app?.entry && !fs.existsSync(path.join(dist, app.entry))) {
       fail(`${pluginId}: app 入口不存在: ${app.entry}`);
+    }
+    validatePluginIcon(dist, app, `${pluginId}: app ${app?.id ?? "<unknown>"}`);
+  }
+  const actions = manifest.contributes?.actions ?? [];
+  if (Array.isArray(actions)) {
+    for (const action of actions) {
+      validatePluginIcon(dist, action, `${pluginId}: action ${action?.id ?? "<unknown>"}`);
     }
   }
 

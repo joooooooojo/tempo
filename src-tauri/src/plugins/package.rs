@@ -275,6 +275,31 @@ fn verify_entry_files(root: &Path, manifest: &PluginManifest) -> Result<(), Stri
             return Err(format!("app entry missing: {}", app_contrib.entry));
         }
     }
+    for icon in manifest
+        .contributes
+        .apps
+        .iter()
+        .filter_map(|app| app.icon.as_deref())
+        .chain(
+            manifest
+                .contributes
+                .actions
+                .iter()
+                .filter_map(|action| action.icon.as_deref()),
+        )
+    {
+        let path = root.join(icon);
+        if !path.is_file() {
+            return Err(format!("plugin icon missing in package: {icon}"));
+        }
+        let size = path
+            .metadata()
+            .map_err(|error| format!("stat plugin icon {icon}: {error}"))?
+            .len();
+        if size > super::icons::MAX_ICON_BYTES {
+            return Err(format!("plugin icon exceeds the 256 KiB limit: {icon}"));
+        }
+    }
     Ok(())
 }
 
@@ -401,6 +426,35 @@ mod tests {
     #[test]
     fn rejects_empty_path() {
         assert!(validate_package_rel_path("").is_err());
+    }
+
+    #[test]
+    fn package_requires_every_declared_icon_file() {
+        let root = std::env::temp_dir().join(format!("tempo-plugin-icon-test-{}", uuid_like()));
+        fs::create_dir_all(&root).expect("create test package");
+        fs::write(root.join("index.html"), "<!doctype html>").expect("write UI entry");
+        let manifest = PluginManifest::parse_str(
+            r#"{
+              "manifestVersion": 2,
+              "id": "com.example.icons",
+              "name": "Icons",
+              "version": "1.0.0",
+              "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+              "contributes": {
+                "apps": [{
+                  "id": "main",
+                  "name": "Icons",
+                  "entry": "index.html",
+                  "icon": "icons/app.webp"
+                }]
+              }
+            }"#,
+        )
+        .expect("valid manifest");
+
+        let error = verify_entry_files(&root, &manifest).expect_err("missing icon must fail");
+        let _ = fs::remove_dir_all(&root);
+        assert!(error.contains("icons/app.webp"), "{error}");
     }
 
     /// Directory import must reject symlinks anywhere in the tree (design §8.4 step 3/§15-2):

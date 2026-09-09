@@ -1,0 +1,39 @@
+{
+  "$schema": "__MANIFEST_SCHEMA_URL__",
+  "manifestVersion": 2,
+  "id": "__PLUGIN_ID__",
+  "name": "__PLUGIN_NAME__",
+  "version": "0.1.0",
+  "engines": {
+    "tempo": ">=2.2.6",
+    "pluginApi": "^2.1.0"
+  },
+  "kind": "headless",
+  "main": "main.mjs",
+  "contributes": {
+    "commands": [
+      {
+        "id": "run",
+        "title": "Run"
+      }
+    ],
+    "actions": [
+      {
+        "id": "run",
+        "name": "运行 __PLUGIN_NAME__",
+        "command": "run"
+      }
+    ],
+    "mcpTools": [
+      {
+        "name": "run-tool",
+        "description": "Run the plugin tool",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ]
+  },
+  "permissions": {}
+}

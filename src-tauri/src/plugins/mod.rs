@@ -6,6 +6,7 @@ pub mod files;
 pub mod host;
 pub mod host_events;
 pub mod ids;
+pub mod icons;
 pub mod loader;
 pub mod manifest;
 pub mod mcp_bridge;

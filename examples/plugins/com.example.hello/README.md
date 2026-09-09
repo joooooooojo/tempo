@@ -6,6 +6,8 @@
 
 该目录已是可直接导入的插件包，无需 npm install。Manifest 使用空的 `permissions: {}`，Deno 的数据目录读写、网络、环境变量、系统信息、子进程、FFI 和远程导入默认关闭。问候日志通过 `tempo.files` 写入 `hello.log`，因此不需要 Deno 文件权限；Host API 也不需要逐项授权。
 
+示例图标位于 `icons/app.svg`。插件图标也可使用 PNG、JPEG（`.jpg` / `.jpeg`）、WebP 或 GIF，路径写在 App / Action 的 `icon` 字段中。
+
 从旧版升级时保持插件 ID，导入 2.1.0 即可沿用数据目录。
 
 ## 手动验证权限

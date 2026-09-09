@@ -8,13 +8,13 @@ use image::{DynamicImage, Rgba, RgbaImage};
 use tauri::image::Image;
 use tauri::{AppHandle, WebviewWindow};
 
+use super::icons::{mime_type_for_path, MAX_ICON_BYTES};
 use super::loader::resolve_contribution_icon_relative_path;
 use super::manifest::PluginManifest;
 
 const BADGE_SCALE: f32 = 0.40;
 const BADGE_INSET: f32 = 0.04;
 const BADGE_BACKING_PAD: f32 = 0.10;
-const MAX_ICON_BYTES: u64 = 256 * 1024;
 
 /// Apply a platform icon + plugin badge to a standalone plugin window. Failures are logged and
 /// ignored so window creation is never blocked on icon decoding.
@@ -105,6 +105,7 @@ fn resolve_package_icon_path(package_root: &Path, rel_path: &str) -> Option<std:
 }
 
 fn decode_icon_bytes(bytes: &[u8], path: &Path, size: u32) -> Option<RgbaImage> {
+    mime_type_for_path(path)?;
     let ext = path
         .extension()
         .and_then(|value| value.to_str())

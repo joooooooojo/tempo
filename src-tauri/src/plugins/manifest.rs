@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+use super::icons::{mime_type_for_path, SUPPORTED_ICON_FORMATS};
 use super::ids::{is_valid_local_id, is_valid_plugin_id};
 
 pub const MANIFEST_VERSION: u32 = 2;
@@ -623,6 +624,7 @@ impl PluginManifest {
             }
             if let Some(icon) = &app.icon {
                 validate_relative_path(icon, "apps.icon")?;
+                validate_icon_path(icon, "apps.icon")?;
             }
             app.rect.validate()?;
             if app.session_version == Some(0) {
@@ -690,6 +692,7 @@ impl PluginManifest {
             }
             if let Some(icon) = &action.icon {
                 validate_relative_path(icon, "actions.icon")?;
+                validate_icon_path(icon, "actions.icon")?;
             }
         }
 
@@ -844,6 +847,16 @@ pub fn validate_main_entry(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_icon_path(path: &str, field: &str) -> Result<(), String> {
+    if mime_type_for_path(std::path::Path::new(path)).is_none() {
+        return Err(format!(
+            "{field} must use one of the supported formats: {} (got {path})",
+            SUPPORTED_ICON_FORMATS
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_relative_path(path: &str, field: &str) -> Result<(), String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -898,6 +911,36 @@ mod tests {
         assert!(m.supports_platform("macos"));
         assert!(m.supports_platform("windows"));
         assert!(!m.supports_platform("linux"));
+    }
+
+    #[test]
+    fn validates_supported_icon_formats() {
+        let raw = r#"{
+          "manifestVersion": 2,
+          "id": "com.example.icons",
+          "name": "Icons",
+          "version": "1.0.0",
+          "engines": { "tempo": ">=1.2.0", "pluginApi": "^1.0.0" },
+          "contributes": {
+            "apps": [{
+              "id": "main",
+              "name": "Icons",
+              "entry": "index.html",
+              "icon": "icons/app.svg"
+            }]
+          }
+        }"#;
+        for extension in ["svg", "PNG", "jpg", "JPEG", "webp", "GIF"] {
+            let manifest = raw.replace("app.svg", &format!("app.{extension}"));
+            assert!(
+                PluginManifest::parse_str(&manifest).is_ok(),
+                "{extension} should be supported"
+            );
+        }
+
+        let unsupported = raw.replace("app.svg", "app.ico");
+        let error = PluginManifest::parse_str(&unsupported).unwrap_err();
+        assert!(error.contains(SUPPORTED_ICON_FORMATS), "{error}");
     }
 
     #[test]

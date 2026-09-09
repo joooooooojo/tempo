@@ -172,16 +172,8 @@ fn content_type_for(name: &str) -> &'static str {
         "text/css; charset=utf-8"
     } else if lower.ends_with(".json") {
         "application/json; charset=utf-8"
-    } else if lower.ends_with(".svg") {
-        "image/svg+xml"
-    } else if lower.ends_with(".png") {
-        "image/png"
-    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
-        "image/jpeg"
-    } else if lower.ends_with(".gif") {
-        "image/gif"
-    } else if lower.ends_with(".webp") {
-        "image/webp"
+    } else if let Some(mime) = super::icons::mime_type_for_path(Path::new(name)) {
+        mime
     } else if lower.ends_with(".woff2") {
         "font/woff2"
     } else if lower.ends_with(".woff") {
@@ -590,8 +582,18 @@ mod tests {
 
     #[test]
     fn legacy_plugin_urls_are_public_only_for_media() {
-        assert!(is_public_asset_path("icon.svg"));
+        for icon in [
+            "icon.svg",
+            "icon.png",
+            "icon.jpg",
+            "icon.jpeg",
+            "icon.webp",
+            "icon.gif",
+        ] {
+            assert!(is_public_asset_path(icon), "{icon} should be public");
+        }
         assert!(is_public_asset_path("fonts/inter.woff2"));
+        assert!(!is_public_asset_path("icon.ico"));
         assert!(!is_public_asset_path("index.html"));
         assert!(!is_public_asset_path("dist/index.js"));
     }
