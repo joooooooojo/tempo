@@ -1,4 +1,4 @@
-//! App-data paths for plugins and the on-demand Node runtime.
+//! App-data paths for plugins and the on-demand Deno runtime.
 //!
 //! All durable plugin files live under the unified Tempo storage root
 //! (`%APPDATA%/Tempo` on Windows by default).
@@ -49,21 +49,14 @@ pub fn plugin_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(storage_root(app)?.join("plugin-runtime"))
 }
 
-pub fn node_runtime_dir(app: &AppHandle, version: &str) -> Result<PathBuf, String> {
-    Ok(plugin_runtime_root(app)?.join("node").join(version))
+pub fn deno_runtime_dir(app: &AppHandle, version: &str) -> Result<PathBuf, String> {
+    Ok(plugin_runtime_root(app)?.join("deno").join(version))
 }
 
 pub fn runtime_manifest_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(plugin_runtime_root(app)?.join("manifest.json"))
+    Ok(plugin_runtime_root(app)?.join("deno-manifest.json"))
 }
 
 pub fn ensure_dir(path: &Path) -> Result<(), String> {
     std::fs::create_dir_all(path).map_err(|e| format!("create {}: {e}", path.display()))
-}
-
-/// Directory holding short-lived Unix domain socket endpoints used for the per-plugin
-/// Runtime IPC handshake. Kept out of app_data to avoid long paths on some platforms.
-#[cfg(unix)]
-pub fn plugin_ipc_dir() -> PathBuf {
-    std::env::temp_dir().join("tempo-plugin-ipc")
 }

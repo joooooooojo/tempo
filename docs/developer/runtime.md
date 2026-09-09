@@ -5,7 +5,7 @@ description: 使用 ipcMain、ipcRenderer 和 Commands 为插件增加 Runtime�
 
 # 加入后台能力
 
-Runtime 是独立的 Node 进程。读写任意文件、耗时计算、Action 命令和 MCP Tool 应放在 Runtime；普通页面展示和交互留在 UI。
+Runtime 是独立的受限 Deno 2.9.6 进程。已授权的数据文件操作、耗时计算、Action 命令和 MCP Tool 放在 Runtime；普通页面展示和交互留在 UI。
 
 ## 先分清四条通道
 
@@ -31,19 +31,20 @@ Hybrid 和 Headless 模板会把 TypeScript Runtime 构建成 `dist/main.mjs`。
 Hybrid 模板把两侧代码与类型环境完全分开：
 
 ```text
+tsconfig.json           # references 统一组织两个子项目
+tsconfig.ui.json        # DOM 与 window.tempo / ipcRenderer
+tsconfig.runtime.json   # Node 兼容类型与 tempo / ipcMain / 生命周期
 src/
   ui/
     main.ts
     style.css
     tempo.d.ts
-    tsconfig.json       # DOM 与 window.tempo / ipcRenderer
   runtime/
     main.ts
     tempo.d.ts          # Runtime-only 宿主全局类型
-    tsconfig.json       # Node.js 与 tempo / ipcMain / 生命周期
 ```
 
-两套 `tsconfig.json` 不共享全局类型。UI 侧不会获得 Node.js 类型，Runtime 侧也不会获得 DOM 类型；`pnpm build` 会分别检查两边再生成插件包。
+根 `tsconfig.json` 通过 `references` 引用 `tsconfig.ui.json` 和 `tsconfig.runtime.json`，`pnpm typecheck` 使用 `tsc -b` 统一检查。两侧不共享全局类型：UI 不会获得 Node.js 类型，Runtime 也不会获得 DOM 类型。`pnpm build` 先完成统一类型检查，再由 Vite 生成插件包；TypeScript 增量缓存位于 `node_modules/.cache`。
 
 开发助手新建的项目默认监听项目内的 `dist/main.mjs`。Hybrid 开发时通常同时运行：
 
@@ -190,4 +191,22 @@ onMounted(() => {
 
 Tempo 不会替插件安装依赖或编译 TypeScript。模板的 Vite 配置会把依赖打进 `main.mjs`，并把 Manifest 复制到 `dist`。
 
-带 `main` 的插件需要用户安装插件 Node 运行时、信任插件并启用。Runtime 权限接近本机 Node 进程，`capabilities` 是用途说明，不是安全沙箱。
+带 `main` 的插件需要安装 Deno 运行时、信任插件并启用。Manifest 必须为 v2，权限默认拒绝；`capabilities` 仍只是用途说明。
+
+```json
+{
+  "permissions": {
+    "read": ["$DATA"],
+    "write": ["$DATA"],
+    "net": ["api.example.com:443"],
+    "env": ["PLUGIN_API_KEY"],
+    "host": { "notify": true, "externalOpen": false, "openApps": [] }
+  }
+}
+```
+
+`$DATA` 对应 `tempo.paths.data`；包文件读取和专用 IPC 端点由宿主授予。使用 `tempo.storage` 不需要磁盘权限。网络只接受明确的 `host:port`，环境变量按声明从宿主启动环境中传入，保留的运行时配置变量不可声明。子进程、FFI、原生扩展及运行时 npm/远程下载不开放。
+
+Node/npm/TypeScript/Vite 仍用于构建。内联纯 JS npm 依赖的 ESM `main.mjs` 可以直接在 Deno 执行；动态 require、外置 node_modules、Electron API、`.node` 和 Node 打包的原生 exe 不在支持范围。对最终产物进行测试，不以打包成功作为兼容证明。
+
+UI 网络由 WebView 管理，不受 Deno 网络权限控制。Deno 的静态模块加载有权限豁免，因此这些权限不是 OS 级隔离，也不保证防止恶意模块读取包外源码。只安装信任来源的插件。

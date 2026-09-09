@@ -8,6 +8,33 @@
  */
 
 import fs from "node:fs";
+
+function validatePermissions(policy = {}, pluginId) {
+  const invalid = message => fail(`${pluginId}: permissions ${message}`);
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) return invalid("必须是对象");
+  const known = ["read", "write", "net", "env", "host"];
+  for (const key of Object.keys(policy)) if (!known.includes(key)) invalid(`不支持 ${key}`);
+  for (const key of ["read", "write", "net", "env"]) {
+    const scopes = policy[key] ?? [];
+    if (!Array.isArray(scopes) || scopes.some(s => typeof s !== "string")) { invalid(`${key} 必须是字符串数组`); continue; }
+    for (const scope of scopes) {
+      if ((key === "read" || key === "write") && scope !== "$DATA") invalid(`${key} 只接受 $DATA`);
+      if (key === "env" && (!/^[A-Z0-9_]+$/.test(scope) || /^(DENO_|NODE_|TEMPO_|LD_|DYLD_)/.test(scope) || scope === "PATH")) invalid(`保留或无效环境变量 ${scope}`);
+      if (key === "net") {
+        try {
+          const url = new URL(`http://${scope}`);
+          const port = scope.slice(scope.lastIndexOf(":") + 1);
+          if (!/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535 || !url.hostname || url.username || url.password || url.pathname !== "/" || url.search || url.hash || /[\s,/*\\@%]/.test(scope)) throw new Error();
+        } catch { invalid(`net 需要明确的 host:port: ${scope}`); }
+      }
+    }
+  }
+  const host = policy.host ?? {};
+  if (!host || typeof host !== "object" || Array.isArray(host)) return invalid("host 必须是对象");
+  for (const key of Object.keys(host)) if (!["notify", "externalOpen", "openApps"].includes(key)) invalid(`host 不支持 ${key}`);
+  for (const key of ["notify", "externalOpen"]) if (key in host && typeof host[key] !== "boolean") invalid(`host.${key} 必须是布尔值`);
+  if ("openApps" in host && (!Array.isArray(host.openApps) || host.openApps.some(id => typeof id !== "string" || !id || id.includes("*")))) invalid("host.openApps 需要精确 App ID 数组");
+}
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -258,9 +285,10 @@ function validateDist(pluginId, pluginRoot) {
   const manifest = parseJsonRejectDuplicates(raw, `${pluginId} dist/manifest.json`);
   if (!manifest || typeof manifest !== "object") return;
 
-  if (manifest.manifestVersion !== 1) {
-    fail(`${pluginId}: manifestVersion 必须是 1`);
+  if (manifest.manifestVersion !== 2) {
+    fail(`${pluginId}: manifestVersion 必须是 2`);
   }
+  validatePermissions(manifest.permissions, pluginId);
   if (manifest.id !== pluginId) {
     fail(`${pluginId}: 索引 ID 与 dist/manifest.json 的 id (${manifest.id}) 不一致`);
   }

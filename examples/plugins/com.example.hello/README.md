@@ -2,11 +2,15 @@
 
 混合示例：Action 通过 `hello` Command 调用 Runtime，MCP Tool 通过 `tempo.mcpTools.register("say-hello", ...)` 独立注册，页面使用 `ipcRenderer` / `ipcMain` 与 Runtime 私下通信。
 
-需要 Host API `^1.0.0`。
+需要 Tempo >=2.2.6、Host API `^2.0.0`、Manifest v2 和 Deno 2.9.6。
+
+该目录已是可直接导入的插件包，无需 npm install。`main.mjs` 使用 Deno 的 Node 兼容层执行 `node:fs/promises` 和 `node:path`。Manifest 仅授予 `$DATA` 写入（追加 `hello.log`）和系统通知；设置通过 Host storage 读取，无需文件读取权限。不申请网络、环境变量或子进程权限。
+
+从旧版升级时保持插件 ID，导入 2.0.1 并确认新权限即可沿用数据目录。2.0.1 补齐日志写权限，不能用它覆盖同版本的不可变安装包。
 
 ## 手动验证 SCA
 
-1. 导入并信任、启用本插件（含 `main` 时需已安装插件 Node Runtime）。
+1. 在设置中安装插件 Deno Runtime，再导入、信任并启用本插件。
 2. 打开「Hello 示例插件」面板。
 3. 点 **打招呼（Runtime）**  
    - `invoke greet` 返回值里的 `at` 应为 `Date`  

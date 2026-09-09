@@ -1,16 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://tempo.local/schemas/plugin-manifest-v1.schema.json",
+  "$id": "https://tempo.local/schemas/plugin-manifest-v2.schema.json",
   "title": "Tempo Plugin Manifest",
-  "description": "Structural schema for Tempo manifestVersion 1 plugin packages. Command references, duplicate ids and package file existence are additionally validated by Tempo during import.",
+  "description": "Structural schema for Tempo manifestVersion 2 plugin packages. Command references, duplicate ids and package file existence are additionally validated by Tempo during import.",
   "type": "object",
-  "required": ["manifestVersion", "id", "name", "version", "engines"],
+  "required": [
+    "manifestVersion",
+    "id",
+    "name",
+    "version",
+    "engines"
+  ],
   "properties": {
     "$schema": {
       "type": "string"
     },
     "manifestVersion": {
-      "const": 1,
+      "const": 2,
       "description": "Tempo plugin manifest format version."
     },
     "id": {
@@ -30,7 +36,11 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["ui", "headless", "hybrid"],
+      "enum": [
+        "ui",
+        "headless",
+        "hybrid"
+      ],
       "description": "Classification only; actual behavior is inferred from contributes and main."
     },
     "author": {
@@ -64,22 +74,35 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["macos", "windows", "linux"]
+        "enum": [
+          "macos",
+          "windows",
+          "linux"
+        ]
       },
       "uniqueItems": true,
       "minItems": 1,
-      "default": ["macos", "windows"],
+      "default": [
+        "macos",
+        "windows"
+      ],
       "description": "Host operating systems this plugin supports. Omit or leave unset for all currently supported platforms (macos, windows). linux is reserved for a future Tempo host and is not selectable in the editor yet."
     },
     "main": {
       "$ref": "#/$defs/relativePath",
-      "description": "Optional Node Runtime entry within the plugin package (.js or .mjs). Required when no apps are contributed."
+      "description": "Optional Deno ESM entry: main.mjs (recommended) or main.js. Bundle npm dependencies at build time."
     },
     "capabilities": {
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["filesystem", "network", "process", "clipboard", "system"]
+        "enum": [
+          "filesystem",
+          "network",
+          "process",
+          "clipboard",
+          "system"
+        ]
       },
       "uniqueItems": true,
       "default": [],
@@ -95,6 +118,67 @@
     },
     "contributes": {
       "$ref": "#/$defs/contributes"
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": {
+            "const": "$DATA"
+          },
+          "default": []
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "const": "$DATA"
+          },
+          "default": []
+        },
+        "net": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\s,/*@%]+:[0-9]{1,5}$",
+            "description": "Exact host:port; port 1-65535. Host performs semantic validation."
+          },
+          "default": []
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z0-9_]+$",
+            "description": "DENO_*, NODE_*, TEMPO_*, PATH and loader injection variables are reserved."
+          },
+          "default": []
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "notify": {
+              "type": "boolean",
+              "default": false
+            },
+            "externalOpen": {
+              "type": "boolean",
+              "default": false
+            },
+            "openApps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^*]+$"
+              },
+              "default": []
+            }
+          }
+        }
+      }
     }
   },
   "additionalProperties": true,
@@ -103,18 +187,24 @@
       "anyOf": [
         {
           "type": "object",
-          "required": ["main"],
+          "required": [
+            "main"
+          ],
           "properties": {
             "main": true
           }
         },
         {
           "type": "object",
-          "required": ["contributes"],
+          "required": [
+            "contributes"
+          ],
           "properties": {
             "contributes": {
               "type": "object",
-              "required": ["apps"],
+              "required": [
+                "apps"
+              ],
               "properties": {
                 "apps": {
                   "type": "array",
@@ -129,7 +219,9 @@
     {
       "if": {
         "type": "object",
-        "required": ["activationEvents"],
+        "required": [
+          "activationEvents"
+        ],
         "properties": {
           "activationEvents": {
             "type": "array",
@@ -139,7 +231,9 @@
       },
       "then": {
         "type": "object",
-        "required": ["main"],
+        "required": [
+          "main"
+        ],
         "properties": {
           "main": true
         }
@@ -168,7 +262,10 @@
     },
     "engines": {
       "type": "object",
-      "required": ["tempo", "pluginApi"],
+      "required": [
+        "tempo",
+        "pluginApi"
+      ],
       "properties": {
         "tempo": {
           "type": "string",
@@ -228,7 +325,12 @@
     },
     "setting": {
       "type": "object",
-      "required": ["id", "type", "title", "default"],
+      "required": [
+        "id",
+        "type",
+        "title",
+        "default"
+      ],
       "additionalProperties": false,
       "description": "Host-rendered setting row. v1 controls: switch / select / multiselect / input.",
       "properties": {
@@ -237,7 +339,12 @@
         },
         "type": {
           "type": "string",
-          "enum": ["switch", "select", "multiselect", "input"]
+          "enum": [
+            "switch",
+            "select",
+            "multiselect",
+            "input"
+          ]
         },
         "title": {
           "type": "string",
@@ -265,7 +372,9 @@
     },
     "settingOption": {
       "type": "object",
-      "required": ["value"],
+      "required": [
+        "value"
+      ],
       "additionalProperties": false,
       "properties": {
         "value": {
@@ -280,7 +389,11 @@
     },
     "app": {
       "type": "object",
-      "required": ["id", "name", "entry"],
+      "required": [
+        "id",
+        "name",
+        "entry"
+      ],
       "properties": {
         "id": {
           "$ref": "#/$defs/localId"
@@ -304,7 +417,10 @@
         },
         "windowMode": {
           "type": "string",
-          "enum": ["normal", "standalone"],
+          "enum": [
+            "normal",
+            "standalone"
+          ],
           "default": "normal"
         },
         "rect": {
@@ -387,19 +503,37 @@
     },
     "action": {
       "type": "object",
-      "required": ["id", "name"],
+      "required": [
+        "id",
+        "name"
+      ],
       "oneOf": [
         {
-          "required": ["app"],
-          "not": { "required": ["command"] }
+          "required": [
+            "app"
+          ],
+          "not": {
+            "required": [
+              "command"
+            ]
+          }
         },
         {
-          "required": ["command"],
-          "not": { "required": ["app"] }
+          "required": [
+            "command"
+          ],
+          "not": {
+            "required": [
+              "app"
+            ]
+          }
         }
       ],
       "not": {
-        "required": ["accepts", "requiresQuery"]
+        "required": [
+          "accepts",
+          "requiresQuery"
+        ]
       },
       "properties": {
         "id": {
@@ -429,9 +563,15 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["text", "image", "file"]
+            "enum": [
+              "text",
+              "image",
+              "file"
+            ]
           },
-          "default": ["text"],
+          "default": [
+            "text"
+          ],
           "description": "Input kinds for which this action is recommended and can run."
         },
         "titleTemplate": {
@@ -450,7 +590,10 @@
     },
     "command": {
       "type": "object",
-      "required": ["id", "title"],
+      "required": [
+        "id",
+        "title"
+      ],
       "properties": {
         "id": {
           "$ref": "#/$defs/localId"
@@ -461,7 +604,10 @@
         },
         "visibility": {
           "type": "string",
-          "enum": ["private", "public"],
+          "enum": [
+            "private",
+            "public"
+          ],
           "default": "private"
         }
       },
@@ -469,7 +615,10 @@
     },
     "mcpTool": {
       "type": "object",
-      "required": ["name", "description"],
+      "required": [
+        "name",
+        "description"
+      ],
       "properties": {
         "name": {
           "$ref": "#/$defs/localId"
@@ -495,7 +644,9 @@
     },
     "mcpObjectSchema": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "properties": {
         "type": {
           "const": "object"
@@ -513,7 +664,10 @@
           }
         },
         "additionalProperties": {
-          "type": ["boolean", "object"]
+          "type": [
+            "boolean",
+            "object"
+          ]
         }
       },
       "additionalProperties": true,
@@ -536,10 +690,18 @@
     "mcpToolAnnotations": {
       "type": "object",
       "properties": {
-        "readOnlyHint": { "type": "boolean" },
-        "destructiveHint": { "type": "boolean" },
-        "idempotentHint": { "type": "boolean" },
-        "openWorldHint": { "type": "boolean" }
+        "readOnlyHint": {
+          "type": "boolean"
+        },
+        "destructiveHint": {
+          "type": "boolean"
+        },
+        "idempotentHint": {
+          "type": "boolean"
+        },
+        "openWorldHint": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     }

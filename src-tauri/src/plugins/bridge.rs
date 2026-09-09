@@ -34,7 +34,7 @@ pub mod codes {
 }
 
 /// Host Bridge API semver (design §7.2) — independent from the Tempo product version.
-pub const HOST_API_VERSION: &str = "1.0.0";
+pub const HOST_API_VERSION: &str = "2.0.0";
 
 /// Max single-message size (design §7): 1 MiB.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -251,6 +251,12 @@ pub async fn dispatch(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
+    if host.plugin_entry(&ctx.plugin_id).is_none() {
+        return Err(RpcError::new(
+            codes::FORBIDDEN,
+            "plugin is disabled or its authorization was revoked",
+        ));
+    }
     if method.trim().is_empty() {
         return Err(RpcError::new(codes::INVALID_REQUEST, "method is required"));
     }
@@ -312,6 +318,20 @@ async fn dispatch_host_method(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
+    if matches!(method, "notify.show" | "external.open" | "app.open") {
+        let entry = host
+            .plugin_entry(&ctx.plugin_id)
+            .ok_or_else(|| RpcError::new(codes::FORBIDDEN, "plugin policy unavailable"))?;
+        let allowed = entry
+            .permissions
+            .allows_host(method, params.get("appId").and_then(Value::as_str));
+        if !allowed {
+            return Err(RpcError::new(
+                codes::FORBIDDEN,
+                format!("permission denied: {method}"),
+            ));
+        }
+    }
     match method {
         "mainPanel.hide" => {
             crate::main_panel::hide(app, crate::main_panel::HideReason::Plugin)

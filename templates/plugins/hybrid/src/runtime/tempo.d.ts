@@ -146,7 +146,9 @@ declare global {
   }
 
   interface TempoRuntimeInfo {
-    readonly nodeVersion: string;
+    readonly engine: "deno";
+    readonly version: string;
+    readonly nodeCompatVersion: string;
   }
 
   interface TempoCommandsApi {

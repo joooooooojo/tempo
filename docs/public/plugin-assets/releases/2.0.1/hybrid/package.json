@@ -1,0 +1,19 @@
+{
+  "name": "__PACKAGE_NAME__",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:runtime": "vite build --config vite.runtime.config.ts --watch",
+    "typecheck:ui": "tsc -p src/ui/tsconfig.json",
+    "typecheck:runtime": "tsc -p src/runtime/tsconfig.json",
+    "typecheck": "npm run typecheck:ui && npm run typecheck:runtime",
+    "build": "npm run typecheck && vite build && vite build --config vite.runtime.config.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.4"
+  }
+}

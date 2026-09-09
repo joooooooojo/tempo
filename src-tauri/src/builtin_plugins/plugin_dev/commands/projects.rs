@@ -404,6 +404,19 @@ pub fn plugin_dev_write_manifest(
     if hash_text(&current) != args.expected_hash {
         return Err("manifest.json 已被外部修改，请重新载入后再保存".into());
     }
+    if let Ok(next) = PluginManifest::parse_str(&args.raw) {
+        if host.development_plugins().iter().any(|entry| {
+            entry.project_id == args.project_id
+                && (entry.manifest.permissions != next.permissions
+                    || entry.manifest.id != next.id
+                    || entry.manifest.main != next.main)
+        }) {
+            return Err(
+                "修改插件身份、运行入口或权限前，请先断开开发连接；保存后重新连接以应用新权限"
+                    .into(),
+            );
+        }
+    }
     let temp = root.join(format!(".manifest.json.{}.tmp", generate_id()));
     std::fs::write(&temp, args.raw.as_bytes())
         .map_err(|error| format!("写入 Manifest 临时文件失败: {error}"))?;
@@ -516,7 +529,7 @@ mod tests {
         std::fs::create_dir_all(&static_root).unwrap();
         let manifest = PluginManifest::parse_str(
             r#"{
-              "manifestVersion": 1,
+              "manifestVersion": 2,
               "id": "com.example.paths",
               "name": "Paths",
               "version": "0.1.0",

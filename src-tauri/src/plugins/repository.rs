@@ -2821,7 +2821,7 @@ mod tests {
         fs::write(
             plugin_root.join("manifest.json"),
             r#"{
-              "manifestVersion": 1,
+              "manifestVersion": 2,
               "id": "com.example.hello",
               "name": "Hello",
               "version": "1.0.0",

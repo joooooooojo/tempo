@@ -4,12 +4,14 @@
 // Started by the Rust Supervisor as: `node bootstrap.mjs`, cwd = the plugin's read-only
 // install directory. The first stdin line is a JSON handshake descriptor (never argv/env):
 //
-//   { socketPath, token, pluginId, mainPath, dataPath, nodeVersion }
+//   { socketAddress, token, pluginId, mainPath, dataPath, runtimeVersion }
 //
 // Speaks `u32 BE length + UTF-8 JSON` framed protocol. Private UI↔Runtime uses Electron-style
 // ipc (invoke/handle, send/on); Actions use commands.register and MCP Tools use mcpTools.register.
 
 import net from "node:net";
+import process from "node:process";
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
@@ -22,6 +24,7 @@ import {
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const COMMAND_GRACE_MS = 5_000;
+const HANDSHAKE_TIMEOUT_MS = 5_000;
 
 function log(level, message) {
   send({ type: "log", level, message: String(message) });
@@ -30,6 +33,7 @@ function log(level, message) {
 // -- Length-prefixed JSON framing -------------------------------------------------------
 
 let socket;
+let handshakePending;
 let recvBuffer = Buffer.alloc(0);
 
 function encodeFrame(value) {
@@ -381,6 +385,14 @@ async function handleShutdown() {
 }
 
 function handleHostFrame(message) {
+  if (handshakePending) {
+    if (message?.type !== "response" || message.id !== "handshake" || message.ok !== true) {
+      handshakePending.reject(new Error("invalid host handshake acknowledgement"));
+    } else {
+      handshakePending.resolve();
+    }
+    return;
+  }
   switch (message?.type) {
     case "response": {
       const pending = pendingHostRequests.get(message.id);
@@ -592,7 +604,9 @@ function buildTempo(descriptor) {
       data: descriptor.dataPath,
     },
     runtime: {
-      nodeVersion: descriptor.nodeVersion,
+      engine: "deno",
+      version: descriptor.runtimeVersion ?? globalThis.Deno?.version.deno,
+      nodeCompatVersion: process.versions.node,
     },
     host: callHost,
   };
@@ -641,12 +655,22 @@ function registerUnmountedHook(hook) {
 async function readHandshakeDescriptor() {
   return new Promise((resolve, reject) => {
     let buffer = "";
-    function onData(chunk) {
-      buffer += chunk.toString("utf8");
-      const newlineIndex = buffer.indexOf("\n");
-      if (newlineIndex === -1) return;
+    const timer = setTimeout(() => onError(new Error("handshake descriptor timed out")), HANDSHAKE_TIMEOUT_MS);
+    function cleanup() {
+      clearTimeout(timer);
       process.stdin.off("data", onData);
       process.stdin.off("error", onError);
+      process.stdin.off("end", onEnd);
+    }
+    function onData(chunk) {
+      buffer += chunk.toString("utf8");
+      if (Buffer.byteLength(buffer, "utf8") > MAX_MESSAGE_BYTES) {
+        onError(new Error("handshake descriptor too large"));
+        return;
+      }
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) return;
+      cleanup();
       const line = buffer.slice(0, newlineIndex);
       try {
         resolve(JSON.parse(line));
@@ -655,11 +679,35 @@ async function readHandshakeDescriptor() {
       }
     }
     function onError(error) {
+      cleanup();
       reject(error);
+    }
+    function onEnd() {
+      onError(new Error("stdin closed before handshake descriptor"));
     }
     process.stdin.on("data", onData);
     process.stdin.on("error", onError);
+    process.stdin.on("end", onEnd);
   });
+}
+
+function connectionTarget(descriptor) {
+  if (!descriptor || typeof descriptor !== "object") throw new Error("invalid handshake descriptor");
+  for (const key of ["token", "pluginId", "mainPath", "dataPath"]) {
+    if (typeof descriptor[key] !== "string" || !descriptor[key]) throw new Error(`invalid descriptor ${key}`);
+  }
+  const hasPath = descriptor.socketPath !== undefined;
+  const hasAddress = descriptor.socketAddress !== undefined;
+  if (hasPath === hasAddress) throw new Error("exactly one IPC endpoint is required");
+  if (hasPath) {
+    if (typeof descriptor.socketPath !== "string" || !descriptor.socketPath) throw new Error("invalid socketPath");
+    return descriptor.socketPath;
+  }
+  const address = descriptor.socketAddress;
+  if (!address || address.host !== "127.0.0.1" || !Number.isInteger(address.port) || address.port < 1 || address.port > 65535) {
+    throw new Error("invalid loopback IPC address");
+  }
+  return { host: address.host, port: address.port };
 }
 
 async function main() {
@@ -672,22 +720,35 @@ async function main() {
     return;
   }
 
-  socket = net.createConnection(descriptor.socketPath);
+  socket = net.createConnection(connectionTarget(descriptor));
   await new Promise((resolve, reject) => {
-    socket.once("connect", resolve);
-    socket.once("error", reject);
+    const timer = setTimeout(() => finish(new Error("IPC connection timed out")), HANDSHAKE_TIMEOUT_MS);
+    function finish(error) {
+      clearTimeout(timer);
+      socket.off("connect", onConnect);
+      socket.off("error", finish);
+      if (error) reject(error);
+      else resolve();
+    }
+    function onConnect() { finish(); }
+    socket.once("connect", onConnect);
+    socket.once("error", finish);
   });
   socket.on("data", onSocketData);
   socket.on("error", (error) => log("warn", `ipc socket error: ${error}`));
-  socket.on("close", () => process.exit(0));
+  socket.on("close", () => process.exit(runtimeMounted ? 0 : 1));
 
-  send({ type: "handshake", token: descriptor.token });
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  if (socket.destroyed) {
-    console.error("handshake rejected by host");
-    process.exit(1);
-    return;
-  }
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error("host handshake timed out")), HANDSHAKE_TIMEOUT_MS);
+    function finish(error) {
+      clearTimeout(timer);
+      handshakePending = undefined;
+      if (error) reject(error);
+      else resolve();
+    }
+    handshakePending = { resolve: () => finish(), reject: finish };
+    send({ type: "handshake", token: descriptor.token });
+  });
 
   globalThis.tempo = buildTempo(descriptor);
   globalThis.ipcMain = {
@@ -720,4 +781,7 @@ process.on("unhandledRejection", (error) => {
   log("error", `unhandled rejection: ${error && error.stack ? error.stack : error}`);
 });
 
-main();
+main().catch((error) => {
+  console.error("plugin runtime startup failed:", error?.message ?? String(error));
+  process.exit(1);
+});

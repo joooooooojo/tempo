@@ -137,7 +137,7 @@ export function PluginRuntimeSection() {
   return (
     <Section title="插件运行时">
       <Card>
-        <Row label="插件运行时（Node）" desc={desc}>
+        <Row label="插件运行时（Deno）" desc={desc}>
           {runtime?.installed ? (
             <Button
               variant="outline"

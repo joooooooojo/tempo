@@ -437,7 +437,7 @@ export interface PluginRuntimeStatus {
   installed: boolean;
   installing: boolean;
   version?: string | null;
-  nodePath?: string | null;
+  denoPath?: string | null;
   installDir?: string | null;
   lockedMajor: string;
   message: string;
@@ -449,7 +449,7 @@ export interface InstalledPackage {
   version: string;
   packageHash: string;
   installPath: string;
-  requiresNodeRuntime: boolean;
+  requiresRuntime: boolean;
 }
 
 export interface PluginRepository {
@@ -599,7 +599,17 @@ export interface TrustRepositoryConnectionInput {
   fingerprintSha256: string;
 }
 
+export interface PluginPermissions {
+  read: string[];
+  write: string[];
+  net: string[];
+  env: string[];
+  host: { notify: boolean; externalOpen: boolean; openApps: string[] };
+}
+
 export interface InstalledPlugin {
+  permissions: PluginPermissions | null;
+  pendingPermissions: PluginPermissions | null;
   id: string;
   name: string;
   iconUrl?: string | null;
@@ -612,7 +622,7 @@ export interface InstalledPlugin {
   installSource: string;
   signatureStatus: string;
   displayPublisher?: string | null;
-  requiresNodeRuntime: boolean;
+  requiresRuntime: boolean;
   /** Behavior-derived: `ui` | `hybrid` | `headless`. */
   kind: "ui" | "hybrid" | "headless" | string;
   lastError?: string | null;
@@ -728,7 +738,7 @@ export interface PluginContributionBundle {
   developmentUiSource?: "url" | "static" | null;
   name: string;
   description?: string | null;
-  requiresNodeRuntime: boolean;
+  requiresRuntime: boolean;
   apps: PluginAppContribution[];
   actions: PluginActionContribution[];
 }

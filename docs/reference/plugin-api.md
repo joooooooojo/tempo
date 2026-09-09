@@ -49,7 +49,7 @@ onMounted(() => {
 | `session.push()` | 是 | 否 | 更新页面 Session 快照 |
 | `commands.register()` | 否 | 是 | 注册 Action 可执行的 Command |
 | `mcpTools.register()` | 否 | 是 | 注册 Manifest 声明的 MCP Tool |
-| `paths` / `runtime` | 否 | 是 | Runtime 数据目录和 Node 信息 |
+| `paths` / `runtime` | 否 | 是 | Runtime 数据目录和 Deno 信息 |
 
 完整参数见 [平台 API](/reference/plugin-host-api)。
 

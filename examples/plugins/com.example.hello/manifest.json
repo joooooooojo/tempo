@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/joooooooojo/tempo/master/docs/schemas/plugin-manifest.schema.json",
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
-  "version": "1.1.0",
+  "version": "2.0.1",
   "engines": {
-    "tempo": ">=2",
-    "pluginApi": "^1.0.0"
+    "tempo": ">=2.2.6",
+    "pluginApi": "^2.0.0"
   },
   "kind": "hybrid",
   "author": "Tempo",
@@ -206,5 +206,11 @@
         "placeholder": "world"
       }
     ]
+  },
+  "permissions": {
+    "write": ["$DATA"],
+    "host": {
+      "notify": true
+    }
   }
 }

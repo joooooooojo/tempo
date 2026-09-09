@@ -72,6 +72,7 @@ export interface EditablePluginSetting {
 }
 
 export interface EditablePluginManifest {
+  permissions?: Partial<import("@/types").PluginPermissions>;
   $schema?: string;
   manifestVersion: number;
   id: string;

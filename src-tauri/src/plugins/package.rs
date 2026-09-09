@@ -23,6 +23,7 @@ pub struct InstalledPackage {
     pub version: String,
     pub package_hash: String,
     pub install_path: String,
+    #[serde(rename = "requiresRuntime")]
     pub requires_node_runtime: bool,
 }
 

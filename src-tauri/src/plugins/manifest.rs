@@ -1,4 +1,4 @@
-//! Plugin package manifest (manifest.json v1).
+//! Plugin package manifest (manifest.json v2).
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 
 use super::ids::{is_valid_local_id, is_valid_plugin_id};
 
-pub const MANIFEST_VERSION: u32 = 1;
+pub const MANIFEST_VERSION: u32 = 2;
 
-/// Allowed `platforms[]` values in manifestVersion 1.
+/// Allowed `platforms[]` values in manifestVersion 2.
 pub const PLUGIN_PLATFORMS: &[&str] = &["macos", "windows", "linux"];
 
 /// Current Tempo host OS key used by `platforms[]` / [`PluginManifest::supports_platform`].
@@ -67,12 +67,14 @@ pub struct PluginManifest {
     /// Empty means all currently supported Tempo hosts (macos + windows).
     #[serde(default)]
     pub platforms: Vec<String>,
-    /// Relative path to the Node Runtime entry within the plugin package (`.js` / `.mjs`).
+    /// Relative path to the Deno Runtime entry within the plugin package (`.js` / `.mjs`).
     /// Required for headless (no `apps[]`) plugins; optional for pure UI packages.
     #[serde(default)]
     pub main: Option<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub permissions: super::permissions::PluginPermissions,
     #[serde(default)]
     pub activation_events: Vec<String>,
     #[serde(default)]
@@ -549,6 +551,7 @@ impl PluginManifest {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.permissions.validate()?;
         if self.manifest_version != MANIFEST_VERSION {
             return Err(format!(
                 "unsupported manifestVersion {}; expected {MANIFEST_VERSION}",
@@ -872,7 +875,7 @@ mod tests {
     #[test]
     fn parses_minimal_hybrid_at_package_root() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -902,7 +905,7 @@ mod tests {
     #[test]
     fn validates_platforms_field() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -935,13 +938,13 @@ mod tests {
         let raw = include_str!("../../../examples/plugins/com.example.hello/manifest.json");
         let manifest = PluginManifest::parse_str(raw).unwrap();
         assert_eq!(manifest.id, "com.example.hello");
-        assert_eq!(manifest.version, "1.1.0");
+        assert_eq!(manifest.version, "2.0.1");
     }
 
     #[test]
     fn rejects_nested_ui_entry() {
         let nested_ui = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -956,7 +959,7 @@ mod tests {
     #[test]
     fn accepts_nested_main_entry() {
         let nested_main = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -972,7 +975,7 @@ mod tests {
     #[test]
     fn rejects_non_js_main_entry() {
         let invalid = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -988,7 +991,7 @@ mod tests {
     #[test]
     fn headless_requires_root_main() {
         let missing = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -1001,7 +1004,7 @@ mod tests {
         assert!(PluginManifest::parse_str(missing).is_err());
 
         let ok = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -1018,7 +1021,7 @@ mod tests {
     #[test]
     fn rejects_missing_command_ref() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.hello",
           "name": "Hello",
           "version": "1.0.0",
@@ -1034,7 +1037,7 @@ mod tests {
     #[test]
     fn rejects_removed_hook_contribution() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.listener",
           "name": "Listener",
           "version": "1.0.0",
@@ -1050,7 +1053,7 @@ mod tests {
     #[test]
     fn rejects_unsupported_activation_event() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.listener",
           "name": "Listener",
           "version": "1.0.0",
@@ -1064,7 +1067,7 @@ mod tests {
     #[test]
     fn action_can_open_an_app_for_image_input() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.crop",
           "name": "Crop",
           "version": "1.0.0",
@@ -1090,7 +1093,7 @@ mod tests {
     #[test]
     fn action_can_accept_file_input() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.files",
           "name": "Files",
           "version": "1.0.0",
@@ -1116,7 +1119,7 @@ mod tests {
     #[test]
     fn action_requires_exactly_one_target() {
         let base = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.action",
           "name": "Action",
           "version": "1.0.0",
@@ -1139,7 +1142,7 @@ mod tests {
     #[test]
     fn legacy_requires_query_maps_to_accepts() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.legacy",
           "name": "Legacy",
           "version": "1.0.0",
@@ -1165,7 +1168,7 @@ mod tests {
     #[test]
     fn validates_window_mode_and_rect() {
         let valid = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.window",
           "name": "Window",
           "version": "1.0.0",
@@ -1202,7 +1205,7 @@ mod tests {
     #[test]
     fn validates_mcp_tool_contract_and_stable_fingerprint() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.mcp",
           "name": "MCP",
           "version": "1.0.0",
@@ -1253,7 +1256,7 @@ mod tests {
     #[test]
     fn allows_mcp_schema_properties_without_description() {
         let raw = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.mcp",
           "name": "MCP",
           "version": "1.0.0",
@@ -1295,7 +1298,7 @@ mod tests {
     #[test]
     fn rejects_invalid_mcp_tool_contracts() {
         let valid = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.mcp",
           "name": "MCP",
           "version": "1.0.0",
@@ -1341,7 +1344,7 @@ mod tests {
     #[test]
     fn validates_contributed_settings() {
         let valid = r#"{
-          "manifestVersion": 1,
+          "manifestVersion": 2,
           "id": "com.example.settings",
           "name": "Settings",
           "version": "1.0.0",

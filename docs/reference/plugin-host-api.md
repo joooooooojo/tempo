@@ -231,7 +231,7 @@ tempo.mcpTools.register("search-notes", async (params, signal) => {
 ```js
 console.log(tempo.pluginId);
 console.log(tempo.paths.data);
-console.log(tempo.runtime.nodeVersion);
+console.log(tempo.runtime.version);
 ```
 
 `paths.data` 是插件可写数据目录。入口文件所在的安装目录应视为只读。

@@ -1,4 +1,4 @@
-//! Tempo plugin host: package install, trust, on-demand Node runtime, supervisor, Host Bridge,
+//! Tempo plugin host: package install, trust, on-demand Deno runtime, supervisor, Host Bridge,
 //! and the `tempo-plugin://` UI resource protocol.
 
 pub mod bridge;
@@ -10,6 +10,7 @@ pub mod manifest;
 pub mod mcp_bridge;
 pub mod package;
 pub mod paths;
+pub mod permissions;
 pub mod runtime;
 pub mod repository;
 pub mod repository_template;

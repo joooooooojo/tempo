@@ -211,7 +211,7 @@ export function ManifestRootEditor({
               <FieldLabel htmlFor="manifest-format-version">Manifest 版本</FieldLabel>
               <Input
                 id="manifest-format-version"
-                value={manifest.manifestVersion ?? 1}
+                value={manifest.manifestVersion ?? 2}
                 disabled
               />
             </Field>

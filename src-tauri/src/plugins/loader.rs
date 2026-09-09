@@ -97,6 +97,7 @@ pub struct PluginContributionBundle {
     pub development_ui_source: Option<String>,
     pub name: String,
     pub description: Option<String>,
+    #[serde(rename = "requiresRuntime")]
     pub requires_node_runtime: bool,
     pub apps: Vec<PluginAppContribution>,
     pub actions: Vec<PluginActionContribution>,
@@ -284,6 +285,7 @@ pub fn scan_enabled_contributions(
         registry.insert(
             row.id.clone(),
             PluginRegistryEntry {
+                permissions: manifest.permissions.clone(),
                 plugin_id: row.id.clone(),
                 version: row.current_version.clone(),
                 package_hash: package_hash.clone(),

@@ -2,6 +2,20 @@
 
 `ui`、`hybrid` 和 `headless` 是下一次发布的模板源。`release.json` 独立维护模板版本、最低 Host API 和公开资源根地址。
 
+当前模板 2.0.2 使用 Manifest v2、Host API ^2.0.0，要求 Tempo >=2.2.6。后台运行于 Deno 2.9.6；Node/npm/TypeScript/Vite 仅用于构建，继续输出自包含 ESM `main.mjs`。
+
+Hybrid 的 `tsconfig.json`、`tsconfig.ui.json`、`tsconfig.runtime.json` 均位于项目根目录。根配置通过 `references` 组织两个独立类型环境，`pnpm typecheck` 使用 `tsc -b` 统一检查；也可执行 `typecheck:ui` 或 `typecheck:runtime` 单独检查。增量缓存写入 `node_modules/.cache`，不生成运行时代码。
+
+| 模板 | 后台 | 默认权限 |
+| --- | --- | --- |
+| UI | 无 | 系统通知（示例按钮） |
+| Hybrid | Deno | 无额外权限（Command/MCP/私有 IPC） |
+| Headless | Deno | 系统通知（run Command） |
+
+所有模板的 `build` 都先检查类型。新增文件操作时显式声明 `permissions.read`/`write: ["$DATA"]`；网络使用精确 host:port；不支持原生扩展、子进程或运行时 npm 下载。不要将整个文件系统或所有网络默认开放。
+
+在仓库根目录设置 `TEMPO_PLUGIN_DENO_PATH` 后执行 `node --test scripts/test-plugin-templates.mjs`，可验证模板构建以及 Hello 演示的实际 Deno 调用。
+
 发布模板：
 
 ```bash

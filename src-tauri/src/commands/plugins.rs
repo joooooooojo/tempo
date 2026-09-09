@@ -41,7 +41,13 @@ pub async fn plugin_runtime_install(app: AppHandle) -> Result<PluginRuntimeStatu
 }
 
 #[tauri::command]
-pub fn plugin_runtime_uninstall(app: AppHandle) -> Result<PluginRuntimeStatus, String> {
+pub fn plugin_runtime_uninstall(
+    app: AppHandle,
+    host: State<'_, Arc<PluginHost>>,
+) -> Result<PluginRuntimeStatus, String> {
+    if host.supervisor.has_running_processes() {
+        return Err("请先停用正在运行的插件并断开开发连接，再卸载 Deno".into());
+    }
     uninstall_plugin_runtime(&app)
 }
 
@@ -94,10 +100,20 @@ pub fn list_plugins(
             row.name = row.id.clone();
         }
         if let Some(root) = &packages {
+            if let Some(version) = &row.pending_version {
+                row.pending_permissions = ui::read_manifest(&root.join(&row.id).join(version))
+                    .ok()
+                    .map(|manifest| manifest.permissions);
+            }
             let install_path = root.join(&row.id).join(&row.current_version);
+            if let Err(error) = ui::read_manifest(&install_path) {
+                row.last_error = Some(format!("插件需要迁移到 Manifest v2: {error}"));
+                row.enabled = false;
+            }
             let manifest_path = install_path.join("manifest.json");
             if let Ok(raw) = std::fs::read_to_string(manifest_path) {
                 if let Ok(manifest) = PluginManifest::parse_str(&raw) {
+                    row.permissions = Some(manifest.permissions.clone());
                     row.name = manifest.name.clone();
                     row.requires_node_runtime = manifest.requires_node_runtime();
                     row.kind = manifest.resolved_kind().to_string();
@@ -452,21 +468,52 @@ pub struct TrustPluginArgs {
 }
 
 #[tauri::command]
-pub fn trust_plugin(
+pub async fn trust_plugin(
     app: AppHandle,
     state: State<'_, AppState>,
+    host: State<'_, Arc<PluginHost>>,
     args: TrustPluginArgs,
 ) -> Result<(), String> {
-    let conn = state.db.lock();
-    ensure_plugin_tables(&conn)?;
-    set_package_trusted(&conn, &args.plugin_id, &args.version, args.trusted)?;
-    if !args.trusted
-        && get_installed_plugin(&conn, &args.plugin_id)?
-            .is_some_and(|row| row.current_version == args.version)
-    {
-        store_plugin_mcp_exposed(&conn, &args.plugin_id, false, "")?;
+    let revoked_current =
+        {
+            let conn = state.db.lock();
+            ensure_plugin_tables(&conn)?;
+            if args.trusted {
+                if !crate::plugins::ids::is_valid_plugin_id(&args.plugin_id)
+                    || semver::Version::parse(&args.version).is_err()
+                {
+                    return Err("invalid plugin id/version".into());
+                }
+                let path = packages_dir(&app)?
+                    .join(&args.plugin_id)
+                    .join(&args.version);
+                ui::read_manifest(&path)?;
+                let hash: String = conn.query_row(
+                "SELECT package_hash FROM plugin_versions WHERE plugin_id=?1 AND version=?2",
+                rusqlite::params![args.plugin_id, args.version], |row| row.get(0))
+                .map_err(|e| e.to_string())?;
+                crate::plugins::package::verify_package_hash(&path, &hash)?;
+            }
+            set_package_trusted(&conn, &args.plugin_id, &args.version, args.trusted)?;
+            let revoked = !args.trusted
+                && get_installed_plugin(&conn, &args.plugin_id)?
+                    .is_some_and(|row| row.current_version == args.version);
+            if revoked {
+                set_plugin_enabled(&conn, &args.plugin_id, false)?;
+                store_plugin_mcp_exposed(&conn, &args.plugin_id, false, "")?;
+            }
+            revoked
+        };
+    if revoked_current {
+        host.forget_plugin(&args.plugin_id);
+        host.supervisor.stop(&args.plugin_id).await;
+        crate::plugins::windows::close_plugin_windows(&app, &host, &args.plugin_id);
+        for view in host.views_for_plugin(&args.plugin_id) {
+            host.destroy_view(&view);
+        }
+        host.release_all_subscriptions_for_plugin(&args.plugin_id);
+        refresh_contributions(&app, &state, &host)?;
     }
-    drop(conn);
     crate::mcp::notify_plugin_tools_changed(&app);
     Ok(())
 }
@@ -503,6 +550,14 @@ pub async fn set_plugin_enabled_command(
             if !row.trusted {
                 return Err("启用前请先确认信任该插件包".into());
             }
+            let path = packages_dir(&app)?
+                .join(&plugin_id)
+                .join(&row.current_version);
+            ui::read_manifest(&path)?;
+            crate::plugins::package::verify_package_hash(
+                &path,
+                row.package_hash.as_deref().ok_or("missing package hash")?,
+            )?;
         }
 
         set_plugin_enabled(&conn, &plugin_id, enabled)?;
@@ -518,7 +573,6 @@ pub async fn set_plugin_enabled_command(
         host.forget_plugin(&plugin_id);
         let conn = state.db.lock();
         let _ = ui::clear_all_sessions_for_plugin(&conn, &plugin_id);
-        let _ = storage::delete_all(&conn, &plugin_id);
     }
 
     refresh_contributions(&app, &state, &host)?;

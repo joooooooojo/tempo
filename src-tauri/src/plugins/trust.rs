@@ -427,6 +427,8 @@ pub fn set_plugin_enabled(conn: &Connection, plugin_id: &str, enabled: bool) -> 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPluginRow {
+    pub permissions: Option<super::permissions::PluginPermissions>,
+    pub pending_permissions: Option<super::permissions::PluginPermissions>,
     pub id: String,
     pub name: String,
     pub icon_url: Option<String>,
@@ -439,6 +441,7 @@ pub struct InstalledPluginRow {
     pub install_source: String,
     pub signature_status: String,
     pub display_publisher: Option<String>,
+    #[serde(rename = "requiresRuntime")]
     pub requires_node_runtime: bool,
     /// Behavior-derived: `ui` | `hybrid` | `headless`.
     pub kind: String,
@@ -477,6 +480,8 @@ pub fn list_installed_plugins(conn: &Connection) -> Result<Vec<InstalledPluginRo
         .query_map([], |row| {
             let trusted_at: Option<String> = row.get(7)?;
             Ok(InstalledPluginRow {
+                permissions: None,
+                pending_permissions: None,
                 id: row.get(0)?,
                 name: String::new(),
                 icon_url: None,

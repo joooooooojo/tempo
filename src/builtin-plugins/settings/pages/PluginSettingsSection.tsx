@@ -27,8 +27,8 @@ import {
 } from "@/builtin-plugins/settings/pages/PluginConfigDialog";
 import { hasBuiltinConfigPanel } from "@/builtin-plugins/settings/pages/config-registry";
 
-const NODE_RUNTIME_TRUST_TEXT =
-  "启用此插件将允许其在本机执行代码，权限与 Tempo 相近（可读写文件、访问网络、发起进程等），请仅安装信任的来源。确定信任并继续？";
+const DENO_RUNTIME_TRUST_TEXT =
+  "此插件将在受限 Deno 进程中运行。仅授予下列声明权限；不允许子进程或原生扩展。UI 网络权限独立于 Deno。仅信任可靠来源。";
 const UI_ONLY_TRUST_TEXT =
   "将在隔离视图中运行网页代码，并可调用受限的 Tempo 接口（面板控制、主题、私有存储等），不具备完整系统权限。确定信任并继续？";
 
@@ -165,8 +165,9 @@ export function PluginSettingsSection() {
   };
 
   const trustPlugin = async (plugin: InstalledPlugin) => {
-    const confirmText = plugin.requiresNodeRuntime ? NODE_RUNTIME_TRUST_TEXT : UI_ONLY_TRUST_TEXT;
-    if (!confirm(confirmText)) return;
+    const confirmText = plugin.requiresRuntime ? DENO_RUNTIME_TRUST_TEXT : UI_ONLY_TRUST_TEXT;
+    if (!plugin.permissions) { toast.error("插件需要迁移到 Manifest v2"); return; }
+    if (!confirm(`${confirmText}\n\n${JSON.stringify(plugin.permissions, null, 2)}\n\n确定信任？`)) return;
     setBusy(true);
     try {
       await api.trustPlugin(plugin.id, plugin.currentVersion, true);
@@ -181,6 +182,8 @@ export function PluginSettingsSection() {
 
   const promotePending = async (plugin: InstalledPlugin) => {
     if (!plugin.pendingVersion) return;
+    if (!plugin.pendingPermissions) { toast.error("待升级包需要迁移到 Manifest v2"); return; }
+    if (!confirm(`信任并升级到 ${plugin.pendingVersion}？\n\n当前权限：\n${JSON.stringify(plugin.permissions, null, 2)}\n\n新版权限：\n${JSON.stringify(plugin.pendingPermissions, null, 2)}`)) return;
     setBusy(true);
     try {
       await api.trustPlugin(plugin.id, plugin.pendingVersion, true);

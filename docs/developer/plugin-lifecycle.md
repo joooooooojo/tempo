@@ -10,7 +10,7 @@ description: UI、Hybrid、Headless 的入口格式、启动时机与清理方�
 | 类型 | `apps` | `main` | 适合 |
 | --- | :---: | :---: | --- |
 | UI | 有 | 无 | 页面、表单、展示、本地插件存储 |
-| Hybrid | 有 | 有 | 页面加 Node 后台、文件或复杂计算 |
+| Hybrid | 有 | 有 | 页面加 Deno 后台、文件或复杂计算 |
 | Headless | 无 | 有 | Action、MCP Tool、后台监听 |
 
 ## UI 生命周期
@@ -96,7 +96,7 @@ onMounted(() => {
 });
 ```
 
-如果要在 `main.js` 中使用 ESM `import`，包根目录需要 `package.json` 并声明 `"type": "module"`。没有这个声明时，Node 会把 `.js` 当作 CommonJS。为避免发布环境歧义，模板统一输出 `main.mjs`。
+运行时使用 Deno；模板统一输出 ESM `main.mjs`。Node/npm 只负责构建，npm 依赖应内联进产物，不要发布依赖外置 node_modules 的代码。
 
 TypeScript 不能直接写进 Manifest 的 `main`。必须先用 Vite 等工具构建成 `.js` 或 `.mjs`。
 

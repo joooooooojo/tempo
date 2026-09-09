@@ -15,6 +15,8 @@
     "preview": "vite preview",
     "plugin-assets:build": "node ./scripts/build-plugin-assets.mjs",
     "test:plugin-events": "node ./scripts/test-plugin-events.mjs",
+    "test:plugin-runtime": "node --test ./scripts/test-plugin-runtime.mjs",
+    "test:plugin-templates": "node --test ./scripts/test-plugin-templates.mjs",
     "docs:dev": "pnpm plugin-assets:build && vitepress dev docs",
     "docs:build": "pnpm plugin-assets:build && vitepress build docs",
     "docs:preview": "vitepress preview docs"

@@ -18,6 +18,8 @@ const MAX_CATALOG_BYTES: usize = 512 * 1024;
 const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TEMPLATE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TEMPLATE_FILES: usize = 256;
+static BUNDLED_DENO_TEMPLATES: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../docs/public/plugin-assets/releases/2.0.2");
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -419,7 +421,47 @@ pub(super) async fn scaffold_project(
         .map_err(|error| format!("读取应用缓存目录失败: {error}"))?
         .join("plugin-development")
         .join("templates");
-    scaffold_project_from_catalog(root, args, &cache_root, catalog_url).await
+    match scaffold_project_from_catalog(root, args, &cache_root, catalog_url).await {
+        Ok(()) => Ok(()),
+        Err(error) if std::env::var(CATALOG_URL_ENV).is_err() => {
+            tracing::debug!(%error, "remote template unavailable; using bundled Deno template");
+            scaffold_bundled(root, args)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn scaffold_bundled(root: &Path, args: &CreateProjectArgs) -> Result<(), String> {
+    if !matches!(args.kind.as_str(), "ui" | "hybrid" | "headless") {
+        return Err("invalid plugin template kind".into());
+    }
+    let dir = BUNDLED_DENO_TEMPLATES
+        .get_dir(&args.kind)
+        .ok_or("missing bundled template")?;
+    fn collect(dir: &include_dir::Dir<'_>, base: &Path, files: &mut Vec<DownloadedTemplateFile>) {
+        for file in dir.files() {
+            files.push(DownloadedTemplateFile {
+                path: file.path().strip_prefix(base).unwrap().to_path_buf(),
+                bytes: file.contents().to_vec(),
+                render: true,
+            });
+        }
+        for child in dir.dirs() {
+            collect(child, base, files);
+        }
+    }
+    let mut files = Vec::new();
+    collect(dir, dir.path(), &mut files);
+    files.push(DownloadedTemplateFile {
+        path: "plugin-manifest.schema.json".into(),
+        bytes: BUNDLED_DENO_TEMPLATES
+            .get_file("plugin-manifest.schema.json")
+            .ok_or("missing bundled schema")?
+            .contents()
+            .to_vec(),
+        render: false,
+    });
+    scaffold_downloaded(root, args, "./plugin-manifest.schema.json", files)
 }
 
 #[cfg(test)]
@@ -498,7 +540,7 @@ mod tests {
         };
         let manifest = r#"{
   "$schema": "__MANIFEST_SCHEMA_URL__",
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "id": "__PLUGIN_ID__",
   "name": "__PLUGIN_NAME__",
   "version": "0.1.0",
@@ -593,7 +635,7 @@ mod tests {
         assert!(manifest["$schema"]
             .as_str()
             .unwrap()
-            .starts_with(&format!("http://{address}/releases/1.0.0/")));
+            .starts_with(&format!("http://{address}/releases/2.0.2/")));
 
         server.abort();
         let _ = server.await;
@@ -613,5 +655,36 @@ mod tests {
         assert!(cached_root.join("src/runtime/main.ts").is_file());
 
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn bundled_deno_templates_scaffold_offline() {
+        for kind in ["ui", "hybrid", "headless"] {
+            let root = std::env::temp_dir().join(format!(
+                "tempo-bundled-{}",
+                crate::plugins::host::generate_id()
+            ));
+            std::fs::create_dir_all(&root).unwrap();
+            let args = CreateProjectArgs {
+                root_path: root.to_string_lossy().into_owned(),
+                plugin_id: "com.example.offline".into(),
+                name: "Offline".into(),
+                kind: kind.into(),
+            };
+            super::scaffold_bundled(&root, &args).unwrap();
+            let raw = std::fs::read_to_string(root.join("manifest.json")).unwrap();
+            let manifest = crate::plugins::manifest::PluginManifest::parse_str(&raw).unwrap();
+            assert_eq!(manifest.manifest_version, 2);
+            assert_eq!(manifest.engines.plugin_api, "^2.0.0");
+            assert!(root.join("plugin-manifest.schema.json").is_file());
+            if kind == "hybrid" {
+                for config in ["tsconfig.json", "tsconfig.ui.json", "tsconfig.runtime.json"] {
+                    assert!(root.join(config).is_file());
+                }
+                assert!(!root.join("src/ui/tsconfig.json").exists());
+                assert!(!root.join("src/runtime/tsconfig.json").exists());
+            }
+            std::fs::remove_dir_all(&root).unwrap();
+        }
     }
 }

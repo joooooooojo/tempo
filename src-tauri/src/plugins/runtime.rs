@@ -1,4 +1,4 @@
-//! On-demand plugin Node runtime (not bundled with Tempo; unrelated to system Node).
+//! On-demand plugin Deno runtime (not bundled with Tempo; unrelated to system Deno).
 
 use std::fs;
 use std::io::Write;
@@ -10,17 +10,17 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as AsyncMutex;
 
-use super::paths::{ensure_dir, node_runtime_dir, plugin_runtime_root, runtime_manifest_path};
+use super::paths::{deno_runtime_dir, ensure_dir, plugin_runtime_root, runtime_manifest_path};
 
-/// Locked Node major line for Tempo plugins. Patch is chosen by the download manifest.
-pub const LOCKED_NODE_MAJOR: &str = "24";
+/// Locked Deno major line for Tempo plugins. Patch is chosen by the download manifest.
+pub const LOCKED_DENO_MAJOR: &str = "2";
 
-/// Official nodejs.org build this Tempo release is locked to (design §3.3.1).
-pub const OFFICIAL_NODE_VERSION: &str = "24.18.0";
+/// Official denoland/deno build this Tempo release is locked to (design §3.3.1).
+pub const OFFICIAL_DENO_VERSION: &str = "2.9.6";
 
-/// Test-only escape hatch: point directly at a pre-installed Node binary and skip the
+/// Test-only escape hatch: point directly at a pre-installed Deno binary and skip the
 /// on-demand download/verify flow entirely. Never read outside of local development/tests.
-pub const NODE_PATH_OVERRIDE_ENV: &str = "TEMPO_PLUGIN_NODE_PATH";
+pub const DENO_PATH_OVERRIDE_ENV: &str = "TEMPO_PLUGIN_DENO_PATH";
 /// Override the official runtime manifest URL (mirrors / air-gapped installs / tests).
 pub const MANIFEST_URL_OVERRIDE_ENV: &str = "TEMPO_PLUGIN_RUNTIME_MANIFEST_URL";
 
@@ -51,7 +51,7 @@ pub struct PluginRuntimeStatus {
     /// True while a download/extract is in flight (persists across main panel remounts).
     pub installing: bool,
     pub version: Option<String>,
-    pub node_path: Option<String>,
+    pub deno_path: Option<String>,
     pub install_dir: Option<String>,
     pub locked_major: String,
     pub message: String,
@@ -62,8 +62,9 @@ pub struct PluginRuntimeStatus {
 #[serde(rename_all = "camelCase")]
 struct LocalRuntimeManifest {
     version: String,
-    node_path: String,
+    deno_path: String,
     package_hash: String,
+    binary_sha256: String,
     installed_at: String,
     target: String,
 }
@@ -83,48 +84,20 @@ struct RemoteArtifact {
     sha256: String,
 }
 
-/// Hardcoded official Node 24.18.0 artifacts (nodejs.org dist). No third-party CDN is used;
+/// Hardcoded official Deno 2.9.6 artifacts (GitHub releases). No third-party CDN is used;
 /// `TEMPO_PLUGIN_RUNTIME_MANIFEST_URL` may still override this for mirrors/tests.
 fn official_manifest() -> RemoteRuntimeManifest {
-    let mut artifacts = std::collections::HashMap::new();
-    artifacts.insert(
-        "aarch64-apple-darwin".to_string(),
-        RemoteArtifact {
-            url: format!(
-                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-darwin-arm64.tar.gz"
-            ),
-            sha256: "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1".into(),
-        },
-    );
-    artifacts.insert(
-        "x86_64-apple-darwin".to_string(),
-        RemoteArtifact {
-            url: format!(
-                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-darwin-x64.tar.gz"
-            ),
-            sha256: "dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080".into(),
-        },
-    );
-    artifacts.insert(
-        "x86_64-unknown-linux-gnu".to_string(),
-        RemoteArtifact {
-            url: format!(
-                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-linux-x64.tar.gz"
-            ),
-            sha256: "783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8".into(),
-        },
-    );
-    artifacts.insert(
-        "x86_64-pc-windows-msvc".to_string(),
-        RemoteArtifact {
-            url: format!(
-                "https://nodejs.org/dist/v{OFFICIAL_NODE_VERSION}/node-v{OFFICIAL_NODE_VERSION}-win-x64.zip"
-            ),
-            sha256: "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821".into(),
-        },
-    );
+    let artifacts = [
+        ("aarch64-apple-darwin", "213a2f304f04d3c9cb5220669afad138f60a5aab1fe80962abdeb8f35807a472"),
+        ("x86_64-apple-darwin", "7d4524b82bcc557fe020a1a5b56956ed42b992ae5b28026e8ad5d17329533f5f"),
+        ("x86_64-unknown-linux-gnu", "394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2"),
+        ("x86_64-pc-windows-msvc", "15e5300b0ba3c3695a7621d90160a746ec9e710228cee639afa9d580f6e3cd11"),
+    ].into_iter().map(|(target, hash)| (target.to_string(), RemoteArtifact {
+        url: format!("https://github.com/denoland/deno/releases/download/v{OFFICIAL_DENO_VERSION}/deno-{target}.zip"),
+        sha256: hash.into(),
+    })).collect();
     RemoteRuntimeManifest {
-        version: OFFICIAL_NODE_VERSION.to_string(),
+        version: OFFICIAL_DENO_VERSION.into(),
         artifacts,
     }
 }
@@ -157,33 +130,33 @@ fn current_target_triple() -> &'static str {
     }
 }
 
-fn node_exe_name() -> &'static str {
+fn deno_exe_name() -> &'static str {
     if cfg!(windows) {
-        "node.exe"
+        "deno.exe"
     } else {
-        "node"
+        "deno"
     }
 }
 
-fn resolve_node_binary(install_dir: &std::path::Path) -> PathBuf {
-    // Official Node zip/tar layouts differ slightly by platform.
+fn resolve_deno_binary(install_dir: &std::path::Path) -> PathBuf {
+    // Official Deno zip/tar layouts differ slightly by platform.
     let candidates = [
-        install_dir.join(node_exe_name()),
-        install_dir.join("bin").join(node_exe_name()),
+        install_dir.join(deno_exe_name()),
+        install_dir.join("bin").join(deno_exe_name()),
     ];
     for candidate in candidates {
         if candidate.is_file() {
             return candidate;
         }
     }
-    // Nested folder e.g. node-v24.x.y-win-x64/node.exe
+    // Accept a single nested archive directory.
     if let Ok(entries) = fs::read_dir(install_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 let nested = [
-                    path.join(node_exe_name()),
-                    path.join("bin").join(node_exe_name()),
+                    path.join(deno_exe_name()),
+                    path.join("bin").join(deno_exe_name()),
                 ];
                 for candidate in nested {
                     if candidate.is_file() {
@@ -193,12 +166,15 @@ fn resolve_node_binary(install_dir: &std::path::Path) -> PathBuf {
             }
         }
     }
-    install_dir.join(node_exe_name())
+    install_dir.join(deno_exe_name())
 }
 
 /// Test-only direct override, bypassing install state entirely.
-fn test_node_path_override() -> Option<PathBuf> {
-    std::env::var(NODE_PATH_OVERRIDE_ENV)
+fn test_deno_path_override() -> Option<PathBuf> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var(DENO_PATH_OVERRIDE_ENV)
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
@@ -224,7 +200,7 @@ fn clear_progress() {
 fn status_base(
     installed: bool,
     version: Option<String>,
-    node_path: Option<String>,
+    deno_path: Option<String>,
     install_dir: Option<String>,
     message: String,
 ) -> PluginRuntimeStatus {
@@ -236,22 +212,22 @@ fn status_base(
         installed,
         installing,
         version,
-        node_path,
+        deno_path,
         install_dir,
-        locked_major: LOCKED_NODE_MAJOR.into(),
+        locked_major: LOCKED_DENO_MAJOR.into(),
         message,
         progress,
     }
 }
 
 pub fn get_plugin_runtime_status(app: &AppHandle) -> Result<PluginRuntimeStatus, String> {
-    if let Some(path) = test_node_path_override() {
+    if let Some(path) = test_deno_path_override() {
         return Ok(status_base(
             true,
-            Some(format!("{LOCKED_NODE_MAJOR}.x (test override)")),
+            Some(format!("{LOCKED_DENO_MAJOR}.x (test override)")),
             Some(path.display().to_string()),
             path.parent().map(|p| p.display().to_string()),
-            "使用 TEMPO_PLUGIN_NODE_PATH 指定的测试 Node。".into(),
+            "使用 TEMPO_PLUGIN_DENO_PATH 指定的测试 Deno。".into(),
         ));
     }
 
@@ -277,27 +253,32 @@ pub fn get_plugin_runtime_status(app: &AppHandle) -> Result<PluginRuntimeStatus,
         fs::read_to_string(&manifest_path).map_err(|e| format!("read runtime manifest: {e}"))?;
     let local: LocalRuntimeManifest =
         serde_json::from_str(&raw).map_err(|e| format!("parse runtime manifest: {e}"))?;
-    let node_path = PathBuf::from(&local.node_path);
-    if !node_path.is_file() {
+    let deno_path = PathBuf::from(&local.deno_path);
+    let expected_root = deno_runtime_dir(app, OFFICIAL_DENO_VERSION)?;
+    if local.version != OFFICIAL_DENO_VERSION
+        || local.target != current_target_triple()
+        || !deno_path.is_file()
+        || !deno_path.starts_with(&expected_root)
+    {
         return Ok(status_base(
             false,
             Some(local.version),
             None,
             Some(
-                node_path
+                deno_path
                     .parent()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default(),
             ),
-            "插件运行时清单存在，但 Node 可执行文件缺失，请重新安装。".into(),
+            "插件运行时清单存在，但 Deno 可执行文件缺失，请重新安装。".into(),
         ));
     }
 
     Ok(status_base(
         true,
         Some(local.version),
-        Some(local.node_path),
-        node_path.parent().map(|p| p.display().to_string()),
+        Some(local.deno_path),
+        deno_path.parent().map(|p| p.display().to_string()),
         if installing {
             "插件运行时已就绪（另有安装任务进行中）。".into()
         } else {
@@ -309,6 +290,9 @@ pub fn get_plugin_runtime_status(app: &AppHandle) -> Result<PluginRuntimeStatus,
 /// Resolve the manifest to use: hardcoded official build, or an override URL fetched over HTTP
 /// (mirrors / air-gapped installs / tests only — never an arbitrary plugin-supplied endpoint).
 async fn resolve_runtime_manifest() -> Result<RemoteRuntimeManifest, String> {
+    if !cfg!(debug_assertions) {
+        return Ok(official_manifest());
+    }
     if let Ok(url) = std::env::var(MANIFEST_URL_OVERRIDE_ENV) {
         let client = reqwest::Client::new();
         let remote: RemoteRuntimeManifest = client
@@ -336,9 +320,9 @@ async fn download_with_progress(
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("下载 Node 失败: {e}"))?
+        .map_err(|e| format!("下载 Deno 失败: {e}"))?
         .error_for_status()
-        .map_err(|e| format!("下载 Node HTTP 错误: {e}"))?;
+        .map_err(|e| format!("下载 Deno HTTP 错误: {e}"))?;
 
     let total = response.content_length();
     let mut file = fs::File::create(dest).map_err(|e| format!("创建下载文件失败: {e}"))?;
@@ -376,9 +360,9 @@ async fn download_with_progress(
             let message = match total {
                 Some(t) => {
                     let total_mb = t as f64 / (1024.0 * 1024.0);
-                    format!("正在下载 Node… {mb:.1}/{total_mb:.1} MB")
+                    format!("正在下载 Deno… {mb:.1}/{total_mb:.1} MB")
                 }
-                None => format!("正在下载 Node… {mb:.1} MB"),
+                None => format!("正在下载 Deno… {mb:.1} MB"),
             };
             set_progress(
                 app,
@@ -496,9 +480,9 @@ async fn install_plugin_runtime_inner(
 ) -> Result<PluginRuntimeStatus, String> {
     let remote = resolve_runtime_manifest().await?;
 
-    if !remote.version.starts_with(&format!("{LOCKED_NODE_MAJOR}.")) {
+    if remote.version != OFFICIAL_DENO_VERSION {
         return Err(format!(
-            "运行时版本 {} 与锁定的 Node {LOCKED_NODE_MAJOR} 不匹配",
+            "运行时版本 {} 与锁定的 Deno {LOCKED_DENO_MAJOR} 不匹配",
             remote.version
         ));
     }
@@ -510,11 +494,7 @@ async fn install_plugin_runtime_inner(
 
     let root = plugin_runtime_root(app)?;
     ensure_dir(&root)?;
-    let archive_path = root.join(format!(
-        "node-{}-{target}.{}",
-        remote.version,
-        if cfg!(windows) { "zip" } else { "tar.gz" }
-    ));
+    let archive_path = root.join(format!("deno-{}-{target}.{}", remote.version, "zip"));
 
     let client = reqwest::Client::new();
     download_with_progress(app, &client, &artifact.url, &archive_path).await?;
@@ -537,7 +517,7 @@ async fn install_plugin_runtime_inner(
     if !actual.eq_ignore_ascii_case(&artifact.sha256) {
         let _ = fs::remove_file(&archive_path);
         return Err(format!(
-            "Node 包校验失败（期望 {}, 实际 {actual}）",
+            "Deno 包校验失败（期望 {}, 实际 {actual}）",
             artifact.sha256
         ));
     }
@@ -547,36 +527,34 @@ async fn install_plugin_runtime_inner(
         app,
         RuntimeInstallProgress {
             phase: "extracting".into(),
-            message: "正在解压 Node 运行时…".into(),
+            message: "正在解压 Deno 运行时…".into(),
             downloaded_bytes: 0,
             total_bytes: None,
             percent: Some(100),
         },
     );
 
-    let version_dir = node_runtime_dir(app, &remote.version)?;
-    if version_dir.exists() {
-        fs::remove_dir_all(&version_dir).map_err(|e| format!("清理旧运行时目录失败: {e}"))?;
-    }
+    // Unique staging directory; only publishing the manifest makes this install visible.
+    let version_dir = deno_runtime_dir(app, &remote.version)?.join(super::host::generate_id());
     ensure_dir(&version_dir)?;
 
-    extract_node_archive(&archive_path, &version_dir)?;
+    extract_deno_archive(&archive_path, &version_dir)?;
     let _ = fs::remove_file(&archive_path);
 
-    let node_path = resolve_node_binary(&version_dir);
-    if !node_path.is_file() {
+    let deno_path = resolve_deno_binary(&version_dir);
+    if !deno_path.is_file() {
         return Err(format!(
-            "解压后未找到 Node 可执行文件（目录 {}）",
+            "解压后未找到 Deno 可执行文件（目录 {}）",
             version_dir.display()
         ));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(&node_path) {
+        if let Ok(meta) = fs::metadata(&deno_path) {
             let mut perms = meta.permissions();
             perms.set_mode(0o755);
-            let _ = fs::set_permissions(&node_path, perms);
+            let _ = fs::set_permissions(&deno_path, perms);
         }
     }
 
@@ -593,8 +571,11 @@ async fn install_plugin_runtime_inner(
 
     let local = LocalRuntimeManifest {
         version: remote.version.clone(),
-        node_path: node_path.display().to_string(),
+        deno_path: deno_path.display().to_string(),
         package_hash: actual,
+        binary_sha256: hex::encode(Sha256::digest(
+            fs::read(&deno_path).map_err(|e| e.to_string())?,
+        )),
         installed_at: chrono::Local::now().to_rfc3339(),
         target: target.into(),
     };
@@ -613,41 +594,26 @@ async fn install_plugin_runtime_inner(
 }
 
 pub fn uninstall_plugin_runtime(app: &AppHandle) -> Result<PluginRuntimeStatus, String> {
-    if INSTALL_LOCK.try_lock().is_err() || current_progress().is_some_and(|p| p.phase != "failed") {
+    let _lock = INSTALL_LOCK
+        .try_lock()
+        .map_err(|_| "安装进行中，请稍后再卸载")?;
+    if current_progress().is_some_and(|p| p.phase != "failed") {
         return Err("安装进行中，请稍后再卸载".into());
     }
     clear_progress();
-    let root = plugin_runtime_root(app)?;
+    let manifest_path = runtime_manifest_path(app)?;
+    if manifest_path.exists() {
+        fs::remove_file(manifest_path).map_err(|e| e.to_string())?;
+    }
+    let root = plugin_runtime_root(app)?.join("deno");
     if root.exists() {
         fs::remove_dir_all(&root).map_err(|e| format!("卸载插件运行时失败: {e}"))?;
     }
     get_plugin_runtime_status(app)
 }
 
-fn extract_node_archive(archive: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
-    let name = archive
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    if name.ends_with(".zip") {
-        return extract_zip_archive(archive, dest);
-    }
-
-    let status = std::process::Command::new("tar")
-        .args([
-            "-xf",
-            &archive.display().to_string(),
-            "-C",
-            &dest.display().to_string(),
-        ])
-        .status()
-        .map_err(|e| format!("tar 解压启动失败: {e}"))?;
-    if !status.success() {
-        return Err("tar 解压失败".into());
-    }
-    Ok(())
+fn extract_deno_archive(archive: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    extract_zip_archive(archive, dest)
 }
 
 fn extract_zip_archive(archive: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
@@ -658,9 +624,7 @@ fn extract_zip_archive(archive: &std::path::Path, dest: &std::path::Path) -> Res
         let mut entry = zip
             .by_index(index)
             .map_err(|e| format!("读取压缩条目失败: {e}"))?;
-        let Some(enclosed) = entry.enclosed_name() else {
-            continue;
-        };
+        let enclosed = entry.enclosed_name().ok_or("invalid archive path")?;
         let outpath = dest.join(enclosed);
         if entry.is_dir() {
             fs::create_dir_all(&outpath).map_err(|e| format!("创建目录失败: {e}"))?;
@@ -675,15 +639,66 @@ fn extract_zip_archive(archive: &std::path::Path, dest: &std::path::Path) -> Res
     Ok(())
 }
 
-/// Returns the managed Node executable if installed and present.
-pub fn resolved_node_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(path) = test_node_path_override() {
+/// Returns the managed Deno executable if installed and present.
+pub fn resolved_deno_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(path) = test_deno_path_override() {
         return Ok(path);
     }
     let status = get_plugin_runtime_status(app)?;
+    if !status.installed {
+        return Err("插件 Deno 运行时缺失或版本不匹配，请重新安装".into());
+    }
+    let local: LocalRuntimeManifest = serde_json::from_str(
+        &fs::read_to_string(runtime_manifest_path(app)?).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let actual = hex::encode(Sha256::digest(
+        fs::read(&local.deno_path).map_err(|e| e.to_string())?,
+    ));
+    if actual != local.binary_sha256 {
+        return Err("Deno 可执行文件校验失败，请重新安装".into());
+    }
     status
-        .node_path
+        .deno_path
         .map(PathBuf::from)
         .filter(|p| p.is_file())
         .ok_or_else(|| "插件运行时未安装".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fixed_manifest_contains_only_pinned_official_archives() {
+        let manifest = official_manifest();
+        assert_eq!(manifest.version, "2.9.6");
+        assert_eq!(manifest.artifacts.len(), 4);
+        for (target, artifact) in manifest.artifacts {
+            assert_eq!(
+                artifact.url,
+                format!(
+                    "https://github.com/denoland/deno/releases/download/v2.9.6/deno-{target}.zip"
+                )
+            );
+            assert_eq!(artifact.sha256.len(), 64);
+            assert!(artifact.sha256.bytes().all(|b| b.is_ascii_hexdigit()));
+        }
+    }
+    #[test]
+    fn archive_rejects_traversal() {
+        let root = std::env::temp_dir().join(format!(
+            "tempo-deno-zip-{}",
+            super::super::host::generate_id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let archive = root.join("probe.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+        zip.start_file("../escaped.exe", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"not executable").unwrap();
+        zip.finish().unwrap();
+        assert!(extract_zip_archive(&archive, &root.join("out")).is_err());
+        assert!(!root.join("escaped.exe").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
 }

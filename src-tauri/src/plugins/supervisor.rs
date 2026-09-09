@@ -1,7 +1,7 @@
-//! Per-plugin Node Runtime supervisor (design §3.2, §6.2, §6.3).
+//! Per-plugin Deno Runtime supervisor (design §3.2, §6.2, §6.3).
 //!
-//! One Node child process per plugin, talking to the host over a length-prefixed JSON frame
-//! protocol on a Unix domain socket (0600) / Windows named pipe, handshaking via a token passed
+//! One Deno child process per plugin, talking to the host over a length-prefixed JSON frame
+//! protocol on a pre-bound loopback TCP listener, handshaking via a token passed
 //! on stdin (never argv/env — design §7). Activation is always lazy: `ensure_started` is only
 //! called from a Command/private IPC invocation (or `onStartup`), never at boot/enable time.
 //!
@@ -29,9 +29,7 @@ use crate::db::AppState;
 use super::bridge::{self, ConnectionContext, RpcError};
 use super::host::{generate_id, PluginHost};
 use super::package::verify_package_hash;
-#[cfg(unix)]
-use super::paths::plugin_ipc_dir;
-use super::runtime::resolved_node_path;
+use super::runtime::resolved_deno_path;
 use super::trust::{ensure_plugin_tables, get_installed_plugin, set_last_error, set_runtime_state};
 
 /// Runtime state machine (design §6.2): `disabled | enabled | starting | active | draining | failed`.
@@ -74,7 +72,7 @@ fn backoff_for(crash_count: usize) -> Duration {
 struct RuntimeProcess {
     plugin_id: String,
     state: SyncMutex<RuntimeState>,
-    write_tx: mpsc::UnboundedSender<Vec<u8>>,
+    write_tx: mpsc::Sender<Vec<u8>>,
     pending: SyncMutex<HashMap<String, oneshot::Sender<Result<Value, RpcError>>>>,
     pid: Option<u32>,
     crash_history: SyncMutex<VecDeque<Instant>>,
@@ -118,6 +116,18 @@ impl Supervisor {
 
     pub fn is_running(&self, plugin_id: &str) -> bool {
         self.get(plugin_id).is_some_and(|p| p.is_usable())
+    }
+
+    pub fn has_running_processes(&self) -> bool {
+        self.start_locks
+            .lock()
+            .values()
+            .any(|lock| lock.try_lock().is_err())
+            || self
+                .processes
+                .lock()
+                .values()
+                .any(|p| p.is_usable() || *p.state.lock() == RuntimeState::Draining)
     }
 
     fn persist_state(&self, plugin_id: &str, state: RuntimeState) {
@@ -299,6 +309,8 @@ impl Supervisor {
     }
 
     async fn stop_with_grace(&self, plugin_id: &str, grace: Duration) {
+        let lock = self.start_lock_for(plugin_id);
+        let _guard = lock.lock().await;
         let Some(process) = self.processes.lock().remove(plugin_id) else {
             return;
         };
@@ -430,7 +442,7 @@ impl Supervisor {
         verify_package_hash(&install_path, &package_hash)
             .map_err(|e| RpcError::new(bridge::codes::FORBIDDEN, e))?;
 
-        let node_path = resolved_node_path(&self.app)
+        let deno_path = resolved_deno_path(&self.app)
             .map_err(|e| RpcError::new(bridge::codes::RUNTIME_UNAVAILABLE, e))?;
         let data_dir = super::paths::plugin_data_dir(&self.app, plugin_id)
             .map_err(|e| RpcError::internal("spawn runtime", e))?;
@@ -439,10 +451,21 @@ impl Supervisor {
             .map_err(|e| RpcError::internal("spawn runtime", e))?;
         let main_path = install_path.join(&main_rel);
 
-        let (endpoint_path, token) =
-            create_ipc_endpoint().map_err(|e| RpcError::internal("spawn runtime", e))?;
+        let (listener, token) = create_ipc_endpoint()
+            .await
+            .map_err(|e| RpcError::internal("spawn runtime", e))?;
 
-        let mut command = tokio::process::Command::new(&node_path);
+        let mut command = tokio::process::Command::new(&deno_path);
+        let port = listener
+            .local_addr()
+            .map_err(|e| RpcError::internal("ipc address", e))?
+            .port();
+        command.args(
+            manifest
+                .permissions
+                .runtime_args(&install_path, &data_dir, port)
+                .map_err(|e| RpcError::new(bridge::codes::FORBIDDEN, e))?,
+        );
         command
             .arg(&bootstrap_path)
             .current_dir(&install_path)
@@ -452,6 +475,13 @@ impl Supervisor {
             .stderr(Stdio::null())
             .kill_on_drop(true);
         apply_minimal_plugin_runtime_env(&mut command);
+        let cache = super::paths::plugin_runtime_root(&self.app)
+            .map_err(|e| RpcError::internal("runtime cache", e))?
+            .join("cache")
+            .join(&plugin_id);
+        super::paths::ensure_dir(&cache).map_err(|e| RpcError::internal("runtime cache", e))?;
+        command.env("DENO_DIR", cache);
+        apply_declared_env(&mut command, &manifest.permissions);
         prevent_plugin_runtime_console_window(&mut command);
         #[cfg(unix)]
         {
@@ -461,18 +491,18 @@ impl Supervisor {
         let mut child = command.spawn().map_err(|e| {
             RpcError::new(
                 bridge::codes::ACTIVATION_FAILED,
-                format!("spawn node failed: {e}"),
+                format!("spawn deno failed: {e}"),
             )
         })?;
         let pid = child.id();
 
         let handshake = json!({
-            "socketPath": endpoint_path,
+            "socketAddress": {"host": "127.0.0.1", "port": listener.local_addr().map_err(|e| RpcError::internal("ipc address", e))?.port()},
             "token": token,
             "pluginId": plugin_id,
             "mainPath": main_path.display().to_string(),
             "dataPath": data_dir.display().to_string(),
-            "nodeVersion": super::runtime::OFFICIAL_NODE_VERSION,
+            "runtimeVersion": super::runtime::OFFICIAL_DENO_VERSION,
         });
         if let Some(mut stdin) = child.stdin.take() {
             let mut line = serde_json::to_vec(&handshake)
@@ -485,15 +515,12 @@ impl Supervisor {
             drop(stdin);
         }
 
-        let mut stream = accept_ipc_connection(&endpoint_path, HANDSHAKE_TIMEOUT)
-            .await
-            .map_err(|e| RpcError::new(bridge::codes::ACTIVATION_FAILED, e))?;
-        verify_handshake_frame(&mut stream, &token, HANDSHAKE_TIMEOUT)
+        let stream = accept_ipc_connection(&listener, &token, HANDSHAKE_TIMEOUT)
             .await
             .map_err(|e| RpcError::new(bridge::codes::ACTIVATION_FAILED, e))?;
 
         let (read_half, write_half) = tokio::io::split(stream);
-        let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(64);
         spawn_writer(write_half, write_rx);
 
         let process = Arc::new(RuntimeProcess {
@@ -567,7 +594,7 @@ impl Supervisor {
             .parent()
             .map(PathBuf::from)
             .unwrap_or_else(|| development.root_path.clone());
-        let node_path = resolved_node_path(&self.app)
+        let deno_path = resolved_deno_path(&self.app)
             .map_err(|error| RpcError::new(bridge::codes::RUNTIME_UNAVAILABLE, error))?;
         let data_dir = if development.use_production_data {
             super::paths::plugin_data_dir(&self.app, &plugin_id)
@@ -579,10 +606,22 @@ impl Supervisor {
             .map_err(|error| RpcError::internal("spawn development runtime", error))?;
         let bootstrap_path = write_bootstrap_script(&self.app)
             .map_err(|error| RpcError::internal("spawn development runtime", error))?;
-        let (endpoint_path, token) = create_ipc_endpoint()
+        let (listener, token) = create_ipc_endpoint()
+            .await
             .map_err(|error| RpcError::internal("spawn development runtime", error))?;
 
-        let mut command = tokio::process::Command::new(&node_path);
+        let mut command = tokio::process::Command::new(&deno_path);
+        let port = listener
+            .local_addr()
+            .map_err(|e| RpcError::internal("ipc address", e))?
+            .port();
+        command.args(
+            development
+                .manifest
+                .permissions
+                .runtime_args(&work_dir, &data_dir, port)
+                .map_err(|e| RpcError::new(bridge::codes::FORBIDDEN, e))?,
+        );
         command
             .arg(&bootstrap_path)
             .current_dir(&work_dir)
@@ -591,6 +630,13 @@ impl Supervisor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         apply_minimal_plugin_runtime_env(&mut command);
+        let cache = super::paths::plugin_runtime_root(&self.app)
+            .map_err(|e| RpcError::internal("runtime cache", e))?
+            .join("cache")
+            .join(&plugin_id);
+        super::paths::ensure_dir(&cache).map_err(|e| RpcError::internal("runtime cache", e))?;
+        command.env("DENO_DIR", cache);
+        apply_declared_env(&mut command, &development.manifest.permissions);
         prevent_plugin_runtime_console_window(&mut command);
         #[cfg(unix)]
         command.process_group(0);
@@ -598,7 +644,7 @@ impl Supervisor {
         let mut child = command.spawn().map_err(|error| {
             RpcError::new(
                 bridge::codes::ACTIVATION_FAILED,
-                format!("spawn development node failed: {error}"),
+                format!("spawn development deno failed: {error}"),
             )
         })?;
         let pid = child.id();
@@ -610,12 +656,12 @@ impl Supervisor {
         }
 
         let handshake = json!({
-            "socketPath": endpoint_path,
+            "socketAddress": {"host": "127.0.0.1", "port": listener.local_addr().map_err(|e| RpcError::internal("ipc address", e))?.port()},
             "token": token,
             "pluginId": plugin_id,
             "mainPath": main_path.display().to_string(),
             "dataPath": data_dir.display().to_string(),
-            "nodeVersion": super::runtime::OFFICIAL_NODE_VERSION,
+            "runtimeVersion": super::runtime::OFFICIAL_DENO_VERSION,
         });
         if let Some(mut stdin) = child.stdin.take() {
             let mut line = serde_json::to_vec(&handshake)
@@ -627,14 +673,11 @@ impl Supervisor {
             }
         }
 
-        let mut stream = accept_ipc_connection(&endpoint_path, HANDSHAKE_TIMEOUT)
-            .await
-            .map_err(|error| RpcError::new(bridge::codes::ACTIVATION_FAILED, error))?;
-        verify_handshake_frame(&mut stream, &token, HANDSHAKE_TIMEOUT)
+        let stream = accept_ipc_connection(&listener, &token, HANDSHAKE_TIMEOUT)
             .await
             .map_err(|error| RpcError::new(bridge::codes::ACTIVATION_FAILED, error))?;
         let (read_half, write_half) = tokio::io::split(stream);
-        let (write_tx, write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(64);
         spawn_writer(write_half, write_rx);
 
         let process = Arc::new(RuntimeProcess {
@@ -675,6 +718,9 @@ impl Supervisor {
             }
             Err(_) => {
                 self.processes.lock().remove(&plugin_id);
+                if let Some(pid) = pid {
+                    kill_process_tree(pid);
+                }
                 Err(RpcError::new(
                     bridge::codes::ACTIVATION_FAILED,
                     "development plugin activation timed out",
@@ -684,48 +730,26 @@ impl Supervisor {
     }
 }
 
-/// Minimal startup environment (design §3.3.1): forward just enough for Node and the plugin's
-/// own child_process spawns, without leaking the host's full env.
 fn apply_minimal_plugin_runtime_env(command: &mut tokio::process::Command) {
-    command.env_clear().env("NODE_ENV", "production");
-    const COMMON: &[&str] = &["PATH", "HOME", "USERPROFILE"];
-    for key in COMMON {
-        if let Ok(value) = std::env::var(key) {
+    command.env_clear();
+    for key in ["SystemRoot", "WINDIR", "TEMP", "TMP"] {
+        if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
-        }
-    }
-    // Node 22+ asserts `ncrypto::CSPRNG` during init; on Windows that requires SystemRoot
-    // (and related OS paths) to be present — a bare PATH/USERPROFILE is not enough.
-    #[cfg(windows)]
-    {
-        const WINDOWS: &[&str] = &[
-            "SystemRoot",
-            "WINDIR",
-            "ComSpec",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "TEMP",
-            "TMP",
-            "HOMEDRIVE",
-            "HOMEPATH",
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-        ];
-        for key in WINDOWS {
-            if let Ok(value) = std::env::var(key) {
-                command.env(key, value);
-            }
         }
     }
 }
 
-/// Prevent Windows from allocating a console for the plugin Node process.
-///
-/// Packaged Tempo is a GUI subsystem app. Spawning `node.exe` (console subsystem)
-/// without `CREATE_NO_WINDOW` makes Windows allocate a visible black console.
-/// `CREATE_NO_WINDOW` means "never create a console" — it does not create-then-hide.
-/// Do not combine with `DETACHED_PROCESS` / `CREATE_NEW_CONSOLE` (those ignore this
-/// flag or force a new visible console).
+fn apply_declared_env(
+    command: &mut tokio::process::Command,
+    policy: &super::permissions::PluginPermissions,
+) {
+    for key in &policy.env {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+}
+
 fn prevent_plugin_runtime_console_window(command: &mut tokio::process::Command) {
     #[cfg(windows)]
     prevent_windows_console_window(command.as_std_mut());
@@ -742,21 +766,22 @@ fn prevent_windows_console_window(command: &mut std::process::Command) {
 
 fn encode_frame(value: &Value) -> Result<Vec<u8>, String> {
     let body = serde_json::to_vec(value).map_err(|e| format!("encode frame: {e}"))?;
+    if body.len() > bridge::MAX_MESSAGE_BYTES {
+        return Err("frame exceeds max message size".into());
+    }
     let mut framed = Vec::with_capacity(4 + body.len());
     framed.extend_from_slice(&(body.len() as u32).to_be_bytes());
     framed.extend_from_slice(&body);
     Ok(framed)
 }
 
-fn encode_and_send(tx: &mpsc::UnboundedSender<Vec<u8>>, value: &Value) -> Result<(), String> {
+fn encode_and_send(tx: &mpsc::Sender<Vec<u8>>, value: &Value) -> Result<(), String> {
     let framed = encode_frame(value)?;
-    tx.send(framed).map_err(|_| "channel closed".to_string())
+    tx.try_send(framed)
+        .map_err(|_| "channel closed".to_string())
 }
 
-fn spawn_writer(
-    mut write_half: tokio::io::WriteHalf<IpcStream>,
-    mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
-) {
+fn spawn_writer(mut write_half: tokio::io::WriteHalf<IpcStream>, mut rx: mpsc::Receiver<Vec<u8>>) {
     tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
             if write_half.write_all(&frame).await.is_err() {
@@ -1014,57 +1039,81 @@ fn random_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// -- Transport (Unix domain socket / Windows named pipe) --------------------------------
-
-#[cfg(unix)]
-pub type IpcStream = tokio::net::UnixStream;
-#[cfg(windows)]
-pub type IpcStream = tokio::net::windows::named_pipe::NamedPipeServer;
-
-#[cfg(unix)]
-fn create_ipc_endpoint() -> Result<(String, String), String> {
-    let dir = plugin_ipc_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create ipc dir: {e}"))?;
-    let name = format!("{}.sock", generate_id());
-    let path = dir.join(name);
-    let _ = std::fs::remove_file(&path);
-    // The socket is bound lazily by `accept_ipc_connection` (tokio::net::UnixListener must be
-    // created on the async runtime); here we only reserve the path + handshake token.
-    Ok((path.display().to_string(), random_token()))
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    #[tokio::test]
+    async fn rejects_wrong_token_then_accepts_real_child() {
+        let (listener, token) = create_ipc_endpoint().await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let child_token = token.clone();
+        let child = tokio::spawn(async move {
+            let mut wrong = IpcStream::connect(address).await.unwrap();
+            wrong
+                .write_all(&encode_frame(&json!({"type":"handshake", "token":"wrong"})).unwrap())
+                .await
+                .unwrap();
+            drop(wrong);
+            let mut real = IpcStream::connect(address).await.unwrap();
+            real.write_all(
+                &encode_frame(&json!({"type":"handshake", "token":child_token})).unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(read_frame(&mut real).await.unwrap().unwrap()["ok"], true);
+        });
+        accept_ipc_connection(&listener, &token, Duration::from_secs(2))
+            .await
+            .unwrap();
+        child.await.unwrap();
+    }
+    #[tokio::test]
+    async fn unauthenticated_listener_times_out() {
+        let (listener, token) = create_ipc_endpoint().await.unwrap();
+        assert!(
+            accept_ipc_connection(&listener, &token, Duration::from_millis(20))
+                .await
+                .is_err()
+        );
+    }
+    #[test]
+    fn outgoing_frames_enforce_limit() {
+        assert!(encode_frame(&json!("x".repeat(bridge::MAX_MESSAGE_BYTES))).is_err());
+    }
 }
 
-#[cfg(unix)]
-async fn accept_ipc_connection(path: &str, timeout: Duration) -> Result<IpcStream, String> {
-    use std::os::unix::fs::PermissionsExt;
-    let listener =
-        tokio::net::UnixListener::bind(path).map_err(|e| format!("bind unix socket: {e}"))?;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    let (stream, _addr) = tokio::time::timeout(timeout, listener.accept())
+// Bind before spawning so no other process can claim the endpoint.
+pub type IpcStream = tokio::net::TcpStream;
+
+async fn create_ipc_endpoint() -> Result<(tokio::net::TcpListener, String), String> {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
-        .map_err(|_| "timed out waiting for plugin runtime to connect".to_string())?
-        .map_err(|e| format!("accept unix socket: {e}"))?;
-    let _ = std::fs::remove_file(path);
-    Ok(stream)
+        .map_err(|e| format!("bind plugin IPC: {e}"))?;
+    Ok((listener, random_token()))
 }
 
-#[cfg(windows)]
-fn create_ipc_endpoint() -> Result<(String, String), String> {
-    let path = format!(r"\\.\pipe\tempo-plugin-{}", generate_id());
-    Ok((path, random_token()))
-}
-
-#[cfg(windows)]
-async fn accept_ipc_connection(path: &str, timeout: Duration) -> Result<IpcStream, String> {
-    use tokio::net::windows::named_pipe::ServerOptions;
-    let server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(path)
-        .map_err(|e| format!("create named pipe: {e}"))?;
-    tokio::time::timeout(timeout, server.connect())
-        .await
-        .map_err(|_| "timed out waiting for plugin runtime to connect".to_string())?
-        .map_err(|e| format!("connect named pipe: {e}"))?;
-    Ok(server)
+async fn accept_ipc_connection(
+    listener: &tokio::net::TcpListener,
+    token: &str,
+    timeout: Duration,
+) -> Result<IpcStream, String> {
+    tokio::time::timeout(timeout, async {
+        for _ in 0..16 {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .map_err(|e| format!("accept plugin IPC: {e}"))?;
+            if verify_handshake_frame(&mut stream, token, Duration::from_millis(500))
+                .await
+                .is_ok()
+            {
+                return Ok(stream);
+            }
+        }
+        Err("too many invalid plugin IPC connections".into())
+    })
+    .await
+    .map_err(|_| "timed out waiting for plugin runtime handshake".to_string())?
 }
 
 async fn verify_handshake_frame(
@@ -1117,7 +1166,7 @@ fn kill_process_tree(pid: u32) {
 fn kill_process_tree(pid: u32) {
     // `taskkill.exe` is itself a console-subsystem application. Reconnect always passes
     // through this cleanup path, so spawning it without CREATE_NO_WINDOW causes the short
-    // console flash even though the Node Runtime process is already hidden.
+    // console flash even though the Deno Runtime process is already hidden.
     let mut command = std::process::Command::new("taskkill");
     command
         .args(["/PID", &pid.to_string(), "/T", "/F"])

@@ -3,6 +3,8 @@
  * Envelope: { "$sca": "<base64>" }
  */
 
+import { Buffer } from "node:buffer";
+
 const TYPED_ARRAY_CTORS = {
   Int8Array,
   Uint8Array,

@@ -64,8 +64,8 @@ UI ------ window.ipcRenderer ------ globalThis.ipcMain ------ Runtime
 | 字段 | 当前值 | 作用 |
 | --- | --- | --- |
 | Tempo | `2.0.1` | 宿主应用版本 |
-| `manifestVersion` | `1` | Manifest 文件格式 |
-| `engines.pluginApi` | `^1.0.0` | Host 注入 API 的兼容范围 |
+| `manifestVersion` | `2` | Manifest 文件格式 |
+| `engines.pluginApi` | `^2.0.0` | Host 注入 API 的兼容范围 |
 | `version` | 由插件维护 | 当前插件包版本 |
 
 插件 API 不再作为单独 npm 包发布，也不跟随 Tempo 应用版本同步。插件只需在 `engines.pluginApi` 中声明自己依赖的 Host API 范围。

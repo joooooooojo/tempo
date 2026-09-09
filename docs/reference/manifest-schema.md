@@ -36,14 +36,14 @@ settings[] ----------------> Tempo 渲染设置界面
 ```json
 {
   "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/1.0.0/plugin-manifest.schema.json",
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "id": "com.example.notes",
   "name": "Notes",
   "version": "1.0.0",
   "description": "管理本地笔记",
   "engines": {
     "tempo": ">=2",
-    "pluginApi": "^1.0.0"
+    "pluginApi": "^2.0.0"
   },
   "kind": "hybrid",
   "main": "main.mjs",
@@ -103,7 +103,7 @@ settings[] ----------------> Tempo 渲染设置界面
 
 | 字段 | 必需 | 说明 |
 | --- | :---: | --- |
-| `manifestVersion` | 是 | 当前固定为 `1` |
+| `manifestVersion` | 是 | 当前固定为 `2` |
 | `id` | 是 | 全局唯一的小写反向域名，如 `com.example.notes` |
 | `name` | 是 | 用户看到的插件名称 |
 | `version` | 是 | 插件包版本 |
@@ -125,7 +125,7 @@ settings[] ----------------> Tempo 渲染设置界面
 :::
 
 ::: warning capabilities 不是沙箱
-`filesystem`、`network`、`process`、`clipboard`、`system` 用于向用户说明用途，不会限制 Runtime 的真实 Node 权限。带 `main` 的插件仍需用户信任。
+`filesystem`、`network`、`process`、`clipboard`、`system` 仅用于说明用途，不会授予权限。Manifest v2 使用 `permissions`：`read`/`write` 仅接受 `$DATA`，`net` 接受明确的 `host:port`，`env` 接受非保留的大写变量名；`host.notify`/`host.externalOpen` 为布尔值，`host.openApps` 为精确 App ID 数组。缺省全部拒绝，未知权限字段拒绝导入。详见 [Runtime](/developer/runtime#发布与信任)。
 :::
 
 ## Apps

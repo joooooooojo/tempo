@@ -44,6 +44,7 @@ pub struct PluginRegistryEntry {
     pub requires_node_runtime: bool,
     #[allow(dead_code)]
     pub main: Option<String>,
+    pub permissions: super::permissions::PluginPermissions,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +114,7 @@ impl PluginHost {
                 _ => entry.root_path.clone(),
             };
             return Some(PluginRegistryEntry {
+                permissions: entry.manifest.permissions.clone(),
                 plugin_id: entry.manifest.id.clone(),
                 version: entry.manifest.version.clone(),
                 package_hash: String::new(),
