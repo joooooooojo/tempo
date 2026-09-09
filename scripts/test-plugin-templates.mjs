@@ -43,7 +43,7 @@ function encode(value) {
 async function runPlugin(t, packageDir, scratch, calls) {
   const manifest = JSON.parse(await readFile(path.join(packageDir, "manifest.json"), "utf8"));
   assert.equal(manifest.manifestVersion, 2);
-  assert.equal(manifest.engines.pluginApi, "^2.0.0");
+  assert.equal(manifest.engines.pluginApi, "^2.1.0");
   const policy = manifest.permissions ?? {};
   const data = await mkdtemp(path.join(scratch, "data-"));
   const sockets = new Set();
@@ -70,7 +70,7 @@ async function runPlugin(t, packageDir, scratch, calls) {
           } else if (frame.type === "request") {
             hostCalls.push(frame.method);
             let result = {};
-            if (frame.method === "notify.show") assert.equal(policy.host?.notify, true, "notification not declared");
+            if (frame.method === "notify.show") result = {};
             else if (frame.method === "storage.plugin.get") result = {value:{"default-who":"Deno"}};
             else throw new Error(`unexpected Host method ${frame.method}`);
             socket.write(encode({type:"response",id:frame.id,ok:true,result}));
@@ -136,7 +136,7 @@ for (const kind of ["ui", "hybrid", "headless"]) {
     if (kind === "hybrid") await runNode("node_modules/vite/bin/vite.js",["build","--config","vite.runtime.config.ts"],project);
     const manifest = JSON.parse(await readFile(path.join(project,"dist/manifest.json"),"utf8"));
     assert.equal(manifest.manifestVersion,2);
-    assert.equal(manifest.engines.pluginApi,"^2.0.0");
+    assert.equal(manifest.engines.pluginApi,"^2.1.0");
     if (kind !== "ui") await t.test("built output executes on restricted Deno",{skip:!deno},async t => {
       const commandId = kind === "hybrid" ? "greet" : "run";
       const toolName = kind === "hybrid" ? "greet-tool" : "run-tool";
@@ -150,7 +150,7 @@ for (const kind of ["ui", "hybrid", "headless"]) {
   });
 }
 
-test("Hello demo runs Command, MCP and IPC with declared write/notify permissions",{skip:!deno},async t => {
+test("Hello demo runs Command, MCP and IPC with declared data write permission",{skip:!deno},async t => {
   const scratch = await mkdtemp(path.join(root,".plugin-template-test-"));
   t.after(() => rm(scratch,{recursive:true,force:true}));
   const calls = [{type:"invoke",id:"command",commandId:"hello",params:{who:"Command"}},

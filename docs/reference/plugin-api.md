@@ -37,6 +37,7 @@ onMounted(() => {
 | `context` / `ready()` | 是 | 否 | 当前页面参数、主题和 Session |
 | `events.on()` / `once()` / `off()` | 是 | 是 | 管理平台广播监听 |
 | `storage` | 是 | 是 | 插件私有持久化存储 |
+| `files` | 是 | 是 | 读写插件私有数据目录 |
 | `settings` | 是 | 是 | 读取宿主渲染的插件设置 |
 | `notify.show()` | 是 | 是 | 系统通知 |
 | `theme.get()` | 是 | 是 | 当前主题 |

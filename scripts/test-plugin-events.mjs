@@ -12,8 +12,49 @@ const window = {
     windowListeners.get(event).add(handler);
   },
 };
-const context = vm.createContext({ console, window });
+const context = vm.createContext({ atob, btoa, console, TextDecoder, TextEncoder, window });
 vm.runInContext(source, context, { filename: "plugin-ui/bridge-client.js" });
+
+const hostFiles = new Map();
+parent.postMessage = (request) => {
+  let result = null;
+  if (request.method === "files.mkdir") {
+    result = null;
+  } else if (request.method === "files.writeText") {
+    hostFiles.set(request.params.path, request.params.base64);
+  } else if (request.method === "files.readText") {
+    result = { base64: hostFiles.get(request.params.path) };
+  } else if (request.method === "files.writeBytes") {
+    hostFiles.set(request.params.path, request.params.base64);
+  } else if (request.method === "files.readBytes") {
+    result = { base64: hostFiles.get(request.params.path) };
+  } else {
+    return;
+  }
+  queueMicrotask(() => {
+    for (const handler of windowListeners.get("message") ?? []) {
+      handler({
+        source: parent,
+        data: {
+          type: "tempo-plugin-rpc-response",
+          id: request.id,
+          ok: true,
+          result,
+        },
+      });
+    }
+  });
+};
+
+await window.tempo.files.mkdir("host");
+await window.tempo.files.writeText("host/ui.txt", "ui-host-api");
+assert.equal(await window.tempo.files.readText("host/ui.txt"), "ui-host-api");
+const uiBytes = vm.runInContext("new Uint8Array([0, 1, 255])", context);
+await window.tempo.files.writeBytes("host/ui.bin", uiBytes);
+assert.deepEqual(
+  Array.from(await window.tempo.files.readBytes("host/ui.bin")),
+  [0, 1, 255],
+);
 
 function dispatch(event, payload) {
   for (const handler of windowListeners.get("message") ?? []) {

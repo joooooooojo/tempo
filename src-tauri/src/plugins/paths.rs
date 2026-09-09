@@ -33,6 +33,21 @@ pub fn plugin_dev_data_dir(app: &AppHandle, project_id: &str) -> Result<PathBuf,
     Ok(plugins_root(app)?.join("dev-data").join(project_id))
 }
 
+pub fn active_plugin_data_dir(
+    app: &AppHandle,
+    host: &super::host::PluginHost,
+    plugin_id: &str,
+) -> Result<PathBuf, String> {
+    if let Some(development) = host
+        .development_plugin(plugin_id)
+        .filter(|entry| !entry.use_production_data)
+    {
+        plugin_dev_data_dir(app, &development.project_id)
+    } else {
+        plugin_data_dir(app, plugin_id)
+    }
+}
+
 pub fn staging_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(plugins_root(app)?.join("_staging"))
 }

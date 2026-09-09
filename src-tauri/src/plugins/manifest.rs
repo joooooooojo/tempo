@@ -72,8 +72,6 @@ pub struct PluginManifest {
     #[serde(default)]
     pub main: Option<String>,
     #[serde(default)]
-    pub capabilities: Vec<String>,
-    #[serde(default)]
     pub permissions: super::permissions::PluginPermissions,
     #[serde(default)]
     pub activation_events: Vec<String>,
@@ -938,7 +936,7 @@ mod tests {
         let raw = include_str!("../../../examples/plugins/com.example.hello/manifest.json");
         let manifest = PluginManifest::parse_str(raw).unwrap();
         assert_eq!(manifest.id, "com.example.hello");
-        assert_eq!(manifest.version, "2.0.1");
+        assert_eq!(manifest.version, "2.0.2");
     }
 
     #[test]

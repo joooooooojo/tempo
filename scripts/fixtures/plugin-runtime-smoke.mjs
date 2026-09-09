@@ -17,6 +17,11 @@ onMounted(() => {
       envelope: typeof scaEncode(original).$sca,
       runtime: tempo.runtime,
     };
+    await tempo.files.mkdir("host", { recursive: true });
+    await tempo.files.writeText("host/probe.txt", "host-api");
+    result.hostFileText = await tempo.files.readText("host/probe.txt");
+    await tempo.files.writeBytes("host/probe.bin", new Uint8Array([0, 1, 255]));
+    result.hostFileBytes = Array.from(await tempo.files.readBytes("host/probe.bin"));
     if (typeof Deno !== "undefined") {
       try {
         await readdir(tempo.paths.data);

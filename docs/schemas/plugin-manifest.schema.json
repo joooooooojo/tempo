@@ -92,22 +92,6 @@
       "$ref": "#/$defs/relativePath",
       "description": "Optional Deno ESM entry: main.mjs (recommended) or main.js. Bundle npm dependencies at build time."
     },
-    "capabilities": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "filesystem",
-          "network",
-          "process",
-          "clipboard",
-          "system"
-        ]
-      },
-      "uniqueItems": true,
-      "default": [],
-      "description": "Disclosure metadata, not a Runtime sandbox boundary."
-    },
     "activationEvents": {
       "type": "array",
       "items": {
@@ -123,6 +107,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "all": {
+          "type": "boolean",
+          "default": false,
+          "description": "Grant every Deno permission. Cannot be combined with read, write, net, or env; also opens managed UI network access."
+        },
         "read": {
           "type": "array",
           "items": {
@@ -154,31 +143,42 @@
             "description": "DENO_*, NODE_*, TEMPO_*, PATH and loader injection variables are reserved."
           },
           "default": []
-        },
-        "host": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "notify": {
-              "type": "boolean",
-              "default": false
-            },
-            "externalOpen": {
-              "type": "boolean",
-              "default": false
-            },
-            "openApps": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "^[^*]+$"
-              },
-              "default": []
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["all"],
+            "properties": {
+              "all": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["read"],
+                  "properties": { "read": { "minItems": 1 } }
+                },
+                {
+                  "required": ["write"],
+                  "properties": { "write": { "minItems": 1 } }
+                },
+                {
+                  "required": ["net"],
+                  "properties": { "net": { "minItems": 1 } }
+                },
+                {
+                  "required": ["env"],
+                  "properties": { "env": { "minItems": 1 } }
+                }
+              ]
             }
           }
         }
-      }
+      ]
     }
   },
   "additionalProperties": true,

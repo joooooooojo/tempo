@@ -133,6 +133,7 @@ declare global {
     readonly mcpTools: TempoMcpToolsApi;
     readonly events: TempoEventsApi;
     readonly storage: TempoStorageApi;
+    readonly files: TempoFilesApi;
     readonly settings: TempoSettingsApi;
     readonly notify: TempoNotifyApi;
     readonly theme: TempoRuntimeThemeApi;
@@ -194,6 +195,35 @@ declare global {
     set(key: string, value: TempoJsonValue): Promise<void>;
     delete(key: string): Promise<void>;
     list(): Promise<string[]>;
+  }
+
+  type TempoFileType = "file" | "directory" | "other";
+
+  interface TempoFileStat {
+    path: string;
+    type: TempoFileType;
+    size: number | null;
+    modifiedAt: string | null;
+  }
+
+  interface TempoFileEntry extends TempoFileStat {
+    name: string;
+  }
+
+  interface TempoFileOperationOptions {
+    recursive?: boolean;
+  }
+
+  interface TempoFilesApi {
+    readText(path: string): Promise<string>;
+    writeText(path: string, content: string): Promise<void>;
+    readBytes(path: string): Promise<Uint8Array>;
+    writeBytes(path: string, bytes: Uint8Array): Promise<void>;
+    list(path?: string): Promise<TempoFileEntry[]>;
+    stat(path: string): Promise<TempoFileStat | null>;
+    mkdir(path: string, options?: TempoFileOperationOptions): Promise<void>;
+    remove(path: string, options?: TempoFileOperationOptions): Promise<void>;
+    rename(from: string, to: string): Promise<void>;
   }
 
   interface TempoSettingsApi {

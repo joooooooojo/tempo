@@ -12,7 +12,12 @@ import fs from "node:fs";
 function validatePermissions(policy = {}, pluginId) {
   const invalid = message => fail(`${pluginId}: permissions ${message}`);
   if (!policy || typeof policy !== "object" || Array.isArray(policy)) return invalid("必须是对象");
-  const known = ["read", "write", "net", "env", "host"];
+  // `host` is accepted only for packages created before Host API grants were removed.
+  const known = ["all", "read", "write", "net", "env", "host"];
+  if (policy.all !== undefined && typeof policy.all !== "boolean") invalid("all 必须是布尔值");
+  if (policy.all === true && ["read", "write", "net", "env"].some(key => Array.isArray(policy[key]) && policy[key].length > 0)) {
+    invalid("all 不能与 read、write、net 或 env 同时声明");
+  }
   for (const key of Object.keys(policy)) if (!known.includes(key)) invalid(`不支持 ${key}`);
   for (const key of ["read", "write", "net", "env"]) {
     const scopes = policy[key] ?? [];
@@ -24,16 +29,11 @@ function validatePermissions(policy = {}, pluginId) {
         try {
           const url = new URL(`http://${scope}`);
           const port = scope.slice(scope.lastIndexOf(":") + 1);
-          if (!/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535 || !url.hostname || url.username || url.password || url.pathname !== "/" || url.search || url.hash || /[\s,/*\\@%]/.test(scope)) throw new Error();
+          if (!/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535 || !url.hostname || url.username || url.password || url.pathname !== "/" || url.search || url.hash || /[\s,/*\\@%'";`<>]/.test(scope)) throw new Error();
         } catch { invalid(`net 需要明确的 host:port: ${scope}`); }
       }
     }
   }
-  const host = policy.host ?? {};
-  if (!host || typeof host !== "object" || Array.isArray(host)) return invalid("host 必须是对象");
-  for (const key of Object.keys(host)) if (!["notify", "externalOpen", "openApps"].includes(key)) invalid(`host 不支持 ${key}`);
-  for (const key of ["notify", "externalOpen"]) if (key in host && typeof host[key] !== "boolean") invalid(`host.${key} 必须是布尔值`);
-  if ("openApps" in host && (!Array.isArray(host.openApps) || host.openApps.some(id => typeof id !== "string" || !id || id.includes("*")))) invalid("host.openApps 需要精确 App ID 数组");
 }
 import path from "node:path";
 import { fileURLToPath } from "node:url";

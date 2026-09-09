@@ -43,7 +43,7 @@ settings[] ----------------> Tempo 渲染设置界面
   "description": "管理本地笔记",
   "engines": {
     "tempo": ">=2",
-    "pluginApi": "^2.0.0"
+    "pluginApi": "^2.1.0"
   },
   "kind": "hybrid",
   "main": "main.mjs",
@@ -113,7 +113,7 @@ settings[] ----------------> Tempo 渲染设置界面
 | `main` | 条件 | Runtime 的包内 `.js` 或 `.mjs` 相对路径 |
 | `activationEvents` | 否 | 当前只支持 `onStartup`；需要 `main` |
 | `platforms` | 否 | 适用宿主：`macos`、`windows`、`linux`；省略表示当前已支持的平台（macOS + Windows） |
-| `capabilities` | 否 | 插件能力用途说明 |
+| `permissions` | 否 | Deno 文件、网络、环境变量权限及托管 UI 网络白名单 |
 | `contributes` | 否 | Apps、Commands、Actions、MCP Tools、Settings |
 
 `author`、`publisher`、`description`、`homepage`、`repository`、`license`、`categories` 是可选展示信息。
@@ -124,8 +124,8 @@ settings[] ----------------> Tempo 渲染设置界面
 `linux` 已预留在 schema 中，但 Tempo 宿主尚未支持。开发助手里 Linux 选项会置灰；手写 `platforms: ["linux"]` 可通过校验，但当前无法在 Linux 上运行。
 :::
 
-::: warning capabilities 不是沙箱
-`filesystem`、`network`、`process`、`clipboard`、`system` 仅用于说明用途，不会授予权限。Manifest v2 使用 `permissions`：`read`/`write` 仅接受 `$DATA`，`net` 接受明确的 `host:port`，`env` 接受非保留的大写变量名；`host.notify`/`host.externalOpen` 为布尔值，`host.openApps` 为精确 App ID 数组。缺省全部拒绝，未知权限字段拒绝导入。详见 [Runtime](/developer/runtime#发布与信任)。
+::: warning permissions 是 Deno 与 WebView 网络边界
+Manifest v2 使用 `permissions`：缺省关闭 Deno 敏感权限；`read`/`write` 仅接受 `$DATA`，`net` 接受明确的 `host:port` 并同时约束 Deno Runtime 与 Tempo 托管的插件 UI，`env` 接受非保留的大写变量名。`all: true` 授予 Deno 完全访问并开放托管 UI 网络，不能与细粒度权限同时声明。未知权限字段拒绝导入。Tempo Host API 和限定在插件数据目录的 `tempo.files` 不需要 Manifest 授权。详见 [Runtime](/developer/runtime#发布与信任)。
 :::
 
 ## Apps

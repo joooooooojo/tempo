@@ -600,11 +600,11 @@ export interface TrustRepositoryConnectionInput {
 }
 
 export interface PluginPermissions {
+  all: boolean;
   read: string[];
   write: string[];
   net: string[];
   env: string[];
-  host: { notify: boolean; externalOpen: boolean; openApps: string[] };
 }
 
 export interface InstalledPlugin {

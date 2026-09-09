@@ -1,10 +1,6 @@
+import type { PluginPermissions } from "@/types";
+
 export type PluginKind = "ui" | "headless" | "hybrid";
-export type PluginCapability =
-  | "filesystem"
-  | "network"
-  | "process"
-  | "clipboard"
-  | "system";
 export type PluginPlatform = "macos" | "windows" | "linux";
 export type RectValue = number | string;
 
@@ -72,7 +68,7 @@ export interface EditablePluginSetting {
 }
 
 export interface EditablePluginManifest {
-  permissions?: Partial<import("@/types").PluginPermissions>;
+  permissions?: Partial<PluginPermissions>;
   $schema?: string;
   manifestVersion: number;
   id: string;
@@ -88,7 +84,6 @@ export interface EditablePluginManifest {
   license?: string;
   categories?: string[];
   platforms?: PluginPlatform[];
-  capabilities?: PluginCapability[];
   activationEvents?: Array<"onStartup">;
   engines: {
     tempo: string;
@@ -114,6 +109,14 @@ export function parseEditableManifest(
     if (!value || typeof value !== "object" || Array.isArray(value))
       return null;
     const manifest = value as Partial<EditablePluginManifest>;
+    delete manifest.capabilities;
+    if (
+      manifest.permissions &&
+      typeof manifest.permissions === "object" &&
+      !Array.isArray(manifest.permissions)
+    ) {
+      delete (manifest.permissions as Record<string, unknown>).host;
+    }
     if (!manifest.engines || typeof manifest.engines !== "object") return null;
     if (!manifest.contributes || typeof manifest.contributes !== "object")
       return null;

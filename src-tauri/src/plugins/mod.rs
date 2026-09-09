@@ -2,6 +2,7 @@
 //! and the `tempo-plugin://` UI resource protocol.
 
 pub mod bridge;
+pub mod files;
 pub mod host;
 pub mod host_events;
 pub mod ids;

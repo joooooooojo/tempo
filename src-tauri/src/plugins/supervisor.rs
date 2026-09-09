@@ -478,14 +478,13 @@ impl Supervisor {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        apply_minimal_plugin_runtime_env(&mut command);
+        apply_plugin_runtime_env(&mut command, &manifest.permissions);
         let cache = super::paths::plugin_runtime_root(&self.app)
             .map_err(|e| RpcError::internal("runtime cache", e))?
             .join("cache")
             .join(&plugin_id);
         super::paths::ensure_dir(&cache).map_err(|e| RpcError::internal("runtime cache", e))?;
         command.env("DENO_DIR", cache);
-        apply_declared_env(&mut command, &manifest.permissions);
         prevent_plugin_runtime_console_window(&mut command);
         #[cfg(unix)]
         {
@@ -633,14 +632,13 @@ impl Supervisor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        apply_minimal_plugin_runtime_env(&mut command);
+        apply_plugin_runtime_env(&mut command, &development.manifest.permissions);
         let cache = super::paths::plugin_runtime_root(&self.app)
             .map_err(|e| RpcError::internal("runtime cache", e))?
             .join("cache")
             .join(&plugin_id);
         super::paths::ensure_dir(&cache).map_err(|e| RpcError::internal("runtime cache", e))?;
         command.env("DENO_DIR", cache);
-        apply_declared_env(&mut command, &development.manifest.permissions);
         prevent_plugin_runtime_console_window(&mut command);
         #[cfg(unix)]
         command.process_group(0);
@@ -741,6 +739,17 @@ fn apply_minimal_plugin_runtime_env(command: &mut tokio::process::Command) {
             command.env(key, value);
         }
     }
+}
+
+fn apply_plugin_runtime_env(
+    command: &mut tokio::process::Command,
+    policy: &super::permissions::PluginPermissions,
+) {
+    if policy.all {
+        return;
+    }
+    apply_minimal_plugin_runtime_env(command);
+    apply_declared_env(command, policy);
 }
 
 fn apply_declared_env(

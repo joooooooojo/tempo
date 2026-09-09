@@ -34,6 +34,7 @@ async function exercise(t, { engine = "node", legacy = false, mode = "success", 
   const sockets = new Set();
   const timers = new Set();
   const frames = [];
+  const hostFiles = new Map();
   let acknowledged = false;
   let premature = false;
   const pending = new Set(["probe", "mcp", "ipc"]);
@@ -61,6 +62,22 @@ async function exercise(t, { engine = "node", legacy = false, mode = "success", 
           socket.write(encode({ type: "invoke", id: "probe", commandId: "probe", params: { runExecutable: process.execPath } }));
           socket.write(encode({ type: "mcp-invoke", id: "mcp", toolName: "echo", arguments: { value: 42 } }));
           socket.write(encode({ type: "ipc-invoke", id: "ipc", channel: "echo", args: ["from-ui"] }));
+        } else if (frame.type === "request") {
+          let result = null;
+          if (frame.method === "files.mkdir") {
+            result = null;
+          } else if (frame.method === "files.writeText") {
+            hostFiles.set(frame.params.path, frame.params.base64);
+          } else if (frame.method === "files.readText") {
+            result = { base64: hostFiles.get(frame.params.path) };
+          } else if (frame.method === "files.writeBytes") {
+            hostFiles.set(frame.params.path, frame.params.base64);
+          } else if (frame.method === "files.readBytes") {
+            result = { base64: hostFiles.get(frame.params.path) };
+          } else {
+            throw new Error("unexpected Host method " + frame.method);
+          }
+          socket.write(encode({ type: "response", id: frame.id, ok: true, result }));
         } else if (frame.type === "response" && pending.delete(frame.id)) {
           if (pending.size === 0) socket.write(encode({ type: "shutdown" }));
         }
@@ -115,6 +132,8 @@ async function exercise(t, { engine = "node", legacy = false, mode = "success", 
   assert.equal(response.result.date, "2026-01-01T00:00:00.000Z");
   assert.deepEqual(response.result.bytes, [111, 107]);
   assert.equal(response.result.envelope, "string");
+  assert.equal(response.result.hostFileText, "host-api");
+  assert.deepEqual(response.result.hostFileBytes, [0, 1, 255]);
   assert.equal(frames.find(frame => frame.id === "mcp")?.ok, true);
   assert.equal(frames.find(frame => frame.id === "mcp")?.result.value, 42);
   assert.equal(frames.find(frame => frame.id === "ipc")?.ok, true);

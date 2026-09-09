@@ -32,13 +32,61 @@ const BRIDGE_SCRIPT_TAG: &str = concat!(
     r#"<script src="__tempo__/client.js"></script>"#,
 );
 
-/// Baseline CSP (design §5.2). Plugins cannot loosen `script-src`/`object-src`/`frame-src`/
-/// `base-uri`; we simply always serve this baseline since Phase 1 has no per-plugin override.
-pub const BASELINE_CSP: &str =
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-img-src 'self' data: blob: https:; media-src 'self' blob:; \
-connect-src https: http: ws: wss:; \
-object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'";
+/// Baseline CSP (design §5.2). Network destinations are added from the same exact `host:port`
+/// grants used by the Deno Runtime. Remote scripts, styles, frames, and forms remain disabled.
+fn csp_for_permissions(permissions: &super::permissions::PluginPermissions) -> String {
+    if permissions.all {
+        return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+img-src 'self' data: blob: http: https:; media-src 'self' blob: http: https:; \
+font-src 'self' data: http: https:; connect-src 'self' http: https: ws: wss:; \
+object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+            .into();
+    }
+    let mut web_sources = Vec::new();
+    let mut connect_sources = Vec::new();
+    for endpoint in &permissions.net {
+        let Some(authority) = canonical_net_authority(endpoint) else {
+            continue;
+        };
+        let http = format!("http://{authority}");
+        let https = format!("https://{authority}");
+        web_sources.extend([http.clone(), https.clone()]);
+        connect_sources.extend([
+            http,
+            https,
+            format!("ws://{authority}"),
+            format!("wss://{authority}"),
+        ]);
+    }
+
+    let web_suffix = if web_sources.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", web_sources.join(" "))
+    };
+    let connect_suffix = if connect_sources.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", connect_sources.join(" "))
+    };
+    format!(
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+img-src 'self' data: blob:{web_suffix}; media-src 'self' blob:{web_suffix}; \
+font-src 'self' data:{web_suffix}; connect-src 'self'{connect_suffix}; \
+object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    )
+}
+
+fn canonical_net_authority(endpoint: &str) -> Option<String> {
+    let parsed = url::Url::parse(&format!("http://{endpoint}")).ok()?;
+    let host = match parsed.host()? {
+        url::Host::Domain(domain) => domain.to_string(),
+        url::Host::Ipv4(address) => address.to_string(),
+        url::Host::Ipv6(address) => format!("[{address}]"),
+    };
+    let (_, port) = endpoint.rsplit_once(':')?;
+    Some(format!("{host}:{}", port.parse::<u16>().ok()?))
+}
 
 /// Stable, collision-resistant identifier for a plugin usable in a URL path segment. Not a
 /// secret — only used so plugin resource URLs don't leak the raw reverse-DNS id verbatim and so
@@ -156,11 +204,12 @@ fn ok_bytes(
     bytes: Vec<u8>,
     head_only: bool,
     no_store: bool,
+    csp: &str,
 ) -> Response<Vec<u8>> {
     let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
-        .header(CONTENT_SECURITY_POLICY, BASELINE_CSP);
+        .header(CONTENT_SECURITY_POLICY, csp);
     if no_store {
         builder = builder.header(CACHE_CONTROL, "no-store");
     }
@@ -237,6 +286,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
         return empty_response(StatusCode::NOT_FOUND);
     };
     let development = entry.package_hash.is_empty();
+    let csp = csp_for_permissions(&entry.permissions);
 
     if let Some(view_instance_id) = view_instance_id {
         let Some(view) = host.view(&view_instance_id) else {
@@ -258,6 +308,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
             BRIDGE_SCA_SOURCE.as_bytes().to_vec(),
             head_only,
             development,
+            &csp,
         );
     }
     if rel_path == BRIDGE_CLIENT_PATH {
@@ -266,6 +317,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
             BRIDGE_CLIENT_SOURCE.as_bytes().to_vec(),
             head_only,
             development,
+            &csp,
         );
     }
     if is_reserved_host_path(&rel_path) {
@@ -283,7 +335,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
     let content_type = content_type_for(&rel_path);
 
     if head_only {
-        return ok_bytes(content_type, Vec::new(), true, development);
+        return ok_bytes(content_type, Vec::new(), true, development, &csp);
     }
 
     match std::fs::read(&canonical_path) {
@@ -293,7 +345,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
             } else {
                 bytes
             };
-            ok_bytes(content_type, body, false, development)
+            ok_bytes(content_type, body, false, development, &csp)
         }
         Err(error) => {
             tracing::debug!(plugin_id = %entry.plugin_id, error = %error, "failed to read plugin asset");
@@ -468,8 +520,50 @@ mod tests {
 
     #[test]
     fn development_resources_disable_browser_cache() {
-        let response = ok_bytes("text/javascript", b"export {};".to_vec(), false, true);
+        let csp = csp_for_permissions(&Default::default());
+        let response = ok_bytes("text/javascript", b"export {};".to_vec(), false, true, &csp);
         assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+    }
+
+    #[test]
+    fn ui_network_is_denied_without_a_manifest_grant() {
+        let csp = csp_for_permissions(&Default::default());
+        assert!(csp.contains("connect-src 'self';"));
+        assert!(csp.contains("img-src 'self' data: blob:;"));
+        assert!(!csp.contains("connect-src https:"));
+        assert!(!csp.contains("img-src 'self' data: blob: https:"));
+    }
+
+    #[test]
+    fn ui_network_uses_the_runtime_host_port_grants() {
+        let permissions = super::super::permissions::PluginPermissions {
+            net: vec!["api.example.com:443".into(), "[::1]:8080".into()],
+            ..Default::default()
+        };
+        let csp = csp_for_permissions(&permissions);
+        for source in [
+            "https://api.example.com:443",
+            "wss://api.example.com:443",
+            "http://[::1]:8080",
+            "ws://[::1]:8080",
+        ] {
+            assert!(csp.contains(source), "missing {source} in {csp}");
+        }
+        assert!(csp.contains("script-src 'self';"));
+        assert!(csp.contains("frame-src 'none';"));
+    }
+
+    #[test]
+    fn allow_all_opens_ui_network_without_enabling_remote_code() {
+        let permissions = super::super::permissions::PluginPermissions {
+            all: true,
+            ..Default::default()
+        };
+        let csp = csp_for_permissions(&permissions);
+        assert!(csp.contains("connect-src 'self' http: https: ws: wss:;"));
+        assert!(csp.contains("img-src 'self' data: blob: http: https:;"));
+        assert!(csp.contains("script-src 'self';"));
+        assert!(csp.contains("frame-src 'none';"));
     }
 
     #[test]

@@ -34,7 +34,7 @@ pub mod codes {
 }
 
 /// Host Bridge API semver (design §7.2) — independent from the Tempo product version.
-pub const HOST_API_VERSION: &str = "2.0.0";
+pub const HOST_API_VERSION: &str = "2.1.0";
 
 /// Max single-message size (design §7): 1 MiB.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -318,19 +318,10 @@ async fn dispatch_host_method(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
-    if matches!(method, "notify.show" | "external.open" | "app.open") {
-        let entry = host
-            .plugin_entry(&ctx.plugin_id)
-            .ok_or_else(|| RpcError::new(codes::FORBIDDEN, "plugin policy unavailable"))?;
-        let allowed = entry
-            .permissions
-            .allows_host(method, params.get("appId").and_then(Value::as_str));
-        if !allowed {
-            return Err(RpcError::new(
-                codes::FORBIDDEN,
-                format!("permission denied: {method}"),
-            ));
-        }
+    if method.starts_with("files.") {
+        let root = super::paths::active_plugin_data_dir(app, host, &ctx.plugin_id)
+            .map_err(|error| RpcError::internal("plugin files", error))?;
+        return super::files::dispatch(&root, method, &params);
     }
     match method {
         "mainPanel.hide" => {

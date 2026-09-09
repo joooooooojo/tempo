@@ -4,8 +4,8 @@
 
 ## 1. 决策与范围
 
-- 插件后台唯一引擎为受管理的 Deno 2.9.6，无 Node 回退、无 `-A`。
-- Manifest v2、Host API 2.0.0、模板 2.0.0。应用版本保持 2.2.6，旧客户端因未知 Manifest 版本拒绝新插件。
+- 插件后台唯一引擎为受管理的 Deno 2.9.6，无 Node 回退；默认细粒度授权，也允许 Manifest 显式选择 `-A`。
+- Manifest v2、Host API 2.1.0、最新模板 2.0.4。应用版本保持 2.2.6，旧客户端因 Host API 版本范围拒绝依赖新 API 的插件。
 - Node/npm/TypeScript/Vite 保留为构建工具。用户设备不执行插件 npm install 或安装脚本。
 - 采用稳定 CLI 权限，不使用实验性 Permission Broker。
 - 每插件独立进程，Rust Supervisor 管生命周期；所有平台使用预绑定 loopback TCP + stdin token。
@@ -37,30 +37,27 @@
   "id": "com.example.notes",
   "name": "Notes",
   "version": "2.0.0",
-  "engines": { "tempo": ">=2.2.6", "pluginApi": "^2.0.0" },
+  "engines": { "tempo": ">=2.2.6", "pluginApi": "^2.1.0" },
   "main": "main.mjs",
   "permissions": {
     "read": ["$DATA"],
     "write": ["$DATA"],
     "net": ["api.example.com:443"],
-    "env": ["PLUGIN_API_KEY"],
-    "host": { "notify": true, "externalOpen": false, "openApps": [] }
+    "env": ["PLUGIN_API_KEY"]
   }
 }
 ```
 
-权限缺省均为空或 false。未知权限字段拒绝导入；capabilities 只作说明。v2 后台引擎唯一为 Deno，无 runtime.engine/profile 字段。
+权限缺省均为空。未知权限字段拒绝导入。v2 后台引擎唯一为 Deno，无 runtime.engine/profile 字段。
 
 | 权限 | 定义 |
 | --- | --- |
+| all | Deno `-A` 完全访问；与其它权限字段互斥，并开放托管 UI 网络 |
 | read/write | 仅 `$DATA`，宿主按连接身份解析为生产或开发数据目录 |
 | net | 精确 host:port、端口 1–65535，无 URL/凭证/通配符/分隔符；可显式声明本机服务 |
 | env | 声明的大写变量从宿主环境传入；拒绝 DENO_、NODE_、TEMPO_、LD_、DYLD_ 前缀及 PATH |
-| host.notify | 系统通知 |
-| host.externalOpen | 现有 http(s)/mailto 外部打开接口，不开放其他协议 |
-| host.openApps | 精确目标 App ID，无通配符 |
 
-包目录读取和专用 IPC 端口是宿主必要授权。tempo.storage 按插件身份隔离，无需磁盘权限。
+包目录读取和专用 IPC 端口是宿主必要授权。`tempo.storage` 按插件身份隔离；`tempo.files` 由宿主限定到插件数据目录，两者均无需 Deno 磁盘权限。Tempo Host API 不做 Manifest 级授权；各方法仍校验参数、调用位置、私有文件路径和允许的 URL scheme。
 
 批准复用 pluginId + version + packageHash 信任记录：Manifest 参与哈希，权限随包被绑定，无独立可漂移的策略副本。信任前、启用前、贡献加载与启动时校验包。升级显示新旧权限并重新确认；撤权停用、停止进程、关闭窗口和释放订阅。
 
@@ -79,9 +76,11 @@ deno run --no-config --no-lock --no-prompt --cached-only
   <host-bootstrap.mjs>
 ```
 
-非空可选权限才输出 allow 参数，绝不生成裸 allow。路径 canonicalize 后拒绝逗号/换行等列表分隔歧义。run/ffi/sys 未授权，no-prompt 静默拒绝交互提权。
+非空可选权限才输出 allow 参数，绝不生成裸 allow。路径 canonicalize 后拒绝逗号/换行等列表分隔歧义。细粒度模式不授予 sys、run、ffi 和 import，no-prompt 静默拒绝交互提权。
 
-env_clear 清空继承环境，仅保留 OS/temp 必需变量、声明变量和 DENO_DIR。缓存位于 plugin-runtime/cache/<pluginId>，在插件数据可写范围之外；不继承用户全局 npm/cache/broker 配置。开发目录本身仍是用户可编辑的可信工作区。
+`permissions.all: true` 改用 `deno run --no-config --no-lock --no-prompt -A`，不再添加 cached-only、no-remote、no-npm 和 node-modules-dir 限制，并继承宿主环境。它允许远程模块、运行时 npm、子进程和 FFI，因此信任提示必须展示完整权限对象。
+
+细粒度模式通过 env_clear 清空继承环境，仅保留 OS/temp 必需变量、声明变量和 DENO_DIR。缓存位于 plugin-runtime/cache/<pluginId>，在插件数据可写范围之外；不继承用户全局 npm/cache/broker 配置。开发目录本身仍是用户可编辑的可信工作区。
 
 ## 5. IPC 与生命周期
 
@@ -108,7 +107,7 @@ tempo.runtime 为 `{ engine: "deno", version, nodeCompatVersion }`。测试保�
 ## 7. 安全边界与剩余风险
 
 - 静态模块图存在 Deno 权限豁免。本次禁用远程/npm 下载，但未实现 AST 级包外静态模块闭包拒绝；不能声称 read 权限阻止所有模块方式读取包外源码。
-- WebView CSP/网络独立管理，Deno net 白名单不是 Hybrid 整体网络白名单。信任提示明确说明。
+- Tempo 托管的 WebView 通过 CSP 复用 Deno 网络策略；`all` 开放 HTTP(S)/WS(S) 与远程图片、媒体和字体，远程脚本、样式、frame 仍禁止。外部开发服务器 UI 不受该策略约束。
 - 没有 OS 级 CPU/内存/磁盘配额。进程隔离、超时、帧上限和有界队列不等于防止全部资源耗尽。
 - 生产不转发第三方 stdout/stderr；激活错误沿 ready.error 返回。早期启动故障可能仅显示握手失败，开发连接可看日志。
 - 本地同权限用户可更改 Tempo 自身文件，不在插件运行时防护范围内。
@@ -153,10 +152,10 @@ macOS/Linux 实机安装、完整 Tauri WebView 工作流、性能基线和资�
 2. Windows node:net 管道在受限 Deno 要求 all access，改预绑定 TCP，不扩大权限。
 3. 固定版本为 Deno 2.9.6，Node 兼容版本单独显示。
 4. 原草案 permissions.runtime/sys/runtime.profile 未采用，以实际平铺 Rust/schema 合同为准。
-5. Host 权限来自已校验注册表快照，新增升级权限确认与撤权清理。
+5. Host API 不做 Manifest 级权限控制；保留接口参数、调用位置与 URL scheme 校验。
 6. 修复原停用删除私有 storage 的行为，避免迁移误删数据。
 7. 修复空权限扩大、环境注入、列表分隔符、安装覆盖旧版本等风险。
-8. 模板单独发布 2.0.0、Host API 升主版本，历史 1.x 不重写。
+8. 模板单独发布 2.0.0、Host API 升主版本，历史 1.x 不重写；新增 `tempo.files` 时 Host API 升至 2.1.0、模板发布 2.0.4。
 9. 不把构建成功/smoke 等同于全兼容、OS 沙箱或跨平台验收。
 10. 开发连接期间修改权限/身份/入口要求先断开再保存，防止权限显示和正在运行的进程策略不同步。
 11. 核对启动中/停止中的锁状态，阻止此时卸载 Deno；撤权后的 Bridge 调用立即拒绝。

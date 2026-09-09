@@ -562,7 +562,6 @@ pub fn ensure_repository_tables(conn: &Connection) -> Result<(), String> {
           kind TEXT NOT NULL,
           categories_json TEXT NOT NULL DEFAULT '[]',
           platforms_json TEXT NOT NULL DEFAULT '[]',
-          capabilities_json TEXT NOT NULL DEFAULT '[]',
           engine_tempo TEXT NOT NULL,
           engine_plugin_api TEXT NOT NULL,
           requires_node_runtime INTEGER NOT NULL DEFAULT 0,
@@ -2013,10 +2012,10 @@ fn sync_repository(
                     "INSERT INTO plugin_repository_plugins (
                        repository_id, plugin_id, plugin_root, version, package_hash, name,
                        publisher, description, kind, categories_json, platforms_json,
-                       capabilities_json, engine_tempo, engine_plugin_api, requires_node_runtime,
+                       engine_tempo, engine_plugin_api, requires_node_runtime,
                        icon_data_url, compatible, incompatible_reason, source_commit, indexed_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                               ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                               ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                     params![
                         repository_id,
                         record.plugin_id,
@@ -2030,8 +2029,6 @@ fn sync_repository(
                         serde_json::to_string(&record.manifest.categories)
                             .unwrap_or_else(|_| "[]".into()),
                         serde_json::to_string(&record.manifest.platforms)
-                            .unwrap_or_else(|_| "[]".into()),
-                        serde_json::to_string(&record.manifest.capabilities)
                             .unwrap_or_else(|_| "[]".into()),
                         record.manifest.engines.tempo,
                         record.manifest.engines.plugin_api,
@@ -2979,11 +2976,11 @@ mod tests {
             conn.execute(
                 "INSERT INTO plugin_repository_plugins (
                    repository_id, plugin_id, plugin_root, version, package_hash, name,
-                   kind, categories_json, platforms_json, capabilities_json,
+                   kind, categories_json, platforms_json,
                    engine_tempo, engine_plugin_api, requires_node_runtime,
                    compatible, source_commit, indexed_at
                  ) VALUES (?1, 'com.example.fixed', 'plugins/fixed', '2.0.0', ?2,
-                           'Fixed Plugin', 'ui', '[]', '[]', '[]', '*', '*', 0, 1,
+                           'Fixed Plugin', 'ui', '[]', '[]', '*', '*', 0, 1,
                            '0123456789012345678901234567890123456789', ?3)",
                 params![repository_id, hash, chrono::Utc::now().to_rfc3339()],
             )

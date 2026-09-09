@@ -3,7 +3,7 @@
   "manifestVersion": 2,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "engines": {
     "tempo": ">=2.2.6",
     "pluginApi": "^2.0.0"
@@ -18,9 +18,6 @@
     "tools"
   ],
   "main": "main.mjs",
-  "capabilities": [
-    "filesystem"
-  ],
   "contributes": {
     "apps": [
       {
@@ -208,9 +205,6 @@
     ]
   },
   "permissions": {
-    "write": ["$DATA"],
-    "host": {
-      "notify": true
-    }
+    "write": ["$DATA"]
   }
 }

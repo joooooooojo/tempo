@@ -191,7 +191,7 @@ onMounted(() => {
 
 Tempo 不会替插件安装依赖或编译 TypeScript。模板的 Vite 配置会把依赖打进 `main.mjs`，并把 Manifest 复制到 `dist`。
 
-带 `main` 的插件需要安装 Deno 运行时、信任插件并启用。Manifest 必须为 v2，权限默认拒绝；`capabilities` 仍只是用途说明。
+带 `main` 的插件需要安装 Deno 运行时、信任插件并启用。Manifest 必须为 v2，Deno 权限默认拒绝。
 
 ```json
 {
@@ -199,14 +199,27 @@ Tempo 不会替插件安装依赖或编译 TypeScript。模板的 Vite 配置会
     "read": ["$DATA"],
     "write": ["$DATA"],
     "net": ["api.example.com:443"],
-    "env": ["PLUGIN_API_KEY"],
-    "host": { "notify": true, "externalOpen": false, "openApps": [] }
+    "env": ["PLUGIN_API_KEY"]
   }
 }
 ```
 
-`$DATA` 对应 `tempo.paths.data`；包文件读取和专用 IPC 端点由宿主授予。使用 `tempo.storage` 不需要磁盘权限。网络只接受明确的 `host:port`，环境变量按声明从宿主启动环境中传入，保留的运行时配置变量不可声明。子进程、FFI、原生扩展及运行时 npm/远程下载不开放。
+`$DATA` 对应 `tempo.paths.data`；包文件读取和专用 IPC 端点由宿主授予。使用 `tempo.storage` 或 `tempo.files` 不需要 Deno 磁盘权限，其中 `tempo.files` 始终把路径限定在当前插件的数据目录。网络只接受明确的 `host:port`，同一白名单同时用于 Deno Runtime 和 Tempo 托管的插件 UI；环境变量按声明从宿主启动环境中传入，保留的运行时配置变量不可声明。Tempo Host API 不需要 Manifest 授权，仍会执行参数、调用位置、私有目录边界和 URL scheme 等接口校验。
+
+Deno 2.9 提供 `read`、`write`、`net`、`env`、`sys`、`run`、`ffi` 和 `import` 权限开关。细粒度模式只开放声明的 `read`、`write`、`net`、`env`，`sys`、子进程、FFI、远程导入和运行时 npm 下载保持关闭。
+
+确实需要全部 Deno 能力时，可以单独声明：
+
+```json
+{
+  "permissions": {
+    "all": true
+  }
+}
+```
+
+`all: true` 使用 Deno `-A`，允许读取和写入任意文件、访问任意网络和环境变量、系统信息、子进程、FFI、远程模块及运行时 npm 包，并让 Runtime 继承宿主环境。它不能与 `read`、`write`、`net` 或 `env` 同时声明；托管 UI 的网络访问也会完全开放，但远程脚本、样式和 iframe 仍由 CSP 禁止。
 
 Node/npm/TypeScript/Vite 仍用于构建。内联纯 JS npm 依赖的 ESM `main.mjs` 可以直接在 Deno 执行；动态 require、外置 node_modules、Electron API、`.node` 和 Node 打包的原生 exe 不在支持范围。对最终产物进行测试，不以打包成功作为兼容证明。
 
-UI 网络由 WebView 管理，不受 Deno 网络权限控制。Deno 的静态模块加载有权限豁免，因此这些权限不是 OS 级隔离，也不保证防止恶意模块读取包外源码。只安装信任来源的插件。
+Tempo 托管的插件 UI 通过 CSP 使用同一网络策略；连接到外部开发服务器的 UI 由开发服务器自身策略负责。Deno 的权限不是 OS 级隔离，`all: true` 等同于信任插件代码以当前用户权限执行。只安装信任来源的插件。

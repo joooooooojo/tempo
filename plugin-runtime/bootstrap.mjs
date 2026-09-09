@@ -549,6 +549,50 @@ function buildTempo(descriptor) {
       return Array.isArray(result?.keys) ? result.keys : [];
     },
   };
+  const files = {
+    async readText(path) {
+      const result = await callHost("files.readText", { path });
+      return Buffer.from(String(result?.base64 ?? ""), "base64").toString("utf8");
+    },
+    writeText: (path, content) =>
+      callHost("files.writeText", {
+        path,
+        base64: Buffer.from(String(content), "utf8").toString("base64"),
+      }).then(() => undefined),
+    async readBytes(path) {
+      const result = await callHost("files.readBytes", { path });
+      return new Uint8Array(Buffer.from(String(result?.base64 ?? ""), "base64"));
+    },
+    writeBytes(path, bytes) {
+      if (!(bytes instanceof Uint8Array)) {
+        throw new TypeError("tempo.files.writeBytes requires a Uint8Array");
+      }
+      return callHost("files.writeBytes", {
+        path,
+        base64: Buffer.from(bytes).toString("base64"),
+      }).then(() => undefined);
+    },
+    async list(path = "") {
+      const result = await callHost("files.list", { path });
+      return Array.isArray(result?.entries) ? result.entries : [];
+    },
+    async stat(path) {
+      const result = await callHost("files.stat", { path });
+      return result?.stat ?? null;
+    },
+    mkdir: (path, options = {}) =>
+      callHost("files.mkdir", {
+        path,
+        recursive: options.recursive === true,
+      }).then(() => undefined),
+    remove: (path, options = {}) =>
+      callHost("files.remove", {
+        path,
+        recursive: options.recursive === true,
+      }).then(() => undefined),
+    rename: (from, to) =>
+      callHost("files.rename", { from, to }).then(() => undefined),
+  };
   const settings = {
     async getAll() {
       return { ...((await storage.get("__tempo/settings")) ?? {}) };
@@ -580,6 +624,7 @@ function buildTempo(descriptor) {
       eventNames: () => [...runtimeEventListeners.keys()],
     },
     storage,
+    files,
     settings,
     notify: {
       show: (options = {}) => callHost("notify.show", options),

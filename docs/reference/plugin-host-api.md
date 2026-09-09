@@ -12,7 +12,7 @@ Tempo 把平台 API 注入插件运行环境：UI 使用 `window.tempo`，Runtim
 | 分组 | UI | Runtime |
 | --- | :---: | :---: |
 | 页面上下文 `context`、`ready`、`session` | 是 | 否 |
-| `storage`、`settings`、`notify`、`events` | 是 | 是 |
+| `storage`、`files`、`settings`、`notify`、`events` | 是 | 是 |
 | `theme.get` | 是 | 是 |
 | `theme.subscribe` | 是 | 否 |
 | `mainPanel.hide`、`app.open`、`external.open` | 是 | 是 |
@@ -65,6 +65,34 @@ UI 中把 `tempo` 写成 `window.tempo`。不存在的 key 返回 `null`。
 - 单个值上限：256 KiB。
 - 每个插件总计上限：5 MiB。
 - 超出配额返回 `RESOURCE_EXHAUSTED`。
+
+## 私有文件
+
+`tempo.files` 由宿主执行，只能访问当前插件的数据目录。UI 和 Runtime 都能使用，且不需要声明 Deno 的 `permissions.read` 或 `permissions.write`：
+
+```js
+await tempo.files.mkdir("notes", { recursive: true });
+await tempo.files.writeText("notes/today.md", "# Today");
+const text = await tempo.files.readText("notes/today.md");
+
+await tempo.files.writeBytes("avatar.bin", new Uint8Array([0, 1, 255]));
+const bytes = await tempo.files.readBytes("avatar.bin");
+
+const entries = await tempo.files.list("notes");
+const info = await tempo.files.stat("notes/today.md");
+await tempo.files.rename("notes/today.md", "notes/archive.md");
+await tempo.files.remove("notes", { recursive: true });
+```
+
+路径必须使用正斜杠分隔的相对路径。绝对路径、`..`、盘符、UNC、反斜杠、NUL、符号链接和 Windows junction 都会被拒绝。`list()` 可用空路径读取数据目录根层；其它方法不接受空路径。
+
+- 单个文本或二进制文件上限 512 KiB。
+- 单次目录列表最多 256 项。
+- `stat()` 在路径不存在时返回 `null`。
+- `mkdir` 和 `remove` 默认不递归；递归操作需传入 `{ recursive: true }`。
+- `rename` 的目标必须尚不存在。
+
+Runtime 直接使用 `Deno.readFile`、`Deno.writeFile` 或 Node 兼容文件 API 时，仍受 Manifest 中的 Deno 文件权限控制。`tempo.files` 不会返回宿主绝对路径。
 
 ## 插件设置
 
@@ -234,7 +262,7 @@ console.log(tempo.paths.data);
 console.log(tempo.runtime.version);
 ```
 
-`paths.data` 是插件可写数据目录。入口文件所在的安装目录应视为只读。
+`paths.data` 是 Runtime 的插件数据目录绝对路径；只有直接调用 Deno 文件 API 时才需要它。一般文件读写优先使用 `tempo.files`。入口文件所在的安装目录应视为只读。
 
 ## 错误
 

@@ -704,7 +704,6 @@ CREATE TABLE IF NOT EXISTS plugin_repository_plugins (
     kind TEXT NOT NULL,
     categories_json TEXT NOT NULL DEFAULT '[]',
     platforms_json TEXT NOT NULL DEFAULT '[]',
-    capabilities_json TEXT NOT NULL DEFAULT '[]',
     engine_tempo TEXT NOT NULL,
     engine_plugin_api TEXT NOT NULL,
     requires_node_runtime INTEGER NOT NULL DEFAULT 0,

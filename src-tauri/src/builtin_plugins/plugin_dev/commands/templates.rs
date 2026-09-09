@@ -19,7 +19,7 @@ const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TEMPLATE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TEMPLATE_FILES: usize = 256;
 static BUNDLED_DENO_TEMPLATES: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../docs/public/plugin-assets/releases/2.0.2");
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../docs/public/plugin-assets/releases/2.0.4");
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -635,7 +635,7 @@ mod tests {
         assert!(manifest["$schema"]
             .as_str()
             .unwrap()
-            .starts_with(&format!("http://{address}/releases/2.0.2/")));
+            .starts_with(&format!("http://{address}/releases/2.0.4/")));
 
         server.abort();
         let _ = server.await;
@@ -675,7 +675,7 @@ mod tests {
             let raw = std::fs::read_to_string(root.join("manifest.json")).unwrap();
             let manifest = crate::plugins::manifest::PluginManifest::parse_str(&raw).unwrap();
             assert_eq!(manifest.manifest_version, 2);
-            assert_eq!(manifest.engines.plugin_api, "^2.0.0");
+            assert_eq!(manifest.engines.plugin_api, "^2.1.0");
             assert!(root.join("plugin-manifest.schema.json").is_file());
             if kind == "hybrid" {
                 for config in ["tsconfig.json", "tsconfig.ui.json", "tsconfig.runtime.json"] {

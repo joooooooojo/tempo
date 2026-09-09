@@ -1,5 +1,6 @@
 import {
   Field,
+  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -22,18 +23,24 @@ import { PluginDevSection } from "@/builtin-plugins/plugin-dev-assistant/compone
 import {
   resolvedManifestKind,
   type EditablePluginManifest,
-  type PluginCapability,
   type PluginKind,
   type PluginPlatform,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
 import { KIND_ITEMS } from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
 
-const CAPABILITY_ITEMS = [
-  { value: "filesystem", label: "文件系统" },
-  { value: "network", label: "网络" },
-  { value: "process", label: "进程" },
-  { value: "clipboard", label: "剪贴板" },
-  { value: "system", label: "系统" },
+type DataPermission = "read" | "write";
+
+const DATA_PERMISSION_ITEMS = [
+  {
+    value: "read",
+    label: "读取私有数据目录",
+    description: "允许 Deno Runtime 直接读取 $DATA",
+  },
+  {
+    value: "write",
+    label: "写入私有数据目录",
+    description: "允许 Deno Runtime 直接写入 $DATA",
+  },
 ] as const;
 
 const PLATFORM_ITEMS = [
@@ -113,6 +120,11 @@ export function ManifestRootEditor({
                     if (nextKind === "ui") {
                       delete next.main;
                       delete next.activationEvents;
+                      if (next.permissions) {
+                        delete next.permissions.read;
+                        delete next.permissions.write;
+                        delete next.permissions.env;
+                      }
                       if (next.contributes.apps.length === 0) {
                         next.contributes.apps.push({
                           id: "main",
@@ -290,37 +302,118 @@ export function ManifestRootEditor({
       <PluginDevSection title="运行与权限">
         <FieldGroup>
           {kind !== "ui" ? (
-            <div className="plugin-dev-form-grid plugin-dev-form-grid--2">
-              <Field>
-                <FieldLabel htmlFor="manifest-main">Runtime 入口</FieldLabel>
-                <Input
-                  id="manifest-main"
-                  value={manifest.main ?? ""}
-                  placeholder="main.mjs"
-                  spellCheck={false}
-                  onChange={(event) =>
-                    onUpdate((next) => {
-                      const value = event.target.value.trim();
-                      if (value) next.main = value;
-                      else delete next.main;
-                    })
-                  }
-                />
-              </Field>
-              <Field orientation="vertical">
-                <FieldLabel htmlFor="manifest-startup">立即激活</FieldLabel>
-                <Switch
-                  id="manifest-startup"
-                  checked={(manifest.activationEvents ?? []).includes("onStartup")}
-                  onCheckedChange={(checked) =>
-                    onUpdate((next) => {
-                      if (checked) next.activationEvents = ["onStartup"];
-                      else delete next.activationEvents;
-                    })
-                  }
-                />
-              </Field>
-            </div>
+            <>
+              <div className="plugin-dev-form-grid plugin-dev-form-grid--2">
+                <Field>
+                  <FieldLabel htmlFor="manifest-main">Runtime 入口</FieldLabel>
+                  <Input
+                    id="manifest-main"
+                    value={manifest.main ?? ""}
+                    placeholder="main.mjs"
+                    spellCheck={false}
+                    onChange={(event) =>
+                      onUpdate((next) => {
+                        const value = event.target.value.trim();
+                        if (value) next.main = value;
+                        else delete next.main;
+                      })
+                    }
+                  />
+                </Field>
+                <Field orientation="vertical">
+                  <FieldLabel htmlFor="manifest-startup">立即激活</FieldLabel>
+                  <Switch
+                    id="manifest-startup"
+                    checked={(manifest.activationEvents ?? []).includes("onStartup")}
+                    onCheckedChange={(checked) =>
+                      onUpdate((next) => {
+                        if (checked) next.activationEvents = ["onStartup"];
+                        else delete next.activationEvents;
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+            </>
+          ) : null}
+          <Field orientation="vertical">
+            <FieldLabel htmlFor="manifest-permissions-all">
+              {kind === "ui" ? "完全网络访问" : "Deno 完全访问"}
+            </FieldLabel>
+            <Switch
+              id="manifest-permissions-all"
+              checked={manifest.permissions?.all === true}
+              onCheckedChange={(checked) =>
+                onUpdate((next) => {
+                  next.permissions = checked ? { all: true } : {};
+                })
+              }
+            />
+            <FieldDescription>
+              {kind === "ui"
+                ? "允许托管 UI 访问任意网络目标"
+                : "允许 Deno 读取和写入任意文件、访问网络与环境变量，并使用系统、子进程、FFI 和远程导入能力"}
+            </FieldDescription>
+          </Field>
+          {manifest.permissions?.all !== true && kind !== "ui" ? (
+            <>
+              <ToggleListField<DataPermission>
+                legend="Deno 数据目录权限"
+                description="tempo.files 和 tempo.storage 不需要这些权限；仅在 Runtime 直接使用 Deno 文件 API 时开启"
+                options={DATA_PERMISSION_ITEMS}
+                values={DATA_PERMISSION_ITEMS.flatMap((item) =>
+                  manifest.permissions?.[item.value]?.includes("$DATA")
+                    ? [item.value]
+                    : [],
+                )}
+                onChange={(values) =>
+                  onUpdate((next) => {
+                    const permissions = { ...(next.permissions ?? {}) };
+                    if (values.includes("read")) permissions.read = ["$DATA"];
+                    else delete permissions.read;
+                    if (values.includes("write")) permissions.write = ["$DATA"];
+                    else delete permissions.write;
+                    next.permissions = permissions;
+                  })
+                }
+              />
+              <StringListField
+                label="环境变量"
+                description="只向 Deno Runtime 暴露列出的变量；使用大写变量名"
+                itemLabel="环境变量"
+                placeholder="OPENAI_API_KEY"
+                items={manifest.permissions?.env ?? []}
+                onChange={(items) =>
+                  onUpdate((next) => {
+                    const permissions = { ...(next.permissions ?? {}) };
+                    if (items.length > 0) permissions.env = items;
+                    else delete permissions.env;
+                    next.permissions = permissions;
+                  })
+                }
+              />
+            </>
+          ) : null}
+          {manifest.permissions?.all !== true ? (
+            <StringListField
+              label="网络端点"
+              description={
+                kind === "ui"
+                  ? "允许托管 UI 访问的精确 host:port"
+                  : "允许 Deno Runtime 访问；托管 UI 存在时共用同一列表"
+              }
+              itemLabel="网络端点"
+              placeholder="api.example.com:443"
+              items={manifest.permissions?.net ?? []}
+              onChange={(items) =>
+                onUpdate((next) => {
+                  const permissions = { ...(next.permissions ?? {}) };
+                  if (items.length > 0) permissions.net = items;
+                  else delete permissions.net;
+                  next.permissions = permissions;
+                })
+              }
+            />
           ) : null}
         </FieldGroup>
       </PluginDevSection>
@@ -352,22 +445,6 @@ export function ManifestRootEditor({
               } else {
                 delete next.platforms;
               }
-            })
-          }
-        />
-      </PluginDevSection>
-
-      <PluginDevSection
-        title="能力声明"
-        description="用于安装和授权界面的能力披露"
-      >
-        <ToggleListField<PluginCapability>
-          options={CAPABILITY_ITEMS}
-          values={manifest.capabilities ?? []}
-          onChange={(values) =>
-            onUpdate((next) => {
-              if (values.length > 0) next.capabilities = values;
-              else delete next.capabilities;
             })
           }
         />

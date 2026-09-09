@@ -28,9 +28,9 @@ import {
 import { hasBuiltinConfigPanel } from "@/builtin-plugins/settings/pages/config-registry";
 
 const DENO_RUNTIME_TRUST_TEXT =
-  "此插件将在受限 Deno 进程中运行。仅授予下列声明权限；不允许子进程或原生扩展。UI 网络权限独立于 Deno。仅信任可靠来源。";
+  "此插件将在受限 Deno 进程和隔离视图中运行。文件和环境变量权限用于后台，网络端点同时应用于后台和 UI；Tempo Host API 可直接调用。仅信任可靠来源。";
 const UI_ONLY_TRUST_TEXT =
-  "将在隔离视图中运行网页代码，并可调用受限的 Tempo 接口（面板控制、主题、私有存储等），不具备完整系统权限。确定信任并继续？";
+  "将在隔离视图中运行网页代码，仅可访问声明的网络端点；Tempo Host API 可直接调用。确定信任并继续？";
 
 /** Settings is a host shell entry, not shown in the plugin manager list. */
 const HIDDEN_BUILTIN_IDS = new Set(["settings"]);
