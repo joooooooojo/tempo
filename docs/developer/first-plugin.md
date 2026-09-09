@@ -5,7 +5,7 @@ description: 用插件开发助手创建、运行并构建一个 UI 插件。
 
 # 做出第一个插件
 
-这个教程创建一个可以保存文字的 Notes 页面。项目由插件开发助手生成，不需要另外安装 Tempo 依赖。
+这个教程创建一个可以保存文字的 Notes 页面。插件开发助手生成的项目已经声明 `@tempo/sdk` 依赖。
 
 ## 创建项目
 
@@ -31,7 +31,6 @@ com.example.notes/
   src/
     main.ts
     style.css
-    tempo.d.ts
 ```
 
 生成的 `manifest.json` 已包含版本化远端 `$schema`，编辑器可以直接获得字段补全和校验。
@@ -54,25 +53,26 @@ com.example.notes/
 
 ```ts
 import "./style.css";
+import { tempo } from "@tempo/sdk/ui";
 
 const notes = document.querySelector<HTMLTextAreaElement>("#notes");
 
-await window.tempo.ready();
+await tempo.ready();
 
 if (notes) {
-  notes.value = (await window.tempo.storage.get<string>("notes")) ?? "";
+  notes.value = (await tempo.storage.get<string>("notes")) ?? "";
   notes.addEventListener("input", () => {
-    void window.tempo.storage.set("notes", notes.value);
+    void tempo.storage.set("notes", notes.value);
   });
 }
 ```
 
-页面使用 WebView 自己的生命周期。模板把模块脚本放在 `body` 末尾，DOM 此时已经可用；`window.tempo.ready()` 只负责等待宿主上下文。`window.tempo.storage` 是当前插件独享的本地存储，不需要自己拼接插件 ID。
+页面使用 WebView 自己的生命周期。模板把模块脚本放在 `body` 末尾，DOM 此时已经可用；`tempo.ready()` 只负责等待宿主上下文。`tempo.storage` 是当前插件独享的本地存储，不需要自己拼接插件 ID。
 
 如果需要读取打开页面时的参数：
 
 ```ts
-const context = await window.tempo.ready();
+const context = await tempo.ready();
 console.log(context.params);
 ```
 

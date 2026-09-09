@@ -31,6 +31,7 @@
 ### Docs / Chore
 
 - 补充 Deno 迁移详设与审核记录，同步插件开发、权限及升级文档；增加受限运行时、模板构建、类型隔离和演示插件回归测试。
+- 仓库调整为 pnpm monorepo：主应用迁入 `core`，文档、插件模板与 `@tempo/sdk` 独立为 workspace；官方插件仓库改由 Git Submodule 引入。插件模板改用 SDK 的 UI / Runtime 模块入口。
 
 ## [2.2.6] - 2026-08-31
 

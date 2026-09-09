@@ -223,7 +223,7 @@ Action 是主面板中的用户操作。每个 Action 必须在 `app` 和 `comma
 | `app` | 二选一 | 引用 `apps[].id` |
 | `command` | 二选一 | 引用 `commands[].id`，插件必须有 `main` |
 
-- `app`：Tempo 打开页面，把 `{ actionId, query, input }` 放入 `window.tempo.context.params`。
+- `app`：Tempo 打开页面，把 `{ actionId, query, input }` 放入 SDK 导出的 `tempo.context.params`。
 - `command`：Tempo 启动 Runtime，把相同结构传给 Command handler，并等待返回结果。
 
 Action 不会通过 `ipcMain` 执行。IPC 只服务于已经打开的插件 UI。

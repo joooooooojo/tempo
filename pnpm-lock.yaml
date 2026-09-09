@@ -7,6 +7,24 @@ settings:
 importers:
 
   .:
+    devDependencies:
+      '@tempo/sdk':
+        specifier: workspace:*
+        version: link:sdk
+      '@types/node':
+        specifier: ^26.1.0
+        version: 26.1.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vite:
+        specifier: ^7.0.4
+        version: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)
+
+  core:
     dependencies:
       '@base-ui/react':
         specifier: ^1.6.0
@@ -123,9 +141,24 @@ importers:
       vite:
         specifier: ^7.0.4
         version: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)
+
+  docs:
+    devDependencies:
       vitepress:
         specifier: ^1.6.4
         version: 1.6.4(@algolia/client-search@5.56.0)(@types/node@26.1.1)(@types/react@19.2.17)(lightningcss@1.32.0)(postcss@8.5.19)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(search-insights@2.17.3)(typescript@5.8.3)
+
+  sdk:
+    devDependencies:
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+
+  templates:
+    devDependencies:
+      '@tempo/sdk':
+        specifier: workspace:*
+        version: link:../sdk
 
 packages:
 

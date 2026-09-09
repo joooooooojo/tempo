@@ -10,9 +10,9 @@ import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { build } from "vite";
 
-const bootstrap = fileURLToPath(new URL("../plugin-runtime/bootstrap.mjs", import.meta.url));
+const bootstrap = fileURLToPath(new URL("../core/plugin-runtime/bootstrap.mjs", import.meta.url));
 const mainPath = fileURLToPath(new URL("./fixtures/plugin-runtime-smoke.mjs", import.meta.url));
-const codec = fileURLToPath(new URL("../plugin-runtime/structured-clone.mjs", import.meta.url));
+const codec = fileURLToPath(new URL("../core/plugin-runtime/structured-clone.mjs", import.meta.url));
 const deno = process.env.TEMPO_PLUGIN_DENO_PATH;
 
 function encode(value) {
@@ -25,7 +25,9 @@ function encode(value) {
 
 async function exercise(t, { engine = "node", legacy = false, mode = "success", bundled = false, grantData = false } = {}) {
   const scratch = await mkdtemp(path.join(tmpdir(), "tempo-deno-test-"));
-  t.after(() => rm(scratch, { recursive: true, force: true }));
+  t.after(() =>
+    rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+  );
   let entryPath = mainPath;
   if (bundled) {
     await build({ configFile: false, logLevel: "silent", build: { ssr: fileURLToPath(new URL("./fixtures/plugin-runtime-bundle.mjs", import.meta.url)), outDir: path.join(scratch, "dist"), rollupOptions: { output: { entryFileNames: "main.mjs" } } }, ssr: { noExternal: true } });

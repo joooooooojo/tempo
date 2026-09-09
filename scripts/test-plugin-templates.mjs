@@ -9,12 +9,12 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { scaDecode } from "../plugin-runtime/structured-clone.mjs";
+import { scaDecode } from "../core/plugin-runtime/structured-clone.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const deno = process.env.TEMPO_PLUGIN_DENO_PATH;
 const release = JSON.parse(await readFile(path.join(root, "templates/plugins/release.json"), "utf8"));
-const bootstrap = path.join(root, "plugin-runtime/bootstrap.mjs");
+const bootstrap = path.join(root, "core/plugin-runtime/bootstrap.mjs");
 
 async function runNode(script, args, cwd) {
   const child = spawn(process.execPath, [path.join(root, script), ...args], { cwd, windowsHide: true });
@@ -201,7 +201,7 @@ for (const kind of ["ui", "hybrid", "headless"]) {
 
 test("Hello demo declares no Deno permissions",async () => {
   const manifest = JSON.parse(await readFile(
-    path.join(root,"examples/plugins/com.example.hello/manifest.json"),"utf8",
+    path.join(root,"templates/examples/plugins/com.example.hello/manifest.json"),"utf8",
   ));
   assert.equal(manifest.version,"2.1.0");
   assert.equal(manifest.engines.pluginApi,"^2.1.0");
@@ -215,7 +215,7 @@ test("Hello demo uses Host files and blocks undeclared Deno permissions",{skip:!
     {type:"mcp-invoke",id:"mcp",toolName:"say-hello",arguments:{who:"MCP"}},
     {type:"ipc-invoke",id:"ipc",channel:"greet",args:[{who:"IPC"}]},
     {type:"ipc-invoke",id:"permissions",channel:"permission-probe",args:[]}];
-  const result = await runPlugin(t,path.join(root,"examples/plugins/com.example.hello"),scratch,calls);
+  const result = await runPlugin(t,path.join(root,"templates/examples/plugins/com.example.hello"),scratch,calls);
   const log = await readFile(path.join(result.data,"hello.log"),"utf8");
   for (const who of ["Command", "MCP", "IPC"]) assert.ok(log.includes(`Hello, ${who}!`));
   assert.equal(result.hostCalls.filter(method => method === "notify.show").length,3);
@@ -234,7 +234,7 @@ test("Hello demo uses Host files and blocks undeclared Deno permissions",{skip:!
     ["all",["read","write","net","env","sys","run","ffi","import"]],
   ]) {
     const packageDir = path.join(scratch,mode);
-    await cp(path.join(root,"examples/plugins/com.example.hello"),packageDir,{recursive:true});
+    await cp(path.join(root,"templates/examples/plugins/com.example.hello"),packageDir,{recursive:true});
     const manifestPath = path.join(packageDir,"manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath,"utf8"));
     manifest.permissions = policy;

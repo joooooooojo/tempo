@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const core = resolve(root, "core");
 
 /** Load gitignored `.env` without overriding variables already set in the shell. */
 function loadDotEnv(filePath) {
@@ -27,7 +28,7 @@ function loadDotEnv(filePath) {
   }
 }
 
-loadDotEnv(resolve(root, ".env"));
+loadDotEnv(resolve(core, ".env"));
 
 const args = ["tauri", "build", ...process.argv.slice(2)];
 
@@ -53,7 +54,7 @@ if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
 }
 
 const result = spawnSync("npx", args, {
-  cwd: root,
+  cwd: core,
   stdio: "inherit",
   env: process.env,
 });

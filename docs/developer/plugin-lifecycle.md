@@ -15,11 +15,10 @@ description: UI、Hybrid、Headless 的入口格式、启动时机与清理方�
 
 ## UI 生命周期
 
-每次打开 App，Tempo 会创建一个页面实例，并在插件脚本执行前注入：
+每次打开 App，Tempo 会创建一个页面实例，并在插件脚本执行前注入底层宿主对象。插件代码通过 SDK 导入：
 
-```js
-window.tempo
-window.ipcRenderer
+```ts
+import { ipcRenderer, tempo } from "@tempo/sdk/ui";
 ```
 
 UI 不使用 Tempo 生命周期钩子。页面的创建、加载、刷新和销毁都由 WebView 管理，React、Vue 等框架继续使用自己的组件生命周期，原生页面使用标准浏览器事件。
@@ -28,36 +27,37 @@ UI 不使用 Tempo 生命周期钩子。页面的创建、加载、刷新和销�
 
 1. Tempo 创建 iframe 并注入 Host Bridge。
 2. HTML 加载，模块脚本按浏览器规则执行。
-3. `window.tempo.ready()` 在宿主上下文到达后 resolve。
+3. `tempo.ready()` 在宿主上下文到达后 resolve。
 4. 页面关闭或刷新时，由 WebView 销毁 document 和其中的监听器。
 
-```js
-const context = await window.tempo.ready();
+```ts
+import { tempo } from "@tempo/sdk/ui";
+
+const context = await tempo.ready();
 console.log(context.params, context.session);
 
-const stopTheme = await window.tempo.theme.subscribe((theme) => {
+const stopTheme = await tempo.theme.subscribe((theme) => {
   document.documentElement.dataset.theme = theme;
 });
 ```
 
-模块脚本位于 `body` 末尾时可以直接访问 DOM；脚本位于 `head` 时，按标准浏览器方式等待 `DOMContentLoaded`。`window.tempo.ready()` 只等待 Tempo 上下文，不代表 DOM 生命周期。整个页面被销毁时，WebView 和 Host 会清理页面监听与订阅；如果只是 SPA 中的某个组件不再使用主题订阅，则由组件主动调用 `stopTheme()`。
+模块脚本位于 `body` 末尾时可以直接访问 DOM；脚本位于 `head` 时，按标准浏览器方式等待 `DOMContentLoaded`。`tempo.ready()` 只等待 Tempo 上下文，不代表 DOM 生命周期。整个页面被销毁时，WebView 和 Host 会清理页面监听与订阅；如果只是 SPA 中的某个组件不再使用主题订阅，则由组件主动调用 `stopTheme()`。
 
 页面关闭时浏览器不会等待异步清理。需要保存的数据应在用户操作发生时立即写入 `tempo.storage` 或 `tempo.session.push`，不要依赖卸载事件进行异步保存。
 
 ## Runtime 入口格式
 
-Runtime 不需要导出对象或函数。入口被加载后，直接使用宿主注入的全局变量：
+Runtime 不需要导出激活函数。入口被加载后，从 SDK 导入宿主对象与生命周期函数：
 
-```js
-globalThis.tempo
-globalThis.ipcMain
-onMounted(fn)
-onUnmounted(fn)
+```ts
+import { ipcMain, onMounted, onUnmounted, tempo } from "@tempo/sdk/runtime";
 ```
 
 推荐使用 `main.mjs`：
 
-```js
+```ts
+import { ipcMain, onMounted, onUnmounted, tempo } from "@tempo/sdk/runtime";
+
 let timer;
 
 onMounted(() => {
@@ -132,8 +132,8 @@ Runtime ready，开始处理 Command、IPC 和平台事件
 
 | 类型 | 平台事件 | UI ↔ Runtime |
 | --- | --- | --- |
-| UI | 页面打开期间用 `window.tempo.events.on` | 没有 Runtime，不使用 IPC |
-| Hybrid | 页面和运行中的 Runtime 都可监听；按职责选择一侧 | `window.ipcRenderer` ↔ `globalThis.ipcMain` |
+| UI | 页面打开期间用 `tempo.events.on` | 没有 Runtime，不使用 IPC |
+| Hybrid | 页面和运行中的 Runtime 都可监听；按职责选择一侧 | `ipcRenderer` ↔ `ipcMain` |
 | Headless | 在 Runtime 用 `tempo.events.on`；常驻监听需 `onStartup` | 没有 UI，通常不使用 IPC |
 
 同一个平台事件如果在 Hybrid 两侧都监听，会执行两次业务代码。通常让 Runtime 负责后台工作，UI 只监听确实影响当前画面的事件。

@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { scaEncode, scaDecodeArgs, scaEncodeArgs } from "../../plugin-runtime/structured-clone.mjs";
+import { scaEncode, scaDecodeArgs, scaEncodeArgs } from "../../core/plugin-runtime/structured-clone.mjs";
 
 onMounted(() => {
   tempo.mcpTools.register("echo", async args => args);

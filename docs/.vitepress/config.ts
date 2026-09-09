@@ -47,6 +47,7 @@ export default defineConfig({
             { text: "做出第一个插件", link: "/developer/first-plugin" },
             { text: "插件类型与生命周期", link: "/developer/plugin-lifecycle" },
             { text: "加入后台能力", link: "/developer/runtime" },
+            { text: "使用 SDK", link: "/developer/sdk" },
             { text: "维护插件仓库", link: "/developer/plugin-repository" },
           ],
         },
@@ -54,7 +55,7 @@ export default defineConfig({
           text: "继续查阅",
           items: [
             { text: "API 参考", link: "/reference/" },
-            { text: "完整示例", link: "https://github.com/joooooooojo/tempo/tree/master/examples/plugins/com.example.hello" },
+            { text: "完整示例", link: "https://github.com/joooooooojo/tempo/tree/master/templates/examples/plugins/com.example.hello" },
           ],
         },
       ],

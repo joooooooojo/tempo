@@ -28,6 +28,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       - uses: pnpm/action-setup@v4
         with:
@@ -46,7 +48,7 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: ./src-tauri -> target
+          workspaces: ./core/src-tauri -> target
           # Must match Cache Warm so tag runs can restore from the default branch.
           shared-key: ${{ matrix.cache_key }}
           # Keep master as the single cache source; tag caches cannot help later tags.
@@ -135,6 +137,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
         with:
+          projectPath: core
           tagName: v__VERSION__
           releaseName: Tempo v__VERSION__
           releaseBody: ${{ steps.notes.outputs.body }}
@@ -151,6 +154,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       - name: Generate and upload updater manifests
         env:
@@ -160,7 +165,7 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           if [[ ! "$TAG" =~ ^v ]]; then
-            TAG="v$(node -p "require('./package.json').version")"
+            TAG="v$(node -p "require('./core/package.json').version")"
           fi
           export RELEASE_TAG="$TAG"
           export RELEASE_NOTES="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).body || ''")"

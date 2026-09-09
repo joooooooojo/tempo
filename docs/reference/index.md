@@ -1,6 +1,6 @@
 ---
 title: API 参考
-description: 按职责查找插件全局 API、平台 API、宿主事件和 Manifest。
+description: 按职责查找插件 API 入口、平台 API、宿主事件和 Manifest。
 ---
 
 # API 参考
@@ -11,7 +11,7 @@ description: 按职责查找插件全局 API、平台 API、宿主事件和 Mani
 
 | 你在找什么 | 页面 |
 | --- | --- |
-| UI 和 Runtime 注入了哪些全局变量 | [插件全局 API](/reference/plugin-api) |
+| UI 和 Runtime 应导入哪个 SDK 入口 | [插件 API 入口](/reference/plugin-api) |
 | `tempo.storage`、通知、主题、窗口等参数 | [平台 API](/reference/plugin-host-api) |
 | `tempo.events` 支持哪些平台广播 | [宿主事件](/reference/host-events) |
 | Apps、Commands、Actions、MCP Tools、Settings | [Manifest](/reference/manifest-schema) |

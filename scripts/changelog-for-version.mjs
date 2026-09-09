@@ -19,7 +19,7 @@ const rawVersion =
   process.argv[2] ||
   process.env.RELEASE_VERSION ||
   (process.env.RELEASE_TAG || "").replace(/^v/, "") ||
-  JSON.parse(await readFile(resolve(root, "package.json"), "utf8")).version;
+  JSON.parse(await readFile(resolve(root, "core", "package.json"), "utf8")).version;
 
 const version = String(rawVersion).replace(/^v/, "");
 const changelog = await readFile(changelogPath, "utf8");

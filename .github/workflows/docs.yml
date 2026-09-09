@@ -6,8 +6,9 @@ on:
     paths:
       - "docs/**"
       - "templates/plugins/**"
-      - "plugin-ui/bridge-client.js"
-      - "plugin-ui/structured-clone.js"
+      - "sdk/**"
+      - "core/plugin-ui/bridge-client.js"
+      - "core/plugin-ui/structured-clone.js"
       - "scripts/build-plugin-assets.mjs"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -28,6 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: pnpm/action-setup@v4
         with:

@@ -2060,6 +2060,239 @@
           ]
         }
       }
+    },
+    {
+      "version": "2.0.6",
+      "minPluginApi": "2.1.0",
+      "manifestSchema": {
+        "url": "releases/2.0.6/plugin-manifest.schema.json",
+        "sha256": "0db1d5cc3487ee40ef497d6ac38b67ea18a13135a3cfa682b0b424c6c51e2d15",
+        "size": 15193
+      },
+      "templates": {
+        "ui": {
+          "files": [
+            {
+              "path": ".tempo/bridge-client.js",
+              "url": "releases/2.0.6/ui/.tempo/bridge-client.js",
+              "sha256": "4b7c7a7d4c13cf50695f70dfb3c1db056a1aae474530758a52176a3bf63fd449",
+              "size": 12481,
+              "render": false
+            },
+            {
+              "path": ".tempo/structured-clone.js",
+              "url": "releases/2.0.6/ui/.tempo/structured-clone.js",
+              "sha256": "60e6b64bc01be141990e1b24f5517a2843d0232ddcbb3f11319e5ce45d1760ec",
+              "size": 8741,
+              "render": false
+            },
+            {
+              "path": "index.html",
+              "url": "releases/2.0.6/ui/index.html",
+              "sha256": "f0e8d04ce40c2789c746129318b276a53ec74faa92c586590b41ea4731f535e8",
+              "size": 485,
+              "render": true
+            },
+            {
+              "path": "manifest.json",
+              "url": "releases/2.0.6/ui/manifest.json",
+              "sha256": "6431f005655defb41c8d7ba84a783364b40f4b2e7005d6e25ef214374cd230d0",
+              "size": 429,
+              "render": true
+            },
+            {
+              "path": "package.json",
+              "url": "releases/2.0.6/ui/package.json",
+              "sha256": "9c74abd3bce7613ff0a342296035487f0ab891df53325d0487ea7b93e6df2f99",
+              "size": 389,
+              "render": true
+            },
+            {
+              "path": "src/main.ts",
+              "url": "releases/2.0.6/ui/src/main.ts",
+              "sha256": "2c7f285b56c368c0563ccc9ffc5c27fb9374484e92b03d0fcfcbe193a7f16869",
+              "size": 471,
+              "render": true
+            },
+            {
+              "path": "src/style.css",
+              "url": "releases/2.0.6/ui/src/style.css",
+              "sha256": "910f43a5ccac818da75fa42b089808e191e2b1031bb719c4e155e5bbef71894e",
+              "size": 645,
+              "render": false
+            },
+            {
+              "path": "tempo.vite.ts",
+              "url": "releases/2.0.6/ui/tempo.vite.ts",
+              "sha256": "6f754ae93524027799ed38d1ee3fdea55b75147010d5669e09c52f4a586dd53b",
+              "size": 981,
+              "render": false
+            },
+            {
+              "path": "tsconfig.json",
+              "url": "releases/2.0.6/ui/tsconfig.json",
+              "sha256": "89df456768abfc12667a0a246ed8e5c4edd817ac3a924ed0cf33d0b64bdfe47e",
+              "size": 266,
+              "render": false
+            },
+            {
+              "path": "vite.config.ts",
+              "url": "releases/2.0.6/ui/vite.config.ts",
+              "sha256": "4ee2307a91c2ea9c91d7e18089c58b300689f37f676a466a838a198650590d8d",
+              "size": 239,
+              "render": false
+            }
+          ]
+        },
+        "hybrid": {
+          "files": [
+            {
+              "path": ".tempo/bridge-client.js",
+              "url": "releases/2.0.6/hybrid/.tempo/bridge-client.js",
+              "sha256": "4b7c7a7d4c13cf50695f70dfb3c1db056a1aae474530758a52176a3bf63fd449",
+              "size": 12481,
+              "render": false
+            },
+            {
+              "path": ".tempo/structured-clone.js",
+              "url": "releases/2.0.6/hybrid/.tempo/structured-clone.js",
+              "sha256": "60e6b64bc01be141990e1b24f5517a2843d0232ddcbb3f11319e5ce45d1760ec",
+              "size": 8741,
+              "render": false
+            },
+            {
+              "path": "index.html",
+              "url": "releases/2.0.6/hybrid/index.html",
+              "sha256": "9f4d002d1845dac6ec2fa61baafa20c3c66621f472eb83bdfc10976f9a78a768",
+              "size": 590,
+              "render": true
+            },
+            {
+              "path": "manifest.json",
+              "url": "releases/2.0.6/hybrid/manifest.json",
+              "sha256": "d815ff75e1e825b680ec304b609e9713393a112c65e63514abd9aedf0552bd90",
+              "size": 953,
+              "render": true
+            },
+            {
+              "path": "package.json",
+              "url": "releases/2.0.6/hybrid/package.json",
+              "sha256": "7fd22e794cd1bb4b33de24f414b0283e1e2d608c931eb05ee44249e9a03f139d",
+              "size": 606,
+              "render": true
+            },
+            {
+              "path": "src/runtime/main.ts",
+              "url": "releases/2.0.6/hybrid/src/runtime/main.ts",
+              "sha256": "61b6c6a76a434a19ec364e1d7565a12ff4bdd483a03506fc39ab6cdd6d47b99f",
+              "size": 686,
+              "render": true
+            },
+            {
+              "path": "src/ui/main.ts",
+              "url": "releases/2.0.6/hybrid/src/ui/main.ts",
+              "sha256": "4026eedee2e4c6bc88ffcf5b301d7bd4c755b4b8cf2f2e8285550f870825c05e",
+              "size": 635,
+              "render": false
+            },
+            {
+              "path": "src/ui/style.css",
+              "url": "releases/2.0.6/hybrid/src/ui/style.css",
+              "sha256": "6e7c7789bf60db0874d624d7b81ea16af8e421f7be82ae25a221d5e547728faf",
+              "size": 725,
+              "render": false
+            },
+            {
+              "path": "tempo.vite.ts",
+              "url": "releases/2.0.6/hybrid/tempo.vite.ts",
+              "sha256": "6f754ae93524027799ed38d1ee3fdea55b75147010d5669e09c52f4a586dd53b",
+              "size": 981,
+              "render": false
+            },
+            {
+              "path": "tsconfig.json",
+              "url": "releases/2.0.6/hybrid/tsconfig.json",
+              "sha256": "5f9d823162185f651303f6f30103145a7e26c2066227816d4096815247cf3925",
+              "size": 121,
+              "render": false
+            },
+            {
+              "path": "tsconfig.runtime.json",
+              "url": "releases/2.0.6/hybrid/tsconfig.runtime.json",
+              "sha256": "03dcf0f80c8bf54f8516a1c4ba8fcd933f74168e919ed265688b2f571f398745",
+              "size": 388,
+              "render": false
+            },
+            {
+              "path": "tsconfig.ui.json",
+              "url": "releases/2.0.6/hybrid/tsconfig.ui.json",
+              "sha256": "98e057faeb3218b0200138f29787719b44d8d5de6d0b6d634e674780d5332ee8",
+              "size": 374,
+              "render": false
+            },
+            {
+              "path": "vite.config.ts",
+              "url": "releases/2.0.6/hybrid/vite.config.ts",
+              "sha256": "bd21bf35477f635f67ee194609ee0cb79612a1a3a7f735f6603f8eda3dc9eaeb",
+              "size": 209,
+              "render": false
+            },
+            {
+              "path": "vite.runtime.config.ts",
+              "url": "releases/2.0.6/hybrid/vite.runtime.config.ts",
+              "sha256": "d6cd47eeb1d97b2cec636db78430be4ddaa22079bbe23dce3ba9f365ad37be4b",
+              "size": 407,
+              "render": false
+            }
+          ]
+        },
+        "headless": {
+          "files": [
+            {
+              "path": "manifest.json",
+              "url": "releases/2.0.6/headless/manifest.json",
+              "sha256": "e6f5ed4f98cf33e0aa27c886f5aa1934aa12f6818eaacf292a39657421a1dd51",
+              "size": 719,
+              "render": true
+            },
+            {
+              "path": "package.json",
+              "url": "releases/2.0.6/headless/package.json",
+              "sha256": "84eabd89d469c676c20c12e597715b2d1c44e386484f60484a8ee9ba268b8870",
+              "size": 386,
+              "render": true
+            },
+            {
+              "path": "src/main.ts",
+              "url": "releases/2.0.6/headless/src/main.ts",
+              "sha256": "2042be47944b8decfe9783482e4b0ffb09cd8841728958ed0508807e60ed4ace",
+              "size": 578,
+              "render": true
+            },
+            {
+              "path": "tempo.vite.ts",
+              "url": "releases/2.0.6/headless/tempo.vite.ts",
+              "sha256": "b04ed657bb788bb0ae18d04a12f1321cbc5bf3cfd775dcd0e8882033ba7ffe57",
+              "size": 352,
+              "render": false
+            },
+            {
+              "path": "tsconfig.json",
+              "url": "releases/2.0.6/headless/tsconfig.json",
+              "sha256": "71c86099c03958bddd71c17d119dd3c0c65dd461729454b07ba83dd565e593a0",
+              "size": 259,
+              "render": false
+            },
+            {
+              "path": "vite.config.ts",
+              "url": "releases/2.0.6/headless/vite.config.ts",
+              "sha256": "70d601057147957fa0d347018a39432dd6bcadf954cc291702e47f315dad68f6",
+              "size": 398,
+              "render": false
+            }
+          ]
+        }
+      }
     }
   ]
 }

@@ -128,7 +128,7 @@ tempo.runtime 为 `{ engine: "deno", version, nodeCompatVersion }`。测试保�
 $env:TEMPO_PLUGIN_DENO_PATH = '<verified-deno-2.9.6.exe>'
 node --test scripts/test-plugin-runtime.mjs
 node scripts/test-plugin-events.mjs
-cargo test --manifest-path src-tauri/Cargo.toml --lib plugins:: -- --test-threads=2
+cargo test --manifest-path core/src-tauri/Cargo.toml --lib plugins:: -- --test-threads=2
 pnpm exec tsc --noEmit
 pnpm exec vite build
 node scripts/build-plugin-assets.mjs

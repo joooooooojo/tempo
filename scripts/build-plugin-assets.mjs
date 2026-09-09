@@ -118,7 +118,7 @@ for (const kind of kinds) {
     for (const fileName of sharedBridgeFiles) {
       const relativePath = path.join(".tempo", fileName);
       stagedFiles.push({
-        source: path.join(root, "plugin-ui", fileName),
+        source: path.join(root, "core", "plugin-ui", fileName),
         target: path.join(releaseOutputRoot, kind, relativePath),
         relativePath,
         url: `${releaseRelativeRoot}/${kind}/.tempo/${fileName}`,

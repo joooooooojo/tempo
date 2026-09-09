@@ -1,2 +1,8 @@
+packages:
+  - core
+  - docs
+  - sdk
+  - templates
+
 onlyBuiltDependencies:
   - esbuild

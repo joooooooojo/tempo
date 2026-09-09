@@ -1,12 +1,12 @@
 ---
 description: Tauri Cargo.toml constraints — do not remove macos-private-api
-globs: src-tauri/Cargo.toml
+globs: core/src-tauri/Cargo.toml
 alwaysApply: false
 ---
 
 # Tauri Cargo.toml
 
-Never remove `macos-private-api` from the `tauri` features in `src-tauri/Cargo.toml`.
+Never remove `macos-private-api` from the `tauri` features in `core/src-tauri/Cargo.toml`.
 
 This project uses transparent overlay windows (shelf picker) via `auxiliary_windows.rs`. The feature is required on macOS even though it is harmless on other platforms.
 

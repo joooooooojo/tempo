@@ -12,7 +12,7 @@ Runtime 是独立的受限 Deno 2.9.6 进程。已授权的数据文件操作、
 | 通道 | 用途 | Manifest 声明 |
 | --- | --- | --- |
 | `tempo.*` | UI 或 Runtime 调用 Tempo 平台能力 | 不需要 |
-| `window.ipcRenderer` ↔ `globalThis.ipcMain` | 本插件 UI 与 Runtime 私有通信 | 不需要 |
+| `ipcRenderer` ↔ `ipcMain` | 本插件 UI 与 Runtime 私有通信 | 不需要 |
 | `tempo.commands.register` | 让 Action 执行 Runtime Command | 需要 `commands` |
 | `tempo.mcpTools.register` | 注册 MCP Tool 的 Runtime 实现 | 需要 `mcpTools` |
 
@@ -32,16 +32,14 @@ Hybrid 模板把两侧代码与类型环境完全分开：
 
 ```text
 tsconfig.json           # references 统一组织两个子项目
-tsconfig.ui.json        # DOM 与 window.tempo / ipcRenderer
-tsconfig.runtime.json   # Node 兼容类型与 tempo / ipcMain / 生命周期
+tsconfig.ui.json        # DOM 与 @tempo/sdk/ui
+tsconfig.runtime.json   # Deno 兼容环境与 @tempo/sdk/runtime
 src/
   ui/
     main.ts
     style.css
-    tempo.d.ts
   runtime/
     main.ts
-    tempo.d.ts          # Runtime-only 宿主全局类型
 ```
 
 根 `tsconfig.json` 通过 `references` 引用 `tsconfig.ui.json` 和 `tsconfig.runtime.json`，`pnpm typecheck` 使用 `tsc -b` 统一检查。两侧不共享全局类型：UI 不会获得 Node.js 类型，Runtime 也不会获得 DOM 类型。`pnpm build` 先完成统一类型检查，再由 Vite 生成插件包；TypeScript 增量缓存位于 `node_modules/.cache`。
@@ -60,6 +58,8 @@ pnpm dev:runtime
 Runtime 直接在入口文件注册处理器：
 
 ```ts
+import { ipcMain, onMounted, onUnmounted, tempo } from "@tempo/sdk/runtime";
+
 function formatNote(input: { text?: string } = {}) {
   return { text: String(input.text ?? "").trim() };
 }
@@ -76,8 +76,10 @@ onMounted(() => {
 UI 调用它：
 
 ```ts
-await window.tempo.ready();
-const result = await window.ipcRenderer.invoke("format-note", {
+import { ipcRenderer, tempo } from "@tempo/sdk/ui";
+
+await tempo.ready();
+const result = await ipcRenderer.invoke("format-note", {
   text: "  hello  ",
 });
 console.log(result.text);
@@ -87,8 +89,8 @@ console.log(result.text);
 
 ```ts
 // UI
-window.ipcRenderer.send("editor-changed", { dirty: true });
-const off = window.ipcRenderer.on("saved", (_event, payload) => {
+ipcRenderer.send("editor-changed", { dirty: true });
+const off = ipcRenderer.on("saved", (_event, payload) => {
   console.log(payload);
 });
 
@@ -166,7 +168,7 @@ onMounted(() => {
 });
 ```
 
-`tempo.mcpTools.register` 只存在于 Runtime。UI 的 `window.tempo` 没有 `mcpTools`。Tool 名称必须与 `mcpTools[].name` 一致；只声明不注册时，调用返回 `NOT_FOUND`。
+`tempo.mcpTools.register` 只存在于 Runtime。`@tempo/sdk/ui` 导出的 `tempo` 没有 `mcpTools`。Tool 名称必须与 `mcpTools[].name` 一致；只声明不注册时，调用返回 `NOT_FOUND`。
 
 ## 监听平台事件
 

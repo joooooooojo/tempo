@@ -3,9 +3,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const packageJsonPath = resolve(root, "package.json");
-const cargoTomlPath = resolve(root, "src-tauri", "Cargo.toml");
-const tauriConfigPath = resolve(root, "src-tauri", "tauri.conf.json");
+const packageJsonPath = resolve(root, "core", "package.json");
+const cargoTomlPath = resolve(root, "core", "src-tauri", "Cargo.toml");
+const tauriConfigPath = resolve(root, "core", "src-tauri", "tauri.conf.json");
 
 const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
 const version = packageJson.version;

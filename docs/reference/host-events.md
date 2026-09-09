@@ -42,6 +42,8 @@ Tempo 不会为了广播启动已停止的 Runtime，也不会保存事件等插
 ## Runtime 监听
 
 ```js
+import { onMounted, onUnmounted, tempo } from "@tempo/sdk/runtime";
+
 let offClipboard;
 
 onMounted(() => {
@@ -56,8 +58,10 @@ onUnmounted(() => offClipboard?.());
 ## UI 监听
 
 ```js
-await window.tempo.ready();
-window.tempo.events.on("clipboard.changed", (payload) => {
+import { tempo } from "@tempo/sdk/ui";
+
+await tempo.ready();
+tempo.events.on("clipboard.changed", (payload) => {
   console.log(payload.at);
 });
 ```
@@ -65,7 +69,7 @@ window.tempo.events.on("clipboard.changed", (payload) => {
 只关心下一次变化：
 
 ```js
-window.tempo.events.once("clipboard.changed", (payload) => {
+tempo.events.once("clipboard.changed", (payload) => {
   console.log("next change", payload.at);
 });
 ```
@@ -77,8 +81,8 @@ function onClipboardChanged(payload) {
   console.log(payload.at);
 }
 
-window.tempo.events.on("clipboard.changed", onClipboardChanged);
-window.tempo.events.off("clipboard.changed", onClipboardChanged);
+tempo.events.on("clipboard.changed", onClipboardChanged);
+tempo.events.off("clipboard.changed", onClipboardChanged);
 ```
 
 UI 只在页面打开期间接收广播。页面销毁由 WebView 管理，纯 UI 插件不需要生命周期钩子，也不需要为了监听事件增加 Runtime。
@@ -105,7 +109,7 @@ Payload 不包含剪贴板正文或文件路径，避免敏感内容被广播给
 
 以下变化使用独立订阅，不进入 `tempo.events` 的监听表：
 
-- 主题变化：UI 使用 `window.tempo.theme.subscribe(...)`。
+- 主题变化：UI 使用 `tempo.theme.subscribe(...)`。
 - 插件设置变化：UI 或 Runtime 使用 `tempo.settings.subscribe(...)`。
 
 调用 `tempo.events.removeAllListeners()` 不会移除设置或主题订阅。平台事件和 Runtime IPC 即使频道同名也不会混在一起。`tempo.events` 只接收平台来源，`ipcRenderer` 只接收 Runtime 来源。

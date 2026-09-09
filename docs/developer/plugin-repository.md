@@ -18,7 +18,7 @@ Tempo 可以从 Git 仓库发现和安装插件。仓库是一个普通 monorepo
 5. 把目录推到 GitHub、GitLab 或其他 Git 托管。
 6. 回到 Tempo，点 **添加源**，填入远程 Git 地址并同步。不要添加 `file://` 本地路径。
 
-模板随 Tempo 一起打包，离线也能创建。源文件在 [`templates/plugin-repository`](https://github.com/joooooooojo/tempo/tree/master/templates/plugin-repository)，包含：
+模板随 Tempo 一起打包，离线也能创建。源文件由 [`tempo-official-warehouse`](https://github.com/joooooooojo/tempo-official-warehouse) 独立仓库维护，并作为主仓库的 `plugin-repository/` Submodule 引入，包含：
 
 - `tempo-plugin-repository.json` 根索引
 - 示例插件 `plugins/com.example.welcome`（含可安装 `dist/`）
@@ -65,4 +65,4 @@ Tempo 读取仓库根目录的 `tempo-plugin-repository.json`：
 
 1. [做出第一个插件](/developer/first-plugin)：生成并构建单个插件。
 2. [安装与管理插件](/guide/plugins)：最终用户如何导入、信任和启用。
-3. 模板内 [CONTRIBUTING.md](https://github.com/joooooooojo/tempo/blob/master/templates/plugin-repository/CONTRIBUTING.md)：发布和更新检查清单。
+3. 模板内 [CONTRIBUTING.md](https://github.com/joooooooojo/tempo-official-warehouse/blob/master/CONTRIBUTING.md)：发布和更新检查清单。

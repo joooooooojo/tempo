@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const tauriDir = resolve(root, "src-tauri");
+const tauriDir = resolve(root, "core", "src-tauri");
 const source = resolve(tauriDir, "app-icon.png");
 const padded = resolve(tauriDir, ".app-icon-macos.png");
 const iconsDir = resolve(tauriDir, "icons");
@@ -58,7 +58,7 @@ for (const extra of ["ios", "android", "AppIcon.iconset"]) {
   rmSync(resolve(iconsDir, extra), { recursive: true, force: true });
 }
 
-cpSync(resolve(iconsDir, "128x128.png"), resolve(root, "public/favicon.png"));
+cpSync(resolve(iconsDir, "128x128.png"), resolve(root, "core", "public", "favicon.png"));
 
 console.log(
   "Icons generated: Windows/Linux from full app-icon.png; macOS icon.icns with safe-area padding."

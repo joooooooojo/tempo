@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const GIB = 1024n ** 3n;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const manifestPath = join(root, "src-tauri", "Cargo.toml");
-const targetDir = join(root, "src-tauri", "target");
+const manifestPath = join(root, "core", "src-tauri", "Cargo.toml");
+const targetDir = join(root, "core", "src-tauri", "target");
 const developmentDir = join(targetDir, "debug");
 const reportOnly = process.argv.includes("--report");
 

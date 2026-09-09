@@ -236,11 +236,11 @@ Tempo 不把 Git commit author、committer、Manifest `publisher` 或 `author` �
 
 | 现有模块 | 当前能力 | 本功能的处理 |
 | --- | --- | --- |
-| `src-tauri/src/plugins/package.rs` | 目录/ZIP staging、安全复制或解压、整包哈希、原子发布 | 抽取共享 package tree 校验；新增 Git tree 到 staging 的准备入口 |
-| `src-tauri/src/plugins/manifest.rs` | Manifest v1、平台和贡献点校验 | `dist/manifest.json` 是目录元数据权威来源；补充仓库 SemVer 兼容检查 |
-| `src-tauri/src/plugins/trust.rs` | 安装记录、信任、启停、`pending_version` | 保持当前语义；扩展 Git 仓库来源与 commit 字段 |
-| `src-tauri/src/commands/plugins.rs` | 本地导入、插件列表、信任、切换、卸载 | 本地导入行为不变；仓库命令放入独立模块 |
-| `src-tauri/src/plugins/paths.rs` | 插件包、数据、staging、trash 的统一路径 | Git 对象缓存继续放在统一插件存储根目录 |
+| `core/src-tauri/src/plugins/package.rs` | 目录/ZIP staging、安全复制或解压、整包哈希、原子发布 | 抽取共享 package tree 校验；新增 Git tree 到 staging 的准备入口 |
+| `core/src-tauri/src/plugins/manifest.rs` | Manifest v1、平台和贡献点校验 | `dist/manifest.json` 是目录元数据权威来源；补充仓库 SemVer 兼容检查 |
+| `core/src-tauri/src/plugins/trust.rs` | 安装记录、信任、启停、`pending_version` | 保持当前语义；扩展 Git 仓库来源与 commit 字段 |
+| `core/src-tauri/src/commands/plugins.rs` | 本地导入、插件列表、信任、切换、卸载 | 本地导入行为不变；仓库命令放入独立模块 |
+| `core/src-tauri/src/plugins/paths.rs` | 插件包、数据、staging、trash 的统一路径 | Git 对象缓存继续放在统一插件存储根目录 |
 | `PluginSettingsSection.tsx` | 已安装插件管理和本地导入 | 调整为“已安装 / 插件仓库”标签页，保留本地导入入口 |
 
 仓库安装不得把 `dist/` 直接复制到 `plugins/packages`，不得绕过 staging 和现有发布冲突检查。
@@ -271,7 +271,7 @@ flowchart LR
 建议新增：
 
 ```text
-src-tauri/src/plugins/repository/
+core/src-tauri/src/plugins/repository/
   mod.rs              对外服务与共享常量
   models.rs           索引、数据库和命令 DTO
   git.rs              bare 仓库、fetch、ref/commit/tree/blob 读取
@@ -285,7 +285,7 @@ src-tauri/src/plugins/repository/
   install.rs          commit/path 固定、staging 物化、发布和安装记录
   operations.rs       后台任务、互斥、取消、状态和事件
 
-src-tauri/src/commands/plugin_repositories.rs
+core/src-tauri/src/commands/plugin_repositories.rs
 ```
 
 前端建议新增：

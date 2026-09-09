@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
-const source = await readFile(new URL("../plugin-ui/bridge-client.js", import.meta.url), "utf8");
+const source = await readFile(new URL("../core/plugin-ui/bridge-client.js", import.meta.url), "utf8");
 const windowListeners = new Map();
 const parent = { postMessage() {} };
 const window = {
@@ -13,7 +13,7 @@ const window = {
   },
 };
 const context = vm.createContext({ atob, btoa, console, TextDecoder, TextEncoder, window });
-vm.runInContext(source, context, { filename: "plugin-ui/bridge-client.js" });
+vm.runInContext(source, context, { filename: "core/plugin-ui/bridge-client.js" });
 
 const hostFiles = new Map();
 parent.postMessage = (request) => {

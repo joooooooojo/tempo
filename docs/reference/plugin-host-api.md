@@ -1,11 +1,13 @@
 ---
 title: 平台 API
-description: window.tempo 与 globalThis.tempo 的方法、参数和运行位置。
+description: "@tempo/sdk 导出的 tempo 方法、参数和运行位置。"
 ---
 
 # 平台 API
 
-Tempo 把平台 API 注入插件运行环境：UI 使用 `window.tempo`，Runtime 使用 `globalThis.tempo`。这里的 API 不负责 UI 与 Runtime 通信；私有通信请使用 `ipcRenderer` 和 `ipcMain`。
+Tempo 把平台 API 注入插件运行环境。UI 从 `@tempo/sdk/ui` 导入 `tempo`，Runtime 从 `@tempo/sdk/runtime` 导入 `tempo`。这里的 API 不负责 UI 与 Runtime 通信；私有通信请使用 SDK 对应入口的 `ipcRenderer` 和 `ipcMain`。
+
+下面的片段省略重复的 SDK import。
 
 ## 可用位置
 
@@ -22,11 +24,11 @@ Tempo 把平台 API 注入插件运行环境：UI 使用 `window.tempo`，Runtim
 ## 页面上下文
 
 ```js
-const context = await window.tempo.ready();
+const context = await tempo.ready();
 console.log(context.apiVersion, context.theme, context.params, context.session);
 ```
 
-调用 `ready()` 后可以直接读取 `window.tempo.context`。通过 Action 打开 App 时，`context.params` 包含：
+调用 `ready()` 后可以直接读取 `tempo.context`。通过 Action 打开 App 时，`context.params` 包含：
 
 ```ts
 interface ActionInvocation {
@@ -59,7 +61,7 @@ const keys = await tempo.storage.list();
 await tempo.storage.delete("preferences");
 ```
 
-UI 中把 `tempo` 写成 `window.tempo`。不存在的 key 返回 `null`。
+不存在的 key 返回 `null`。
 
 - key 长度：1 到 256 个字符。
 - 单个值上限：256 KiB。
@@ -141,7 +143,7 @@ const theme = await tempo.theme.get();
 返回 `light`、`dark` 或 `system`。只有 UI 可以订阅变化：
 
 ```js
-const off = await window.tempo.theme.subscribe((theme) => {
+const off = await tempo.theme.subscribe((theme) => {
   document.documentElement.dataset.theme = theme;
 });
 ```
@@ -163,7 +165,7 @@ await tempo.mainPanel.hide();
 仅 UI 可用。退出当前插件页面并回到搜索：
 
 ```js
-await window.tempo.mainPanel.back();
+await tempo.mainPanel.back();
 ```
 
 Tempo 已在捕获阶段把 `Esc` 映射到此操作。
@@ -173,7 +175,7 @@ Tempo 已在捕获阶段把 `Esc` 映射到此操作。
 仅 UI 可用，只调整主面板高度：
 
 ```js
-await window.tempo.mainPanel.setSize(640);
+await tempo.mainPanel.setSize(640);
 ```
 
 ## 独立窗口
@@ -181,14 +183,14 @@ await window.tempo.mainPanel.setSize(640);
 只有 `windowMode: "standalone"` 的 UI 页面可以调用：
 
 ```js
-await window.tempo.window.setRect({
+await tempo.window.setRect({
   width: "80%",
   height: 560,
   x: "center",
   y: "10%",
 });
 
-await window.tempo.window.close();
+await tempo.window.close();
 ```
 
 - `width`：`320..4096` 像素或 `1%..100%`。
@@ -220,13 +222,13 @@ await tempo.external.open("https://example.com");
 页面 Session 用于恢复轻量 UI 状态：
 
 ```js
-await window.tempo.session.push({
+await tempo.session.push({
   route: "/editor/42",
   cursor: 120,
 });
 ```
 
-下次打开时从 `window.tempo.context.session` 读取。宿主按插件、App、插件版本和 `sessionVersion` 保存最新值，上限 64 KiB。长期数据使用 `tempo.storage`，不要把敏感信息放进 Session。
+下次打开时从 `tempo.context.session` 读取。宿主按插件、App、插件版本和 `sessionVersion` 保存最新值，上限 64 KiB。长期数据使用 `tempo.storage`，不要把敏感信息放进 Session。
 
 ## Runtime Commands
 

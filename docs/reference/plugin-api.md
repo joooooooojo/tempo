@@ -1,32 +1,34 @@
 ---
-title: 插件全局 API
-description: UI 与 Runtime 中由 Tempo 注入的全局变量、生命周期和 IPC。
+title: 插件 API 入口
+description: UI 与 Runtime 的 SDK 入口、宿主全局、生命周期和 IPC。
 ---
 
-# 插件全局 API
+# 插件 API 入口
 
-Tempo 在插件入口执行前直接注入 API。项目不需要安装或导入额外的 Tempo 包。
+Tempo 在插件入口执行前注入底层 API，`@tempo/sdk` 将它们封装为类型安全的模块导出。官方模板已经声明 SDK 依赖。
 
 ## 注入位置
 
-| 能力 | UI 页面 | Runtime |
+| 能力 | SDK 入口 | 底层宿主全局 |
 | --- | --- | --- |
-| 平台 API | `window.tempo` | `globalThis.tempo` |
-| UI ↔ Runtime | `window.ipcRenderer` | `globalThis.ipcMain` |
-| 生命周期 | WebView / 浏览器标准生命周期 | `onMounted`、`onUnmounted` |
+| UI | `@tempo/sdk/ui` | `window.tempo`、`window.ipcRenderer` |
+| Runtime | `@tempo/sdk/runtime` | `globalThis.tempo`、`globalThis.ipcMain`、生命周期函数 |
 
 ```js
-// UI
-await window.tempo.ready();
-void window.tempo.notify.show({ title: "UI ready" });
+import { tempo as uiTempo } from "@tempo/sdk/ui";
+
+await uiTempo.ready();
+void uiTempo.notify.show({ title: "UI ready" });
 
 // Runtime
+import { onMounted, tempo } from "@tempo/sdk/runtime";
+
 onMounted(() => {
   tempo.commands.register("run", async () => ({ ok: true }));
 });
 ```
 
-不需要插件包装对象、激活函数或任何模块导出。业务依赖仍然可以正常使用 npm，并由 Vite 打进最终产物。
+业务依赖和 SDK 由 Vite 打进最终产物。底层全局继续保留，以兼容不使用 SDK 的旧插件。
 
 ## tempo 的职责
 
@@ -62,12 +64,16 @@ IPC 只用于同一个插件内部的 UI 与 Runtime 通信。它与平台事件
 
 ```js
 // Runtime
+import { ipcMain } from "@tempo/sdk/runtime";
+
 ipcMain.handle("load-user", async (_event, userId) => {
   return { id: userId, name: "Ada" };
 });
 
 // UI
-const user = await window.ipcRenderer.invoke("load-user", "42");
+import { ipcRenderer } from "@tempo/sdk/ui";
+
+const user = await ipcRenderer.invoke("load-user", "42");
 ```
 
 `invoke` 返回 Promise。没有对应 handler 时会返回 `NOT_FOUND`。
@@ -76,13 +82,13 @@ const user = await window.ipcRenderer.invoke("load-user", "42");
 
 ```js
 // UI -> Runtime
-window.ipcRenderer.send("editor-changed", { dirty: true });
+ipcRenderer.send("editor-changed", { dirty: true });
 ipcMain.on("editor-changed", (event, payload) => {
   event.sender.send("save-state", { saving: payload.dirty });
 });
 
 // Runtime -> UI
-const off = window.ipcRenderer.on("save-state", (_event, payload) => {
+const off = ipcRenderer.on("save-state", (_event, payload) => {
   console.log(payload.saving);
 });
 ```
@@ -96,8 +102,8 @@ IPC 使用 Structured Clone。支持普通对象、数组、`Date`、`Map`、`Se
 名字相同也不会互相触发：
 
 ```js
-window.tempo.events.on("status.changed", onPlatformStatus);
-window.ipcRenderer.on("status.changed", onRuntimeStatus);
+tempo.events.on("status.changed", onPlatformStatus);
+ipcRenderer.on("status.changed", onRuntimeStatus);
 ```
 
 Tempo 在内部标记事件来源。平台广播只进入 `tempo.events`，Runtime 消息只进入 `ipcRenderer`。不要用 IPC 频道转发平台广播，除非你的业务确实需要 Runtime 处理后再把结果送给 UI。
@@ -107,8 +113,8 @@ Tempo 在内部标记事件来源。平台广播只进入 `tempo.events`，Runti
 UI 没有 Tempo 生命周期钩子。页面按标准 WebView 规则加载和销毁：
 
 ```js
-const context = await window.tempo.ready();
-window.tempo.events.on("clipboard.changed", console.log);
+const context = await tempo.ready();
+tempo.events.on("clipboard.changed", console.log);
 ```
 
 使用 React、Vue 等框架时，在框架自己的组件生命周期中订阅和释放即可。整个页面 document 被销毁后，WebView 与 Host 会清理页面监听和订阅。
@@ -134,6 +140,4 @@ onUnmounted(() => {
 
 ## TypeScript 类型
 
-插件开发助手会生成对应环境的本地声明文件。Hybrid 模板分别使用 `src/ui/tempo.d.ts` 与 `src/runtime/tempo.d.ts`，避免 UI 与 Runtime 的全局类型互相泄漏；UI 和 Headless 模板仍使用各自的 `src/tempo.d.ts`。这些声明文件不会进入运行时代码，也没有独立版本需要维护。
-
-UI 模板不会声明 Runtime 生命周期钩子。Hybrid 的 Runtime 入口单独声明 Runtime 全局变量，避免 UI 源码误用这些钩子。插件助手会从远端选择当前 Host API 能使用的最新模板，新建项目时即可获得对应类型，不需要等待 Tempo 应用发版。
+`@tempo/sdk/ui` 与 `@tempo/sdk/runtime` 分别导出各自环境的值和类型。Hybrid 的两个 TypeScript 子项目使用不同入口，因此 UI 不会误用 Runtime 生命周期，Runtime 也不会获得 DOM API。公共类型可从任一入口使用 `import type` 导入。

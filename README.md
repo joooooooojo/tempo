@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="./public/favicon.png" alt="Tempo" width="120">
+<img src="./core/public/favicon.png" alt="Tempo" width="120">
 
 **高性能、可扩展的桌面主面板与插件平台**
 
@@ -38,18 +38,18 @@ _以 Rust + Tauri 为宿主，统一搜索启动本机应用、官方能力与�
 **方式 2：源码构建**
 
 ```bash
-git clone https://github.com/joooooooojo/tempo.git
+git clone --recurse-submodules https://github.com/joooooooojo/tempo.git
 cd tempo
 
-pnpm install   # 或 npm install
-pnpm dev       # 或 npm run dev
+pnpm install
+pnpm dev
 ```
 
 构建安装包：
 
 ```bash
-npm run build
-# 输出：src-tauri/target/release/bundle/
+pnpm build
+# 输出：core/src-tauri/target/release/bundle/
 ```
 
 ### 使用
@@ -77,9 +77,9 @@ Tempo 的定位是**可扩展宿主**：内置应用与第三方插件在主面�
 | **声明式清单** | 导入时只解析 `manifest.json`，注册面板入口与快捷操作，不执行插件代码 |
 | **信任** | 用户确认后才视为信任包；含 `main` 的插件会提示其权限接近 Tempo 本体（读写文件、网络、起进程等） |
 | **启用** | 开关控制是否向面板注册贡献；Runtime **懒启动**，首次 `invoke` 或需要时才拉起 Node 进程 |
-| **Host Bridge** | Host 向 UI 注入 `window.tempo` / `window.ipcRenderer`，向 Runtime 注入 `globalThis.tempo` / `globalThis.ipcMain` |
-| **Runtime** | 声明 `main.mjs` / `main.js` 的插件在独立 Node 进程中运行；Supervisor 负责启停与清理 |
-| **安全模型** | 信任模型而非沙箱：恶意插件无法被能力列表完全拦住，请只安装可信来源 |
+| **SDK 与 Bridge** | Host 注入平台 API，`@tempo/sdk/ui` 与 `@tempo/sdk/runtime` 提供带类型的模块入口 |
+| **Runtime** | 声明 `main.mjs` / `main.js` 的插件在独立 Deno 进程中运行；Supervisor 负责权限、启停与清理 |
+| **安全模型** | Deno 的八项敏感权限默认关闭，由用户逐项授权；Host API 可直接使用 |
 
 ### 包结构与校验
 
@@ -94,29 +94,33 @@ com.example.myplugin/
   icons/...
 ```
 
-- **纯 UI**：无 `main`，不需安装插件 Node 运行时  
-- **混合 / 无界面**：有 `main` 时须在设置 → 插件中安装 **插件 Node 运行时**  
+- **纯 UI**：无 `main`，不需安装插件 Deno 运行时
+- **混合 / 无界面**：有 `main` 时须在设置 → 插件中安装 **插件 Deno 运行时**
 
-`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`contributes.apps` / `commands` / `actions` / `mcpTools` / `settings`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `examples/plugins/com.example.hello/manifest.json`。
+`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`permissions`、`contributes.apps` / `commands` / `actions` / `mcpTools` / `settings`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `templates/examples/plugins/com.example.hello/manifest.json`。
 
-文档：[在线文档](https://joooooooojo.github.io/tempo/)（本地：`pnpm docs:dev`）· [快速开始](./docs/guide/getting-started.md) · [插件开发](./docs/developer/index.md) · [插件全局 API](./docs/reference/plugin-api.md) · [平台 API](./docs/reference/plugin-host-api.md) · [Manifest](./docs/reference/manifest-schema.md)
+文档：[在线文档](https://joooooooojo.github.io/tempo/)（本地：`pnpm docs:dev`）· [快速开始](./docs/guide/getting-started.md) · [插件开发](./docs/developer/index.md) · [SDK](./docs/developer/sdk.md) · [插件 API 入口](./docs/reference/plugin-api.md) · [平台 API](./docs/reference/plugin-host-api.md) · [Manifest](./docs/reference/manifest-schema.md)
 
 ### 安装与试用（Hello 示例）
 
-1. 设置 → 插件 → 安装 **插件 Node 运行时**（仅含 `main` 的插件需要）  
-2. **导入目录** → 选择 `examples/plugins/com.example.hello`  
+1. 设置 → 插件 → 安装 **插件 Deno 运行时**（仅含 `main` 的插件需要）
+2. **导入目录** → 选择 `templates/examples/plugins/com.example.hello`
 3. 导入后为**未信任、已禁用**；点击 **信任** → 打开 **启用**  
 4. 主面板搜索「Hello 示例」「Hello 独立窗口」或快捷操作「Hello 一下」
 
-插件入口不需要额外的 Tempo 依赖或包装函数。Host 会在代码执行前注入全局 API：
+Vite 模板会安装 `@tempo/sdk`。SDK 把 Host 注入的 API 暴露为类型安全的模块入口：
 
 ```ts
 // UI
-await window.tempo.ready();
-const result = await window.ipcRenderer.invoke("greet", { who: "Tempo" });
-await window.tempo.notify.show({ title: result.greeting });
+import { ipcRenderer, tempo } from "@tempo/sdk/ui";
+
+await tempo.ready();
+const result = await ipcRenderer.invoke("greet", { who: "Tempo" });
+await tempo.notify.show({ title: result.greeting });
 
 // Runtime
+import { ipcMain, onMounted } from "@tempo/sdk/runtime";
+
 onMounted(() => {
   ipcMain.handle("greet", async (_event, { who }) => ({
     greeting: `Hello, ${who}!`,
@@ -133,7 +137,7 @@ Runtime 另外提供 `tempo.commands.register()` 给 Action 注册 Command，以
 
 ### Vite 项目模板
 
-插件开发助手会从 GitHub Pages 获取最新兼容的 UI、Hybrid、Headless 模板，并在本地缓存通过 SHA-256 校验的版本。模板与 Tempo 应用独立发布，不需要更新桌面端即可获得新模板。模板不依赖 Tempo npm 包，`pnpm build` 生成的 `dist` 已包含 `manifest.json` 和对应的 UI / Runtime 入口，可直接导入 Tempo。
+插件开发助手会从 GitHub Pages 获取最新兼容的 UI、Hybrid、Headless 模板，并在本地缓存通过 SHA-256 校验的版本。模板与 Tempo 应用独立发布，不需要更新桌面端即可获得新模板。模板使用 `@tempo/sdk`，Vite 会把 SDK 与其他依赖打进 `dist`，产物可直接导入 Tempo。
 
 模板目录同时协商版本化 Manifest Schema。新项目的 `manifest.json` 会自动写入当前模板对应的远端 `$schema` 地址。
 
@@ -167,25 +171,21 @@ Runtime 另外提供 `tempo.commands.register()` 给 Action 注册 Command，以
 | 前端 | React 19、TypeScript、Vite 7、Tailwind CSS 4、shadcn/ui |
 | 数据 | SQLite（rusqlite），存储路径可在设置中修改 |
 | 系统能力 | 全局快捷键、托盘、前台窗口检测（active-win）、剪贴板（arboard） |
-| 插件 | 嵌入式 Node Runtime、Supervisor、Host Bridge、MCP 桥接 |
+| 插件 | Deno Runtime、Supervisor、Host Bridge、`@tempo/sdk`、MCP 桥接 |
 
 ## 📁 项目结构
 
 ```
-├── src/
-│   ├── apps/                 # 应用/插件注册、快捷操作、面板宿主
-│   ├── builtin-plugins/      # 官方内置扩展（前端）
-│   ├── pages/                # 宿主壳（主面板 / 插件窗口）
-│   └── lib/
-├── src-tauri/src/
-│   ├── builtin_plugins/      # 官方内置扩展（后端命令与支持模块）
-│   ├── commands/             # 宿主 IPC（launcher / window / plugins / tracker…）
-│   ├── plugins/              # 清单解析、Runtime、Bridge、信任与安装
-│   └── mcp/                  # MCP HTTP 服务
-├── plugin-ui/                # Host 注入的页面 Bridge
-├── plugin-runtime/           # Runtime bootstrap
-├── templates/plugins/        # 独立发布的 UI / Hybrid / Headless 模板源
-└── examples/plugins/         # 示例插件（含 com.example.hello）
+├── core/                     # 主应用
+│   ├── src/                  # React UI 与内置插件
+│   ├── src-tauri/            # Tauri/Rust 宿主
+│   ├── plugin-ui/            # 页面 Bridge
+│   └── plugin-runtime/       # Deno Runtime bootstrap
+├── docs/                     # VitePress 文档站与 Schema
+├── sdk/                      # @tempo/sdk 源码
+├── templates/                # UI / Hybrid / Headless 模板与示例
+├── plugin-repository/        # 官方插件仓库 Submodule
+└── scripts/                  # 跨 workspace 的构建与校验脚本
 ```
 
 ## 💻 开发
@@ -193,10 +193,12 @@ Runtime 另外提供 `tempo.commands.register()` 给 Action 注册 Command，以
 ```bash
 pnpm dev                  # Tauri 开发模式
 pnpm run sync:app-version # 同步 Tempo 应用版本到 Cargo / Tauri
+pnpm sdk:build            # 构建 @tempo/sdk
+pnpm docs:dev             # 启动文档站
 pnpm run build            # 类型检查 + 发布构建
 ```
 
-Tempo 应用版本以根 `package.json` 为唯一来源：`npm version patch|minor|major` 会自动同步 `src-tauri`。插件 API 由 Host 注入，通过 `engines.pluginApi` 维护兼容范围，没有需要同步的独立包版本。
+Tempo 应用版本以 `core/package.json` 为唯一来源；在 `core` workspace 提升版本后会同步 `core/src-tauri`。插件 API 通过 `engines.pluginApi` 协商兼容性，`@tempo/sdk` 独立维护包版本。
 
 调试：开发模式下可通过 Tauri/WebView 开发者工具查看面板前端；插件 UI 可在对应面板内调试。
 

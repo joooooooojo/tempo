@@ -1,0 +1,3 @@
+[submodule "plugin-repository"]
+	path = plugin-repository
+	url = https://github.com/joooooooojo/tempo-official-warehouse.git

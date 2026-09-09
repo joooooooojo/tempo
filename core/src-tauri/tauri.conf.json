@@ -1,0 +1,85 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tempo",
+  "version": "2.2.6",
+  "identifier": "com.zekun.tempo",
+  "build": {
+    "beforeDevCommand": "node ../scripts/tauri-dev.mjs",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node ../scripts/tauri-build.mjs",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "requireLiteralLeadingDot": false,
+          "allow": [
+            "$APPDATA/Tempo/**",
+            "$APPDATA/**",
+            "$APPLOCALDATA/**",
+            "$HOME/**",
+            "$DESKTOP/**",
+            "$DOCUMENT/**",
+            "$DOWNLOAD/**",
+            "$PICTURE/**",
+            "$PUBLIC/**",
+            "$TEMP/**",
+            "$RESOURCE/**",
+            "/**",
+            "C:/**",
+            "D:/**",
+            "E:/**",
+            "F:/**",
+            "G:/**",
+            "H:/**",
+            "I:/**",
+            "J:/**",
+            "**/*"
+          ]
+        }
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2OTcwMTE1RTMyRkM0N0YKUldSL3hDL2pGUUdYbHNXdE9wclZpeUZ0TVRVRnJmWmJuUTNrS285QTBYNk9aV2dySU9waEpCVDQK",
+      "endpoints": [
+        "https://github.com/joooooooojo/tempo/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": [
+      "msi",
+      "app",
+      "dmg"
+    ],
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "bundleName": "Tempo",
+      "infoPlist": "Info.plist"
+    }
+  }
+}
