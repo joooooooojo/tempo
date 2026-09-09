@@ -141,19 +141,17 @@ pub fn plugin_icon_url(plugin_hash: &str, rel_path: &str) -> String {
 /// `/{viewInstanceId}/{pluginHash}/{relpath...}` from the incoming request path.
 fn parse_request_path(path: &str) -> Option<(Option<String>, String, String)> {
     let trimmed = path.trim_start_matches('/');
-    let mut parts = trimmed.splitn(3, '/');
-    let first = parts.next()?;
-    let second = parts.next()?;
-    if first.is_empty() || second.is_empty() {
+    let (first, rest) = trimmed.split_once('/')?;
+    if first.is_empty() || rest.is_empty() {
         return None;
     }
     let (view_instance_id, hash, rel_encoded) = if first.starts_with("view-") {
-        let rel_encoded = parts.next()?;
-        (Some(first.to_string()), second.to_string(), rel_encoded)
+        let (hash, rel_encoded) = rest.split_once('/')?;
+        (Some(first.to_string()), hash.to_string(), rel_encoded)
     } else {
-        (None, first.to_string(), second)
+        (None, first.to_string(), rest)
     };
-    if rel_encoded.is_empty() {
+    if hash.is_empty() || rel_encoded.is_empty() {
         return None;
     }
     let rel = rel_encoded
@@ -577,6 +575,16 @@ mod tests {
                 "plugin-hash".into(),
                 "dist/index.html".into(),
             ))
+        );
+    }
+
+    #[test]
+    fn public_asset_urls_preserve_nested_relative_paths() {
+        let url = plugin_icon_url("plugin-hash", "icons/app.svg");
+        let path = url::Url::parse(&url).unwrap().path().to_string();
+        assert_eq!(
+            parse_request_path(&path),
+            Some((None, "plugin-hash".into(), "icons/app.svg".into()))
         );
     }
 
