@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import {
+  existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync,
+} from "node:fs";
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { scaDecode } from "../plugin-runtime/structured-clone.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const deno = process.env.TEMPO_PLUGIN_DENO_PATH;
@@ -49,6 +53,7 @@ async function runPlugin(t, packageDir, scratch, calls) {
   const sockets = new Set();
   const responses = new Map();
   const hostCalls = [];
+  const hostPath = relative => path.join(data,...String(relative ?? "").split("/"));
   let failure;
   const server = net.createServer(socket => {
     sockets.add(socket);
@@ -72,6 +77,39 @@ async function runPlugin(t, packageDir, scratch, calls) {
             let result = {};
             if (frame.method === "notify.show") result = {};
             else if (frame.method === "storage.plugin.get") result = {value:{"default-who":"Deno"}};
+            else if (frame.method === "files.mkdir") {
+              mkdirSync(hostPath(frame.params.path),{recursive:frame.params.recursive === true});
+              result = null;
+            }
+            else if (frame.method === "files.writeText" || frame.method === "files.writeBytes") {
+              writeFileSync(hostPath(frame.params.path),Buffer.from(frame.params.base64,"base64"));
+              result = null;
+            } else if (frame.method === "files.readText" || frame.method === "files.readBytes") {
+              result = {base64:readFileSync(hostPath(frame.params.path)).toString("base64")};
+            } else if (frame.method === "files.stat") {
+              const target = hostPath(frame.params.path);
+              const stat = existsSync(target) ? statSync(target) : null;
+              result = {stat:stat === null ? null : {
+                path:frame.params.path,type:stat.isFile() ? "file" : stat.isDirectory() ? "directory" : "other",
+                size:stat.isFile() ? stat.size : null,modifiedAt:stat.mtime.toISOString(),
+              }};
+            } else if (frame.method === "files.list") {
+              const relative = String(frame.params.path ?? "");
+              const entries = readdirSync(hostPath(relative),{withFileTypes:true}).map(entry => {
+                const entryRelative = relative ? `${relative}/${entry.name}` : entry.name;
+                const stat = statSync(hostPath(entryRelative));
+                return {name:entry.name,path:entryRelative,
+                  type:entry.isFile() ? "file" : entry.isDirectory() ? "directory" : "other",
+                  size:entry.isFile() ? stat.size : null,modifiedAt:stat.mtime.toISOString()};
+              });
+              result = {entries};
+            } else if (frame.method === "files.rename") {
+              renameSync(hostPath(frame.params.from),hostPath(frame.params.to));
+              result = null;
+            } else if (frame.method === "files.remove") {
+              rmSync(hostPath(frame.params.path),{recursive:frame.params.recursive === true});
+              result = null;
+            }
             else throw new Error(`unexpected Host method ${frame.method}`);
             socket.write(encode({type:"response",id:frame.id,ok:true,result}));
           } else if (frame.type === "response") {
@@ -88,10 +126,14 @@ async function runPlugin(t, packageDir, scratch, calls) {
   await once(server, "listening");
   const port = server.address().port;
   const reads = [packageDir, ...(policy.read?.includes("$DATA") ? [data] : [])];
-  const args = ["run", "--no-config", "--no-lock", "--no-prompt", "--cached-only", "--no-remote", "--no-npm", "--node-modules-dir=none",
-    `--allow-read=${reads.join(",")}`, `--allow-net=127.0.0.1:${port}`,
-    ...(policy.write?.includes("$DATA") ? [`--allow-write=${data}`] : []), bootstrap];
-  const env = {DENO_DIR:path.join(scratch,"cache")};
+  const netScopes = [`127.0.0.1:${port}`,...(policy.net ?? [])];
+  const args = policy.all === true
+    ? ["run","--no-config","--no-lock","--no-prompt","-A",bootstrap]
+    : ["run", "--no-config", "--no-lock", "--no-prompt", "--cached-only", "--no-remote", "--no-npm", "--node-modules-dir=none",
+      `--allow-read=${reads.join(",")}`, `--allow-net=${netScopes.join(",")}`,
+      ...(policy.write?.includes("$DATA") ? [`--allow-write=${data}`] : []),
+      ...(policy.env?.length ? [`--allow-env=${policy.env.join(",")}`] : []),bootstrap];
+  const env = {DENO_DIR:path.join(data,"cache")};
   for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP"]) if (process.env[key]) env[key] = process.env[key];
   const child = spawn(deno, args, {cwd:packageDir, env, windowsHide:true});
   const timer = setTimeout(() => child.kill(), 12000);
@@ -115,7 +157,7 @@ for (const kind of ["ui", "hybrid", "headless"]) {
   test(`${kind} template typechecks and builds`, async t => {
     // Keep the scratch project beneath the repository so the tested toolchain resolves normally.
     const scratch = await mkdtemp(path.join(root,".plugin-template-test-"));
-    t.after(() => rm(scratch,{recursive:true,force:true}));
+    t.after(() => rm(scratch,{recursive:true,force:true,maxRetries:5,retryDelay:100}));
     const project = path.join(scratch,"project");
     await cp(path.join(root,"templates/plugins",kind),project,{recursive:true});
     await renderTree(project,kind);
@@ -150,14 +192,61 @@ for (const kind of ["ui", "hybrid", "headless"]) {
   });
 }
 
-test("Hello demo runs Command, MCP and IPC with declared data write permission",{skip:!deno},async t => {
+test("Hello demo declares no Deno permissions",async () => {
+  const manifest = JSON.parse(await readFile(
+    path.join(root,"examples/plugins/com.example.hello/manifest.json"),"utf8",
+  ));
+  assert.equal(manifest.version,"2.1.0");
+  assert.equal(manifest.engines.pluginApi,"^2.1.0");
+  assert.deepEqual(manifest.permissions,{});
+});
+
+test("Hello demo uses Host files and blocks undeclared Deno permissions",{skip:!deno},async t => {
   const scratch = await mkdtemp(path.join(root,".plugin-template-test-"));
-  t.after(() => rm(scratch,{recursive:true,force:true}));
+  t.after(() => rm(scratch,{recursive:true,force:true,maxRetries:5,retryDelay:100}));
   const calls = [{type:"invoke",id:"command",commandId:"hello",params:{who:"Command"}},
     {type:"mcp-invoke",id:"mcp",toolName:"say-hello",arguments:{who:"MCP"}},
-    {type:"ipc-invoke",id:"ipc",channel:"greet",args:[{who:"IPC"}]}];
+    {type:"ipc-invoke",id:"ipc",channel:"greet",args:[{who:"IPC"}]},
+    {type:"ipc-invoke",id:"permissions",channel:"permission-probe",args:[]}];
   const result = await runPlugin(t,path.join(root,"examples/plugins/com.example.hello"),scratch,calls);
   const log = await readFile(path.join(result.data,"hello.log"),"utf8");
   for (const who of ["Command", "MCP", "IPC"]) assert.ok(log.includes(`Hello, ${who}!`));
   assert.equal(result.hostCalls.filter(method => method === "notify.show").length,3);
+  const permissions = scaDecode(result.responses.get("permissions"));
+  assert.deepEqual(permissions.declared,{});
+  assert.equal(permissions.host.ok,true);
+  assert.deepEqual(permissions.host.bytes,[0,1,2,255]);
+  assert.equal(permissions.direct.read.allowed,false);
+  assert.equal(permissions.direct.write.allowed,false);
+  for (const [name,state] of Object.entries(permissions.permissions)) {
+    assert.notEqual(state,"granted",`${name} should remain blocked`);
+  }
+
+  for (const [mode,policy] of [
+    ["granular",{read:["$DATA"],write:["$DATA"],net:["example.com:443"],env:["PERMISSION_DEMO_VALUE"]}],
+    ["all",{all:true}],
+  ]) {
+    const packageDir = path.join(scratch,mode);
+    await cp(path.join(root,"examples/plugins/com.example.hello"),packageDir,{recursive:true});
+    const manifestPath = path.join(packageDir,"manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath,"utf8"));
+    manifest.permissions = policy;
+    await writeFile(manifestPath,`${JSON.stringify(manifest,null,2)}\n`);
+    const grantedResult = await runPlugin(t,packageDir,scratch,[
+      {type:"ipc-invoke",id:"permissions",channel:"permission-probe",args:[]},
+    ]);
+    const granted = scaDecode(grantedResult.responses.get("permissions"));
+    assert.deepEqual(granted.declared,policy);
+    assert.equal(granted.host.ok,true);
+    assert.equal(granted.direct.read.allowed,true);
+    assert.equal(granted.direct.write.allowed,true);
+    for (const name of ["read","write","net","env"]) {
+      assert.equal(granted.permissions[name],"granted",`${mode} should grant ${name}`);
+    }
+    for (const name of ["sys","run","ffi"]) {
+      if (mode === "all") assert.equal(granted.permissions[name],"granted");
+      else assert.notEqual(granted.permissions[name],"granted",`${mode} should block ${name}`);
+    }
+    assert.equal(granted.permissions.import,mode === "all" ? "granted" : "denied");
+  }
 });

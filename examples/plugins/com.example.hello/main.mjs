@@ -1,5 +1,126 @@
-import fs from "node:fs/promises";
-import path from "node:path";
+const PRIVATE_LOG_PATH = "hello.log";
+const PERMISSION_DEMO_DIRECTORY = "permissions-demo";
+
+let logWriteQueue = Promise.resolve();
+
+async function appendPrivateLog(line) {
+  const write = logWriteQueue.then(async () => {
+    const existing = (await tempo.files.stat(PRIVATE_LOG_PATH))
+      ? await tempo.files.readText(PRIVATE_LOG_PATH)
+      : "";
+    await tempo.files.writeText(PRIVATE_LOG_PATH, `${existing}${line}`);
+  });
+  logWriteQueue = write.catch(() => {});
+  return write;
+}
+
+async function removePrivateFileIfPresent(path) {
+  if (await tempo.files.stat(path)) {
+    await tempo.files.remove(path);
+  }
+}
+
+async function attempt(operation) {
+  try {
+    await operation();
+    return { allowed: true, error: null };
+  } catch (error) {
+    return {
+      allowed: false,
+      error: error && typeof error === "object" && "name" in error ? String(error.name) : "Error",
+    };
+  }
+}
+
+async function queryDenoPermissions(dataFile, declaredPermissions) {
+  const descriptors = {
+    read: { name: "read", path: dataFile },
+    write: { name: "write", path: dataFile },
+    net: { name: "net", host: "example.com:443" },
+    env: { name: "env", variable: "PERMISSION_DEMO_VALUE" },
+    sys: { name: "sys", kind: "hostname" },
+    run: { name: "run", command: "permission-demo-command" },
+    ffi: { name: "ffi", path: dataFile },
+  };
+  const entries = await Promise.all(
+    Object.entries(descriptors).map(async ([name, descriptor]) => {
+      try {
+        const status = await Deno.permissions.query(descriptor);
+        return [name, status.state];
+      } catch (error) {
+        const reason = error && typeof error === "object" && "name" in error
+          ? String(error.name)
+          : "unsupported";
+        return [name, reason];
+      }
+    }),
+  );
+  return {
+    ...Object.fromEntries(entries),
+    // Restricted runtimes always use --no-remote; Deno reports the import query as granted
+    // because Host IPC needs --allow-net, so derive the effective import policy here.
+    import: declaredPermissions.all === true ? "granted" : "denied",
+  };
+}
+
+async function readDeclaredPermissions() {
+  const manifestUrl = new URL("./manifest.json", import.meta.url);
+  const manifest = JSON.parse(await Deno.readTextFile(manifestUrl));
+  return manifest.permissions ?? {};
+}
+
+async function runPermissionProbe() {
+  const directory = PERMISSION_DEMO_DIRECTORY;
+  const hostTextPath = `${directory}/host.txt`;
+  const hostBytesPath = `${directory}/host.bin`;
+  const draftPath = `${directory}/draft.txt`;
+  const renamedPath = `${directory}/renamed.txt`;
+  const directWritePath = `${directory}/deno-direct.txt`;
+
+  await tempo.files.mkdir(directory, { recursive: true });
+  await removePrivateFileIfPresent(renamedPath);
+  await removePrivateFileIfPresent(directWritePath);
+  await tempo.files.writeText(hostTextPath, "tempo.files works without Deno file permission");
+  await tempo.files.writeBytes(hostBytesPath, new Uint8Array([0, 1, 2, 255]));
+  await tempo.files.writeText(draftPath, "rename works");
+  await tempo.files.rename(draftPath, renamedPath);
+
+  const hostText = await tempo.files.readText(hostTextPath);
+  const hostBytes = await tempo.files.readBytes(hostBytesPath);
+  const hostStat = await tempo.files.stat(renamedPath);
+  const hostEntries = await tempo.files.list(directory);
+  const absoluteHostTextPath = `${tempo.paths.data}/${hostTextPath}`;
+  const absoluteDirectWritePath = `${tempo.paths.data}/${directWritePath}`;
+  const declared = await readDeclaredPermissions();
+  const permissions = await queryDenoPermissions(absoluteHostTextPath, declared);
+  const directRead = await attempt(() => Deno.readTextFile(absoluteHostTextPath));
+  const directWrite = await attempt(() =>
+    Deno.writeTextFile(absoluteDirectWritePath, "Deno direct write succeeded"),
+  );
+  if (directWrite.allowed) {
+    await tempo.files.remove(directWritePath);
+  }
+
+  return {
+    declared,
+    permissions,
+    host: {
+      ok:
+        hostText === "tempo.files works without Deno file permission" &&
+        hostBytes.join(",") === "0,1,2,255" &&
+        hostStat?.type === "file" &&
+        hostEntries.some((entry) => entry.name === "renamed.txt"),
+      text: hostText,
+      bytes: Array.from(hostBytes),
+      entries: hostEntries.map((entry) => entry.name),
+      renamedType: hostStat?.type ?? null,
+    },
+    direct: {
+      read: directRead,
+      write: directWrite,
+    },
+  };
+}
 
 function readPluginSettings(settings) {
   const loud = Boolean(settings.loud);
@@ -65,8 +186,7 @@ async function greet(params) {
   const timestamp = at.toISOString();
   const line = `${greeting} [theme=${theme}; langs=${langLabel}] (${timestamp})\n`;
 
-  const logPath = path.join(tempo.paths.data, "hello.log");
-  await fs.appendFile(logPath, line, "utf8");
+  await appendPrivateLog(line);
 
   await tempo.notify.show({
     title: loud ? "HELLO 示例插件" : "Hello 示例插件",
@@ -82,11 +202,12 @@ async function greet(params) {
     langs,
   });
 
-  return { who, at, timestamp, logPath, loud, theme, langs, greeting };
+  return { who, at, timestamp, logPath: PRIVATE_LOG_PATH, loud, theme, langs, greeting };
 }
 
 onMounted(() => {
   ipcMain.handle("greet", async (_event, params) => greet(params ?? {}));
+  ipcMain.handle("permission-probe", () => runPermissionProbe());
 
   // Dedicated SCA probe: UI -> Runtime invoke + Runtime -> UI send.
   ipcMain.handle("sca-probe", async (_event, incoming) => {

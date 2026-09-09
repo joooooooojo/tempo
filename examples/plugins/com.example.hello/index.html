@@ -25,6 +25,10 @@
         font-size: 15px;
         margin: 0;
       }
+      h2 {
+        font-size: 13px;
+        margin: 0;
+      }
       p {
         margin: 0;
         font-size: 12px;
@@ -52,6 +56,14 @@
         color: white;
         cursor: pointer;
       }
+      button.secondary {
+        border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+        background: transparent;
+        color: inherit;
+      }
+      button.permissions-button {
+        background: #0f766e;
+      }
       button:disabled {
         opacity: 0.6;
         cursor: default;
@@ -67,6 +79,62 @@
         font-size: 11px;
         opacity: 0.6;
       }
+      .permissions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-top: 12px;
+        border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+      }
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      #permission-policy {
+        font-family: ui-monospace, monospace;
+      }
+      .permission-list {
+        display: grid;
+        grid-template-columns: minmax(150px, 1fr) minmax(120px, 1fr);
+        gap: 0 12px;
+        margin: 0;
+      }
+      .permission-list > div {
+        display: contents;
+      }
+      .permission-list dt,
+      .permission-list dd {
+        margin: 0;
+        padding: 5px 0;
+        border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+        font-size: 12px;
+      }
+      .permission-list dd {
+        text-align: right;
+        font-family: ui-monospace, monospace;
+      }
+      .permission-list dd[data-status="allowed"] {
+        color: #15803d;
+      }
+      .permission-list dd[data-status="blocked"] {
+        opacity: 0.65;
+      }
+      .permission-list dd[data-status="error"] {
+        color: #b91c1c;
+      }
+      @media (max-width: 560px) {
+        .row {
+          flex-wrap: wrap;
+        }
+        .row input {
+          flex-basis: 100%;
+        }
+        .permission-list {
+          grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr);
+        }
+      }
     </style>
   </head>
   <body>
@@ -76,7 +144,7 @@
     <div class="row">
       <input id="who" type="text" placeholder="你的名字" value="Tempo" />
       <button id="go">打招呼（Runtime）</button>
-      <button id="sca" type="button" title="测试 Date/Map/Set/TypedArray/循环引用 经 ipcRenderer">
+      <button id="sca" class="secondary" type="button" title="测试 Date/Map/Set/TypedArray/循环引用 经 ipcRenderer">
         测试 SCA
       </button>
     </div>
@@ -84,7 +152,26 @@
       「测试 SCA」会走 ipcRenderer / ipcMain，校验 Date · Map · Set · Uint8Array · 循环引用。
     </p>
     <div id="log"></div>
-    <input type="file">
+    <section class="permissions" aria-labelledby="permissions-title">
+      <div class="section-header">
+        <h2 id="permissions-title">权限检查</h2>
+        <button id="permissions" class="permissions-button" type="button">运行检查</button>
+      </div>
+      <p id="permission-policy">Manifest：等待检查</p>
+      <dl class="permission-list">
+        <div><dt>tempo.files（UI）</dt><dd id="permission-host-ui">待检查</dd></div>
+        <div><dt>tempo.files（Runtime）</dt><dd id="permission-host-runtime">待检查</dd></div>
+        <div><dt>Deno read（$DATA）</dt><dd id="permission-read">待检查</dd></div>
+        <div><dt>Deno write（$DATA）</dt><dd id="permission-write">待检查</dd></div>
+        <div><dt>Deno net</dt><dd id="permission-net">待检查</dd></div>
+        <div><dt>Deno env</dt><dd id="permission-env">待检查</dd></div>
+        <div><dt>Deno sys</dt><dd id="permission-sys">待检查</dd></div>
+        <div><dt>Deno run</dt><dd id="permission-run">待检查</dd></div>
+        <div><dt>Deno ffi</dt><dd id="permission-ffi">待检查</dd></div>
+        <div><dt>Deno import</dt><dd id="permission-import">待检查</dd></div>
+      </dl>
+    </section>
+    <input type="file" />
     <script type="module" src="./index.js"></script>
   </body>
 </html>

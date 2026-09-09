@@ -5,9 +5,12 @@ const context = await window.tempo.ready();
   const whoInput = document.getElementById("who");
   const goButton = document.getElementById("go");
   const scaButton = document.getElementById("sca");
+  const permissionsButton = document.getElementById("permissions");
   const logEl = document.getElementById("log");
   const themeEl = document.getElementById("theme");
   const pluginSettingsEl = document.getElementById("plugin-settings");
+  const permissionPolicyEl = document.getElementById("permission-policy");
+  const permissionNames = ["read", "write", "net", "env", "sys", "run", "ffi", "import"];
 
   function appendLog(line) {
     logEl.textContent = `${line}\n${logEl.textContent}`.trim();
@@ -68,6 +71,36 @@ const context = await window.tempo.ready();
       value.bytes instanceof Uint8Array &&
       value.self === value
     );
+  }
+
+  function setPermissionResult(id, text, status) {
+    const element = document.getElementById(`permission-${id}`);
+    element.textContent = text;
+    element.dataset.status = status;
+  }
+
+  function renderQueriedPermission(name, state) {
+    if (state === "granted") {
+      setPermissionResult(name, "允许", "allowed");
+      return;
+    }
+    if (state === "denied" || state === "prompt") {
+      setPermissionResult(name, `已阻止（${state}）`, "blocked");
+      return;
+    }
+    setPermissionResult(name, `无法查询（${state}）`, "error");
+  }
+
+  async function runUiFileProbe() {
+    const directory = "permissions-demo";
+    const textPath = `${directory}/ui.txt`;
+    const bytesPath = `${directory}/ui.bin`;
+    await window.tempo.files.mkdir(directory, { recursive: true });
+    await window.tempo.files.writeText(textPath, "UI host file API works");
+    await window.tempo.files.writeBytes(bytesPath, new Uint8Array([3, 2, 1]));
+    const text = await window.tempo.files.readText(textPath);
+    const bytes = await window.tempo.files.readBytes(bytesPath);
+    return text === "UI host file API works" && bytes.join(",") === "3,2,1";
   }
 
   themeEl.textContent = `宿主主题：${context.theme} · API v${context.apiVersion}`;
@@ -169,5 +202,50 @@ const context = await window.tempo.ready();
       appendLog(`SCA 探测失败：${error.message ?? error}`);
     } finally {
       scaButton.disabled = false;
+    }
+  });
+
+  permissionsButton.addEventListener("click", async () => {
+    permissionsButton.disabled = true;
+    permissionPolicyEl.textContent = "Manifest：检查中";
+    setPermissionResult("host-ui", "检查中", "blocked");
+    setPermissionResult("host-runtime", "检查中", "blocked");
+    for (const name of permissionNames) setPermissionResult(name, "检查中", "blocked");
+    try {
+      const uiHostOk = await runUiFileProbe();
+      setPermissionResult("host-ui", uiHostOk ? "允许（读写成功）" : "结果不一致", uiHostOk ? "allowed" : "error");
+
+      const result = await window.ipcRenderer.invoke("permission-probe");
+      permissionPolicyEl.textContent = `Manifest：${JSON.stringify(result.declared ?? {})}`;
+      setPermissionResult(
+        "host-runtime",
+        result.host?.ok ? "允许（完整操作成功）" : "操作失败",
+        result.host?.ok ? "allowed" : "error",
+      );
+
+      for (const name of permissionNames) {
+        if (name === "read" || name === "write") continue;
+        renderQueriedPermission(name, result.permissions?.[name] ?? "unknown");
+      }
+
+      for (const name of ["read", "write"]) {
+        const direct = result.direct?.[name];
+        if (direct?.allowed) {
+          setPermissionResult(name, "允许（实际调用成功）", "allowed");
+        } else {
+          const state = result.permissions?.[name] ?? "unknown";
+          const error = direct?.error ?? "Error";
+          setPermissionResult(name, `已阻止（${state} / ${error}）`, "blocked");
+        }
+      }
+      appendLog(
+        `权限检查：Host UI=${uiHostOk ? "ok" : "FAIL"} · Host Runtime=${result.host?.ok ? "ok" : "FAIL"} · Deno=${JSON.stringify(result.permissions)}`,
+      );
+    } catch (error) {
+      permissionPolicyEl.textContent = "Manifest：检查失败";
+      setPermissionResult("host-runtime", error.message ?? String(error), "error");
+      appendLog(`权限检查失败：${error.message ?? error}`);
+    } finally {
+      permissionsButton.disabled = false;
     }
   });

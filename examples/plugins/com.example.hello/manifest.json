@@ -3,15 +3,15 @@
   "manifestVersion": 2,
   "id": "com.example.hello",
   "name": "Hello 示例插件",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "engines": {
     "tempo": ">=2.2.6",
-    "pluginApi": "^2.0.0"
+    "pluginApi": "^2.1.0"
   },
   "kind": "hybrid",
   "author": "Tempo",
   "publisher": "tempo-examples",
-  "description": "混合示例：Action 使用 Command，MCP Tool 使用 tempo.mcpTools.register，UI 与 Runtime 使用私有 IPC。",
+  "description": "混合示例：演示 Host API、私有文件、Deno 权限、Command、MCP Tool 和 UI/Runtime IPC。",
   "homepage": "https://example.com/tempo-plugins/hello",
   "license": "MIT",
   "categories": [
@@ -105,7 +105,7 @@
             },
             "logPath": {
               "type": "string",
-              "description": "Absolute path to the plugin log file"
+              "description": "Plugin-relative path to the private log file"
             },
             "loud": {
               "type": "boolean",
@@ -204,7 +204,5 @@
       }
     ]
   },
-  "permissions": {
-    "write": ["$DATA"]
-  }
+  "permissions": {}
 }
