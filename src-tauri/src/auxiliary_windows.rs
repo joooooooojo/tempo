@@ -89,6 +89,7 @@ pub fn precache_auxiliary_windows(app: &AppHandle) -> tauri::Result<()> {
 /// Visibility itself is owned by `crate::main_panel`, which shows the window
 /// after this returns.
 pub(crate) fn prepare_main_panel_for_show(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    let monitor = active_main_panel_monitor(app);
     let (default_width, default_height) = main_panel_window_size();
     let mut width = default_width;
     let mut height = default_height;
@@ -106,9 +107,20 @@ pub(crate) fn prepare_main_panel_for_show(app: &AppHandle) -> tauri::Result<Webv
         window
     };
 
-    if !place_main_panel_at_saved_position(app, &window, width, height)? {
-        place_main_panel_window(app, &window, width, height, true)?;
+    let target_monitor = monitor
+        .as_ref()
+        .map(|m| (m.name().cloned(), *m.position(), *m.size()));
+    let used_saved = place_main_panel_at_saved_position(app, &window, width, height, monitor.as_ref())?;
+    if !used_saved {
+        place_main_panel_on_monitor(&window, width, height, true, monitor)?;
     }
+    tracing::debug!(
+        ?target_monitor,
+        used_saved,
+        position = ?window.outer_position().ok(),
+        size = ?window.outer_size().ok(),
+        "main panel placed"
+    );
     crate::logging::debug_if_err(
         window.set_always_on_top(true),
         "set main panel always on top",
@@ -234,11 +246,47 @@ pub(crate) fn monitor_containing_position(
     app.available_monitors().ok()?.into_iter().find(|monitor| {
         let origin = monitor.position();
         let size = monitor.size();
-        position.x >= origin.x
-            && position.y >= origin.y
-            && i64::from(position.x) < i64::from(origin.x) + i64::from(size.width)
-            && i64::from(position.y) < i64::from(origin.y) + i64::from(size.height)
+        position_in_screen(position, *origin, *size)
     })
+}
+
+fn position_in_screen(
+    position: PhysicalPosition<i32>,
+    origin: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+) -> bool {
+    position.x >= origin.x
+        && position.y >= origin.y
+        && i64::from(position.x) < i64::from(origin.x) + i64::from(size.width)
+        && i64::from(position.y) < i64::from(origin.y) + i64::from(size.height)
+}
+
+fn active_main_panel_monitor(app: &AppHandle) -> Option<Monitor> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        let foreground = unsafe { GetForegroundWindow() };
+        if !foreground.0.is_null() {
+            let handle = unsafe { MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST) };
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if unsafe { GetMonitorInfoW(handle, &mut info) }.as_bool() {
+                if let Ok(Some(monitor)) = app.monitor_from_point(
+                    f64::from(info.rcMonitor.left), f64::from(info.rcMonitor.top),
+                ) {
+                    return Some(monitor);
+                }
+            }
+        }
+    }
+    app.cursor_position().ok()
+        .and_then(|position| app.monitor_from_point(position.x, position.y).ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten())
 }
 
 pub(crate) fn clamp_position_to_monitor(
@@ -262,6 +310,7 @@ fn place_main_panel_at_saved_position(
     window: &WebviewWindow,
     width: f64,
     height: f64,
+    target_monitor: Option<&Monitor>,
 ) -> tauri::Result<bool> {
     let Some(position) = load_main_panel_position(app) else {
         return Ok(false);
@@ -269,6 +318,10 @@ fn place_main_panel_at_saved_position(
     let Some(monitor) = monitor_containing_position(app, position) else {
         return Ok(false);
     };
+    // A saved drag position is valid only on the screen selected for this open.
+    if target_monitor.is_some_and(|target| !position_in_screen(position, *target.position(), *target.size())) {
+        return Ok(false);
+    }
 
     window.set_position(position)?;
     place_main_panel_window(app, window, width, height, false)?;
@@ -369,27 +422,30 @@ fn place_main_panel_window(
     requested_height: f64,
     follow_cursor: bool,
 ) -> tauri::Result<()> {
+    let monitor = if follow_cursor {
+        active_main_panel_monitor(app)
+    } else {
+        window.current_monitor().ok().flatten()
+            .or_else(|| active_main_panel_monitor(app))
+    };
+    place_main_panel_on_monitor(window, requested_width, requested_height, follow_cursor, monitor)
+}
+
+fn place_main_panel_on_monitor(
+    window: &WebviewWindow,
+    requested_width: f64,
+    requested_height: f64,
+    reposition: bool,
+    monitor: Option<Monitor>,
+) -> tauri::Result<()> {
     let max_width = requested_width
         .max(MAIN_PANEL_WIDTH)
         .min(MAIN_PANEL_MAX_WIDTH.max(MAIN_PANEL_WIDTH));
-    let cursor_monitor = || {
-        app.cursor_position().ok().and_then(|position| {
-            app.monitor_from_point(position.x, position.y)
-                .ok()
-                .flatten()
-        })
-    };
-    let monitor = follow_cursor
-        .then(cursor_monitor)
-        .flatten()
-        .or_else(|| window.current_monitor().ok().flatten())
-        .or_else(cursor_monitor)
-        .or_else(|| app.primary_monitor().ok().flatten());
     let Some(monitor) = monitor else {
         let height = requested_height.clamp(MAIN_PANEL_MIN_HEIGHT, MAIN_PANEL_MAX_HEIGHT);
         let width = requested_width.clamp(320.0, max_width);
         window.set_size(LogicalSize::new(width, height))?;
-        if follow_cursor {
+        if reposition {
             return window.center();
         }
         return Ok(());
@@ -407,8 +463,8 @@ fn place_main_panel_window(
 
     let physical_width = (width * scale).round() as i32;
     let physical_height = (height * scale).round() as u32;
-    // Opening follows the cursor/monitor; later resizes keep the user's drag position.
-    if follow_cursor {
+    // Opening follows the active screen; later resizes keep the user's drag position.
+    if reposition {
         let x = work_area.position.x + (work_area.size.width as i32 - physical_width) / 2;
         let y = work_area.position.y + (top_offset * scale).round() as i32;
         window.set_position(PhysicalPosition::new(x, y))?;
@@ -1225,4 +1281,31 @@ fn clear_macos_main_panel_vibrancy(window: &WebviewWindow) {
     use window_vibrancy::clear_vibrancy;
 
     crate::logging::debug_if_err(clear_vibrancy(window), "clear main panel vibrancy");
+}
+
+#[cfg(test)]
+mod main_panel_placement_tests {
+    use super::position_in_screen;
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn saved_primary_position_does_not_override_active_secondary_screen() {
+        let saved = PhysicalPosition::new(560, 180);
+        let primary = PhysicalPosition::new(0, 0);
+        let secondary = PhysicalPosition::new(1920, 0);
+        let size = PhysicalSize::new(1920, 1080);
+        assert!(position_in_screen(saved, primary, size));
+        assert!(!position_in_screen(saved, secondary, size));
+        assert!(position_in_screen(PhysicalPosition::new(2240, 180), secondary, size));
+    }
+
+    #[test]
+    fn negative_screen_origins_and_mixed_physical_sizes_are_supported() {
+        let origin = PhysicalPosition::new(-2560, -400);
+        let size = PhysicalSize::new(2560, 1440);
+        assert!(position_in_screen(PhysicalPosition::new(-2000, -100), origin, size));
+        assert!(position_in_screen(origin, origin, size));
+        assert!(!position_in_screen(PhysicalPosition::new(0, 0), origin, size));
+        assert!(!position_in_screen(PhysicalPosition::new(-2000, 1040), origin, size));
+    }
 }

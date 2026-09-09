@@ -18,8 +18,6 @@ mod macos_dock;
 mod macos_overlay_panel;
 mod mcp;
 mod tray_menu;
-#[cfg(windows)]
-mod shortcut_hook;
 
 #[cfg(test)]
 mod tests;
@@ -164,10 +162,6 @@ pub fn run() {
                             let Some(action) = action else {
                                 return;
                             };
-                            #[cfg(windows)]
-                            if !shortcut_hook::claim_dispatch(action) {
-                                return;
-                            }
                             if let Err(error) =
                                 dispatch_shortcut_action(&app_for_main, action)
                             {
@@ -300,8 +294,6 @@ pub fn run() {
 
             tray_menu::setup_tray(app)?;
             platform::start_system_appearance_watcher(app.handle().clone());
-            #[cfg(windows)]
-            shortcut_hook::start(app.handle().clone());
             {
                 let settings = {
                     let conn = state.db.lock();
@@ -882,34 +874,6 @@ pub fn apply_global_shortcuts(
             tracing::debug!(error = %error, "failed to unregister shelf Escape shortcut");
         }
         forget_registered_shortcut(&mut map, SHELF_ESCAPE_SHORTCUT);
-    }
-
-    #[cfg(windows)]
-    {
-        // Mirror Ready bindings into the LL hook even when RegisterHotKey failed —
-        // uTools-style hooks ignore RegisterHotKey ownership and must be beaten in-chain.
-        let mut hook_bindings: Vec<(String, &'static str)> = prepared
-            .iter()
-            .filter_map(|binding| match &binding.outcome {
-                PreparedBindingOutcome::Ready(_) => {
-                    Some((binding.raw.clone(), binding.action))
-                }
-                _ => None,
-            })
-            .collect();
-        if auxiliary_windows::is_shelf_picker_visible(app)
-            || map.by_shortcut.get(&escape_normalized).copied() == Some(ACTION_SHELF_ESCAPE)
-        {
-            hook_bindings.push((SHELF_ESCAPE_SHORTCUT.to_string(), ACTION_SHELF_ESCAPE));
-        }
-        shortcut_hook::sync_bindings(&hook_bindings);
-
-        for status in &mut statuses {
-            if status.state == ShortcutOccupationState::Occupied {
-                status.state = ShortcutOccupationState::Ok;
-                status.message = None;
-            }
-        }
     }
 
     if let Some(cache) = app.try_state::<Mutex<ShortcutStatusCache>>() {

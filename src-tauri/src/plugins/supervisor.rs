@@ -85,6 +85,10 @@ impl RuntimeProcess {
             RuntimeState::Active | RuntimeState::Starting
         )
     }
+
+    fn accepts_requests(&self) -> bool {
+        self.is_usable()
+    }
 }
 
 pub struct Supervisor {
@@ -860,6 +864,12 @@ async fn handle_frame(
     };
     match kind {
         "ready" => {
+            if !process.accepts_requests() {
+                if let Some(tx) = ready_tx.take() {
+                    let _ = tx.send(Err("plugin runtime is stopping".into()));
+                }
+                return;
+            }
             let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
             if let Some(tx) = ready_tx.take() {
                 if ok {
@@ -914,15 +924,36 @@ async fn handle_frame(
                 return;
             };
             let params = value.get("params").cloned().unwrap_or(Value::Null);
+            if !process.accepts_requests() {
+                let _ = encode_and_send(
+                    &process.write_tx,
+                    &json!({
+                        "type": "response",
+                        "id": id,
+                        "ok": false,
+                        "error": RpcError::new(
+                            bridge::codes::CANCELLED,
+                            "plugin runtime is stopping",
+                        ),
+                    }),
+                );
+                return;
+            }
             let app = app.clone();
             let plugin_id = process.plugin_id.clone();
+            let process = Arc::clone(process);
             let write_tx = process.write_tx.clone();
             tokio::spawn(async move {
-                let ctx = ConnectionContext::runtime(plugin_id);
                 let host_arc = app
                     .try_state::<Arc<PluginHost>>()
                     .map(|s| s.inner().clone());
-                let result = if let Some(host_arc) = host_arc {
+                let result = if !process.accepts_requests() {
+                    Err(RpcError::new(
+                        bridge::codes::CANCELLED,
+                        "plugin runtime is stopping",
+                    ))
+                } else if let Some(host_arc) = host_arc {
+                    let ctx = ConnectionContext::runtime(plugin_id);
                     bridge::dispatch(&app, &host_arc, &ctx, &method, params).await
                 } else {
                     Err(RpcError::internal(
@@ -942,6 +973,9 @@ async fn handle_frame(
             });
         }
         "event" => {
+            if !process.accepts_requests() {
+                return;
+            }
             let event = value.get("event").and_then(Value::as_str).unwrap_or("");
             let payload = value.get("payload").cloned().unwrap_or(Value::Null);
             let _ = app.emit(

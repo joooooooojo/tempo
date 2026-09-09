@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::db::AppState;
 use crate::plugins::bridge::{self, ConnectionContext, RpcError};
 use crate::plugins::host::PluginHost;
-use crate::plugins::ids::{is_valid_local_id, runtime_id};
+use crate::plugins::ids::{is_valid_local_id, is_valid_plugin_id, runtime_id};
 use crate::plugins::loader::{
     scan_enabled_contributions, with_development_contributions, PluginContributionBundle,
 };
@@ -725,8 +725,8 @@ pub struct PluginBridgeInvokeArgs {
 
 /// Single entry point for the iframe UI bridge (`PluginAppHost` postMessage -> here ->
 /// `plugin_bridge_invoke` -> `bridge::dispatch`). The host — not the payload — decides which
-/// plugin/view a call belongs to: `viewInstanceId`, if present, must already be registered to
-/// `pluginId` or the call is rejected (design §5.3: never trust self-reported identity).
+/// plugin/view a call belongs to: `viewInstanceId` must already be registered to `pluginId` or
+/// the call is rejected (design §5.3: never trust self-reported identity).
 #[tauri::command]
 pub async fn plugin_bridge_invoke(
     app: AppHandle,
@@ -745,9 +745,14 @@ pub async fn plugin_bridge_invoke(
                     "view instance belongs to another plugin",
                 ));
             }
-            ConnectionContext::ui(args.plugin_id.clone(), view_instance_id.clone())
+            ConnectionContext::ui(view.plugin_id, view_instance_id.clone())
         }
-        None => ConnectionContext::runtime(args.plugin_id.clone()),
+        None => {
+            return Err(RpcError::new(
+                bridge::codes::FORBIDDEN,
+                "viewInstanceId is required for UI bridge calls",
+            ));
+        }
     };
 
     bridge::dispatch(&app, &host, &ctx, &args.method, args.params).await
@@ -798,14 +803,9 @@ pub fn plugin_ui_prepare(
             .iter()
             .find(|candidate| candidate.id == args.app_id)
             .ok_or_else(|| format!("plugin does not contribute app {}", args.app_id))?;
-        let entry_url = match development.ui_source.as_ref() {
-            Some(crate::plugins::host::DevelopmentUiSource::Url(url)) => url.clone(),
-            Some(crate::plugins::host::DevelopmentUiSource::Static(_)) => {
-                let plugin_hash = ui::plugin_hash_of(&development.manifest.id);
-                ui::plugin_entry_url(&plugin_hash, &app_contrib.entry)
-            }
-            None => return Err("开发插件没有配置 UI 连接".into()),
-        };
+        if development.ui_source.is_none() {
+            return Err("开发插件没有配置 UI 连接".into());
+        }
         let conn = state.db.lock();
         let theme = crate::db::get_setting(&conn, "theme", "system");
         let owner_window_label = host
@@ -816,6 +816,14 @@ pub fn plugin_ui_prepare(
             .map(|_| window.label());
         let view_instance_id =
             host.create_view(&development.manifest.id, &args.app_id, owner_window_label);
+        let entry_url = match development.ui_source.as_ref() {
+            Some(crate::plugins::host::DevelopmentUiSource::Url(url)) => url.clone(),
+            Some(crate::plugins::host::DevelopmentUiSource::Static(_)) => {
+                let plugin_hash = ui::plugin_hash_of(&development.manifest.id);
+                ui::plugin_view_entry_url(&view_instance_id, &plugin_hash, &app_contrib.entry)
+            }
+            None => return Err("开发插件没有配置 UI 连接".into()),
+        };
         return Ok(PluginUiPrepareResult {
             view_instance_id,
             entry_url,
@@ -850,7 +858,6 @@ pub fn plugin_ui_prepare(
     crate::plugins::package::verify_package_hash(&install_path, &package_hash)?;
 
     let plugin_hash = ui::plugin_hash_of(&row.id);
-    let entry_url = ui::plugin_entry_url(&plugin_hash, &app_contrib.entry);
     let theme = crate::db::get_setting(&conn, "theme", "system");
 
     let session = if let Some(payload) = args.session_payload {
@@ -871,6 +878,7 @@ pub fn plugin_ui_prepare(
         .filter(|owner| owner.plugin_id == row.id && owner.app_local_id == args.app_id)
         .map(|_| window.label());
     let view_instance_id = host.create_view(&row.id, &args.app_id, owner_window_label);
+    let entry_url = ui::plugin_view_entry_url(&view_instance_id, &plugin_hash, &app_contrib.entry);
 
     Ok(PluginUiPrepareResult {
         view_instance_id,
@@ -955,7 +963,19 @@ pub async fn plugin_ui_serialize_session(
 }
 
 #[tauri::command]
-pub fn plugin_open_data_dir(app: AppHandle, plugin_id: String) -> Result<(), String> {
+pub fn plugin_open_data_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+) -> Result<(), String> {
+    if !is_valid_plugin_id(&plugin_id) {
+        return Err("invalid plugin id".into());
+    }
+    let conn = state.db.lock();
+    ensure_plugin_tables(&conn)?;
+    get_installed_plugin(&conn, &plugin_id)?.ok_or_else(|| "未找到该插件的安装记录".to_string())?;
+    drop(conn);
+
     let dir = plugin_data_dir(&app, &plugin_id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("create plugin data dir: {e}"))?;
     use tauri_plugin_opener::OpenerExt;

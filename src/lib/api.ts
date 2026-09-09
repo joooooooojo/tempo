@@ -317,14 +317,14 @@ export const api = {
     }),
   pluginBridgeInvoke: (args: {
     pluginId: string;
-    viewInstanceId?: string | null;
+    viewInstanceId: string;
     method: string;
     params?: unknown;
   }) =>
     invoke<unknown>("plugin_bridge_invoke", {
       args: {
         pluginId: args.pluginId,
-        viewInstanceId: args.viewInstanceId ?? null,
+        viewInstanceId: args.viewInstanceId,
         method: args.method,
         params: args.params ?? null,
       },

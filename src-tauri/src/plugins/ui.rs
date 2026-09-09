@@ -62,21 +62,50 @@ fn build_url(plugin_hash: &str, rel_path: &str) -> String {
     }
 }
 
+fn build_view_url(view_instance_id: &str, plugin_hash: &str, rel_path: &str) -> String {
+    let encoded_segments = rel_path
+        .split('/')
+        .map(percent_encode)
+        .collect::<Vec<_>>()
+        .join("/");
+    if cfg!(target_os = "windows") {
+        format!("http://{PROTOCOL}.localhost/{view_instance_id}/{plugin_hash}/{encoded_segments}")
+    } else {
+        format!("{PROTOCOL}://localhost/{view_instance_id}/{plugin_hash}/{encoded_segments}")
+    }
+}
+
 pub fn plugin_entry_url(plugin_hash: &str, rel_path: &str) -> String {
     build_url(plugin_hash, rel_path)
+}
+
+/// URL used by a mounted plugin view. The view instance ID is a capability: the protocol
+/// handler verifies that it belongs to the plugin hash in the request before serving anything.
+pub fn plugin_view_entry_url(view_instance_id: &str, plugin_hash: &str, rel_path: &str) -> String {
+    build_view_url(view_instance_id, plugin_hash, rel_path)
 }
 
 pub fn plugin_icon_url(plugin_hash: &str, rel_path: &str) -> String {
     build_url(plugin_hash, rel_path)
 }
 
-/// Parse `/{pluginHash}/{relpath...}` from the incoming request path.
-fn parse_request_path(path: &str) -> Option<(String, String)> {
+/// Parse either a public asset path `/{pluginHash}/{relpath...}` or a view capability path
+/// `/{viewInstanceId}/{pluginHash}/{relpath...}` from the incoming request path.
+fn parse_request_path(path: &str) -> Option<(Option<String>, String, String)> {
     let trimmed = path.trim_start_matches('/');
-    let mut parts = trimmed.splitn(2, '/');
-    let hash = parts.next()?.to_string();
-    let rel_encoded = parts.next()?;
-    if hash.is_empty() || rel_encoded.is_empty() {
+    let mut parts = trimmed.splitn(3, '/');
+    let first = parts.next()?;
+    let second = parts.next()?;
+    if first.is_empty() || second.is_empty() {
+        return None;
+    }
+    let (view_instance_id, hash, rel_encoded) = if first.starts_with("view-") {
+        let rel_encoded = parts.next()?;
+        (Some(first.to_string()), second.to_string(), rel_encoded)
+    } else {
+        (None, first.to_string(), second)
+    };
+    if rel_encoded.is_empty() {
         return None;
     }
     let rel = rel_encoded
@@ -84,7 +113,7 @@ fn parse_request_path(path: &str) -> Option<(String, String)> {
         .map(percent_decode)
         .collect::<Vec<_>>()
         .join("/");
-    Some((hash, rel))
+    Some((view_instance_id, hash, rel))
 }
 
 fn content_type_for(name: &str) -> &'static str {
@@ -147,6 +176,11 @@ fn is_reserved_host_path(rel_path: &str) -> bool {
     rel_path == BRIDGE_CLIENT_PATH || rel_path.starts_with("__tempo__/")
 }
 
+fn is_public_asset_path(rel_path: &str) -> bool {
+    let content_type = content_type_for(rel_path);
+    content_type.starts_with("image/") || content_type.starts_with("font/")
+}
+
 /// Insert the host bridge first so injected globals exist before plugin code runs.
 fn inject_bridge_script(html: &[u8]) -> Vec<u8> {
     if html
@@ -191,7 +225,8 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
     }
     let head_only = request.method() == Method::HEAD;
 
-    let Some((plugin_hash, rel_path)) = parse_request_path(request.uri().path()) else {
+    let Some((view_instance_id, plugin_hash, rel_path)) = parse_request_path(request.uri().path())
+    else {
         return empty_response(StatusCode::BAD_REQUEST);
     };
 
@@ -202,6 +237,19 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
         return empty_response(StatusCode::NOT_FOUND);
     };
     let development = entry.package_hash.is_empty();
+
+    if let Some(view_instance_id) = view_instance_id {
+        let Some(view) = host.view(&view_instance_id) else {
+            return empty_response(StatusCode::FORBIDDEN);
+        };
+        if view.plugin_id != entry.plugin_id {
+            return empty_response(StatusCode::FORBIDDEN);
+        }
+    } else if !is_public_asset_path(&rel_path) {
+        // Documents, scripts, styles, and the bridge must use a view capability so one plugin
+        // cannot address another by hash. Legacy public URLs remain for media only.
+        return empty_response(StatusCode::FORBIDDEN);
+    }
 
     // Host-owned bridge — never read from the plugin package (reserved `__tempo__/` namespace).
     if rel_path == BRIDGE_SCA_PATH {
@@ -225,9 +273,7 @@ pub fn protocol_response(app: &AppHandle, request: Request<Vec<u8>>) -> Response
     }
 
     let asset_roots = development_asset_roots(&host, &entry);
-    let Some((canonical_root, canonical_path)) =
-        resolve_asset_path(&asset_roots, &rel_path)
-    else {
+    let Some((canonical_root, canonical_path)) = resolve_asset_path(&asset_roots, &rel_path) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
     if !canonical_path.starts_with(&canonical_root) || !canonical_path.is_file() {
@@ -424,5 +470,27 @@ mod tests {
     fn development_resources_disable_browser_cache() {
         let response = ok_bytes("text/javascript", b"export {};".to_vec(), false, true);
         assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+    }
+
+    #[test]
+    fn view_urls_include_a_capability_segment() {
+        let url = plugin_view_entry_url("view-secret", "plugin-hash", "dist/index.html");
+        let path = url::Url::parse(&url).unwrap().path().to_string();
+        assert_eq!(
+            parse_request_path(&path),
+            Some((
+                Some("view-secret".into()),
+                "plugin-hash".into(),
+                "dist/index.html".into(),
+            ))
+        );
+    }
+
+    #[test]
+    fn legacy_plugin_urls_are_public_only_for_media() {
+        assert!(is_public_asset_path("icon.svg"));
+        assert!(is_public_asset_path("fonts/inter.woff2"));
+        assert!(!is_public_asset_path("index.html"));
+        assert!(!is_public_asset_path("dist/index.js"));
     }
 }

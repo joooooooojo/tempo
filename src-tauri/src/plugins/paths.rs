@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use crate::db::{current_storage_dir, default_storage_dir};
+use crate::plugins::ids::is_valid_plugin_id;
 
 fn storage_root(app: &AppHandle) -> Result<PathBuf, String> {
     current_storage_dir(app).or_else(|_| default_storage_dir(app))
@@ -22,6 +23,9 @@ pub fn packages_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn plugin_data_dir(app: &AppHandle, plugin_id: &str) -> Result<PathBuf, String> {
+    if !is_valid_plugin_id(plugin_id) {
+        return Err("invalid plugin id".into());
+    }
     Ok(plugins_root(app)?.join("data").join(plugin_id))
 }
 

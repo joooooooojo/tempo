@@ -129,6 +129,7 @@ pub fn show(app: &AppHandle, reason: ShowReason) -> tauri::Result<()> {
         return Err(error);
     }
 
+    tracing::debug!(?reason, generation, "main panel shown");
     emit(
         app,
         "main-panel:shown",
@@ -190,11 +191,6 @@ fn hide_if(
         controller.generation
     };
 
-    // Competing launchers reinstall their keyboard hooks when we close; get
-    // back to the front of the chain right away.
-    #[cfg(windows)]
-    crate::shortcut_hook::request_reinstall();
-
     crate::launcher_context_menu::hide_with_main_panel(app);
 
     if let Some(window) = app.get_webview_window(MAIN_PANEL_LABEL) {
@@ -207,6 +203,7 @@ fn hide_if(
         window.hide()?;
     }
 
+    tracing::debug!(?reason, generation, "main panel hidden");
     emit(
         app,
         "main-panel:hidden",
@@ -222,6 +219,7 @@ pub fn toggle(app: &AppHandle) -> tauri::Result<()> {
         && app
             .get_webview_window(MAIN_PANEL_LABEL)
             .is_some_and(|window| activation::main_panel_is_active(&window));
+    tracing::debug!(panel_active, "main panel toggle");
     if panel_active {
         hide(app, HideReason::Shortcut).map(|_| ())
     } else {
@@ -319,6 +317,7 @@ fn settle_deactivation(app: &AppHandle, token: u64) {
     if activation::app_is_active(app) {
         return;
     }
+    tracing::debug!("app deactivated; hiding main panel");
     crate::logging::debug_if_err(
         hide_if(app, HideReason::Deactivated, still_relevant),
         "hide main panel on app deactivation",
