@@ -104,107 +104,23 @@
       "$ref": "#/$defs/contributes"
     },
     "permissions": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "all": {
-          "type": "boolean",
-          "default": false,
-          "description": "Grant every Deno permission. Cannot be combined with read, write, net, or env; also opens managed UI network access."
-        },
-        "read": {
-          "type": "array",
-          "items": {
-            "const": "$DATA"
-          },
-          "default": []
-        },
-        "write": {
-          "type": "array",
-          "items": {
-            "const": "$DATA"
-          },
-          "default": []
-        },
-        "net": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^[^\\s,/*@%]+:[0-9]{1,5}$",
-            "description": "Exact host:port; port 1-65535. Host performs semantic validation."
-          },
-          "default": []
-        },
-        "env": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^[A-Z0-9_]+$",
-            "description": "DENO_*, NODE_*, TEMPO_*, PATH and loader injection variables are reserved."
-          },
-          "default": []
-        }
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write",
+          "net",
+          "env",
+          "sys",
+          "run",
+          "ffi",
+          "import"
+        ]
       },
-      "allOf": [
-        {
-          "if": {
-            "required": [
-              "all"
-            ],
-            "properties": {
-              "all": {
-                "const": true
-              }
-            }
-          },
-          "then": {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "read"
-                  ],
-                  "properties": {
-                    "read": {
-                      "minItems": 1
-                    }
-                  }
-                },
-                {
-                  "required": [
-                    "write"
-                  ],
-                  "properties": {
-                    "write": {
-                      "minItems": 1
-                    }
-                  }
-                },
-                {
-                  "required": [
-                    "net"
-                  ],
-                  "properties": {
-                    "net": {
-                      "minItems": 1
-                    }
-                  }
-                },
-                {
-                  "required": [
-                    "env"
-                  ],
-                  "properties": {
-                    "env": {
-                      "minItems": 1
-                    }
-                  }
-                }
-              ]
-            }
-          }
-        }
-      ]
+      "uniqueItems": true,
+      "default": [],
+      "description": "Independent global Deno permissions. net also opens managed UI network access."
     }
   },
   "additionalProperties": true,

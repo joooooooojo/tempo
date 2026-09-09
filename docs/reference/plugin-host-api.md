@@ -68,7 +68,7 @@ UI 中把 `tempo` 写成 `window.tempo`。不存在的 key 返回 `null`。
 
 ## 私有文件
 
-`tempo.files` 由宿主执行，只能访问当前插件的数据目录。UI 和 Runtime 都能使用，且不需要声明 Deno 的 `permissions.read` 或 `permissions.write`：
+`tempo.files` 由宿主执行，只能访问当前插件的数据目录。UI 和 Runtime 都能使用，且不需要在 Deno `permissions` 数组中声明 `read` 或 `write`：
 
 ```js
 await tempo.files.mkdir("notes", { recursive: true });

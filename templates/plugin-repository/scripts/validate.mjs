@@ -9,30 +9,13 @@
 
 import fs from "node:fs";
 
-function validatePermissions(policy = {}, pluginId) {
+function validatePermissions(policy = [], pluginId) {
   const invalid = message => fail(`${pluginId}: permissions ${message}`);
-  if (!policy || typeof policy !== "object" || Array.isArray(policy)) return invalid("必须是对象");
-  // `host` is accepted only for packages created before Host API grants were removed.
-  const known = ["all", "read", "write", "net", "env", "host"];
-  if (policy.all !== undefined && typeof policy.all !== "boolean") invalid("all 必须是布尔值");
-  if (policy.all === true && ["read", "write", "net", "env"].some(key => Array.isArray(policy[key]) && policy[key].length > 0)) {
-    invalid("all 不能与 read、write、net 或 env 同时声明");
-  }
-  for (const key of Object.keys(policy)) if (!known.includes(key)) invalid(`不支持 ${key}`);
-  for (const key of ["read", "write", "net", "env"]) {
-    const scopes = policy[key] ?? [];
-    if (!Array.isArray(scopes) || scopes.some(s => typeof s !== "string")) { invalid(`${key} 必须是字符串数组`); continue; }
-    for (const scope of scopes) {
-      if ((key === "read" || key === "write") && scope !== "$DATA") invalid(`${key} 只接受 $DATA`);
-      if (key === "env" && (!/^[A-Z0-9_]+$/.test(scope) || /^(DENO_|NODE_|TEMPO_|LD_|DYLD_)/.test(scope) || scope === "PATH")) invalid(`保留或无效环境变量 ${scope}`);
-      if (key === "net") {
-        try {
-          const url = new URL(`http://${scope}`);
-          const port = scope.slice(scope.lastIndexOf(":") + 1);
-          if (!/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535 || !url.hostname || url.username || url.password || url.pathname !== "/" || url.search || url.hash || /[\s,/*\\@%'";`<>]/.test(scope)) throw new Error();
-        } catch { invalid(`net 需要明确的 host:port: ${scope}`); }
-      }
-    }
+  const known = new Set(["read", "write", "net", "env", "sys", "run", "ffi", "import"]);
+  if (!Array.isArray(policy)) return invalid("必须是数组");
+  if (new Set(policy).size !== policy.length) invalid("不能包含重复项");
+  for (const permission of policy) {
+    if (typeof permission !== "string" || !known.has(permission)) invalid(`不支持 ${String(permission)}`);
   }
 }
 import path from "node:path";

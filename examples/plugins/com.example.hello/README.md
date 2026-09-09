@@ -4,7 +4,7 @@
 
 需要 Tempo >=2.2.6、Host API `^2.1.0`、Manifest v2 和 Deno 2.9.6。
 
-该目录已是可直接导入的插件包，无需 npm install。Manifest 使用空的 `permissions: {}`，Deno 的数据目录读写、网络、环境变量、系统信息、子进程、FFI 和远程导入默认关闭。问候日志通过 `tempo.files` 写入 `hello.log`，因此不需要 Deno 文件权限；Host API 也不需要逐项授权。
+该目录已是可直接导入的插件包，无需 npm install。Manifest 使用空的 `permissions: []`，Deno 的文件读写、网络、环境变量、系统信息、子进程、FFI 和远程导入默认关闭。问候日志通过 `tempo.files` 写入 `hello.log`，因此不需要 Deno 文件权限；Host API 也不需要逐项授权。
 
 示例图标位于 `icons/app.svg`。插件图标也可使用 PNG、JPEG（`.jpg` / `.jpeg`）、WebP 或 GIF，路径写在 App / Action 的 `icon` 字段中。
 
@@ -17,23 +17,16 @@
 3. `tempo.files（UI）` 与 `tempo.files（Runtime）` 应显示读写成功；其余 Deno 权限应显示已阻止。
 4. 点 **打招呼（Runtime）** 后再次运行检查，`hello.log` 仍可由 Host 文件 API 正常读写。
 
-要演示细粒度权限，将 Manifest 改为以下内容，提高插件版本后重新导入。再次检查时，Deno 对 `$DATA` 的直接读写会成功，匹配的网络和环境变量查询也会变为允许；`sys`、`run`、`ffi` 和远程 `import` 仍保持关闭。
+要演示部分权限，将 Manifest 改为以下内容，提高插件版本后重新导入。再次检查时，Deno 的全局文件读写、网络和环境变量会变为允许；`sys`、`run`、`ffi` 和远程 `import` 仍保持关闭。
 
 ```json
-"permissions": {
-  "read": ["$DATA"],
-  "write": ["$DATA"],
-  "net": ["example.com:443"],
-  "env": ["PERMISSION_DEMO_VALUE"]
-}
+"permissions": ["read", "write", "net", "env"]
 ```
 
-要演示 Deno 完全访问，改为独占的 `all` 声明。它不能与上述细粒度权限同时使用：
+要演示 Deno 完全访问，选择全部八项：
 
 ```json
-"permissions": {
-  "all": true
-}
+"permissions": ["read", "write", "net", "env", "sys", "run", "ffi", "import"]
 ```
 
 完全访问使用 Deno `-A`。权限检查中的 Deno 项会全部显示允许，托管 UI 的 HTTP(S)、WebSocket、图片、媒体和字体网络访问也会开放；远程脚本、样式和 iframe 仍受宿主 CSP 限制。

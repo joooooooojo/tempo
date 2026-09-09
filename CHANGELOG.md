@@ -7,11 +7,11 @@
 ### Changed
 
 - 插件运行时（破坏性变更）：后台统一迁移到 Deno 2.9.6，不再回退 Node；插件需使用 Manifest v2 / Host API 2.x，新增文件 API 的模板要求 2.1.0。旧插件须提升版本、重新打包并确认信任，Node/npm/Vite 继续用于构建。
-- 插件权限：Manifest 默认关闭 Deno 敏感权限，可用 `permissions.all` 显式授予 Deno 完全访问，也可继续声明数据目录、环境变量和 Runtime/UI 共用的网络端点白名单；完全访问与细粒度权限互斥。Tempo Host API 不再要求逐项授权，并移除重复的 `capabilities` 声明。
+- 插件权限：Manifest 改为八项可独立选择的权限数组，分别控制全局文件读取、全局文件写入、网络、环境变量、系统信息、子进程、动态库和远程导入；默认全部关闭，八项全选等价于 Deno 完全访问，`net` 同时控制 Runtime 与托管 UI。Tempo Host API 不再要求逐项授权，并移除重复的 `capabilities` 声明。
 - 插件文件 API：UI 与 Runtime 新增始终可用的 `tempo.files`，无需 Deno 文件权限即可读写当前插件的私有数据目录；拒绝绝对路径、路径穿越和符号链接，并限制单文件与目录列表大小。
 - 插件模板：同步 UI / Hybrid / Headless 模板至 2.0.4 和 Host API 2.1.0，并提供内置模板回退；Hybrid 的 UI、Runtime tsconfig 移至根目录，由根 tsconfig 的 references 和 `tsc -b` 统一检查，同时保持两侧类型隔离。
 - 插件图标：统一支持 SVG、PNG、JPEG、WebP 与 GIF，并在 Manifest、包导入、主界面、插件管理、插件仓库及独立窗口使用同一格式契约；模板 Schema 更新至 2.0.5。
-- 演示插件：Hello 2.1.0 新增权限检查面板，对比零 Deno 权限下的敏感操作拦截与 UI / Runtime 始终可用的 `tempo.files` 私有目录读写，并提供细粒度权限及完全访问的切换示例。
+- 演示插件：Hello 2.1.0 新增权限检查面板，对比零 Deno 权限下的敏感操作拦截与 UI / Runtime 始终可用的 `tempo.files` 私有目录读写，并提供八项权限的选择示例。
 - 主面板：自动收起改为按「原生应用激活」判断——只有切换到其他应用时才收起；右键菜单、插件窗口、开发者工具、系统文件对话框等 Tempo 自身窗口获得焦点不再误关面板。
 - 插件仓库：凭证不再写入系统凭证库，Token 和密码只留在当前应用会话。
 

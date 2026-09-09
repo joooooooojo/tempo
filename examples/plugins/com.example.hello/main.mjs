@@ -32,15 +32,15 @@ async function attempt(operation) {
   }
 }
 
-async function queryDenoPermissions(dataFile, declaredPermissions) {
+async function queryDenoPermissions(readPath, writePath, declaredPermissions) {
   const descriptors = {
-    read: { name: "read", path: dataFile },
-    write: { name: "write", path: dataFile },
+    read: { name: "read", path: readPath },
+    write: { name: "write", path: writePath },
     net: { name: "net", host: "example.com:443" },
     env: { name: "env", variable: "PERMISSION_DEMO_VALUE" },
     sys: { name: "sys", kind: "hostname" },
     run: { name: "run", command: "permission-demo-command" },
-    ffi: { name: "ffi", path: dataFile },
+    ffi: { name: "ffi", path: readPath },
   };
   const entries = await Promise.all(
     Object.entries(descriptors).map(async ([name, descriptor]) => {
@@ -59,14 +59,14 @@ async function queryDenoPermissions(dataFile, declaredPermissions) {
     ...Object.fromEntries(entries),
     // Restricted runtimes always use --no-remote; Deno reports the import query as granted
     // because Host IPC needs --allow-net, so derive the effective import policy here.
-    import: declaredPermissions.all === true ? "granted" : "denied",
+    import: declaredPermissions.includes("import") ? "granted" : "denied",
   };
 }
 
 async function readDeclaredPermissions() {
   const manifestUrl = new URL("./manifest.json", import.meta.url);
   const manifest = JSON.parse(await Deno.readTextFile(manifestUrl));
-  return manifest.permissions ?? {};
+  return Array.isArray(manifest.permissions) ? manifest.permissions : [];
 }
 
 async function runPermissionProbe() {
@@ -75,11 +75,9 @@ async function runPermissionProbe() {
   const hostBytesPath = `${directory}/host.bin`;
   const draftPath = `${directory}/draft.txt`;
   const renamedPath = `${directory}/renamed.txt`;
-  const directWritePath = `${directory}/deno-direct.txt`;
 
   await tempo.files.mkdir(directory, { recursive: true });
   await removePrivateFileIfPresent(renamedPath);
-  await removePrivateFileIfPresent(directWritePath);
   await tempo.files.writeText(hostTextPath, "tempo.files works without Deno file permission");
   await tempo.files.writeBytes(hostBytesPath, new Uint8Array([0, 1, 2, 255]));
   await tempo.files.writeText(draftPath, "rename works");
@@ -89,16 +87,16 @@ async function runPermissionProbe() {
   const hostBytes = await tempo.files.readBytes(hostBytesPath);
   const hostStat = await tempo.files.stat(renamedPath);
   const hostEntries = await tempo.files.list(directory);
-  const absoluteHostTextPath = `${tempo.paths.data}/${hostTextPath}`;
-  const absoluteDirectWritePath = `${tempo.paths.data}/${directWritePath}`;
+  const globalReadPath = Deno.execPath();
+  const globalWritePath = `${tempo.paths.data}/../tempo-permission-demo-${Deno.pid}.txt`;
   const declared = await readDeclaredPermissions();
-  const permissions = await queryDenoPermissions(absoluteHostTextPath, declared);
-  const directRead = await attempt(() => Deno.readTextFile(absoluteHostTextPath));
+  const permissions = await queryDenoPermissions(globalReadPath, globalWritePath, declared);
+  const directRead = await attempt(() => Deno.readFile(globalReadPath));
   const directWrite = await attempt(() =>
-    Deno.writeTextFile(absoluteDirectWritePath, "Deno direct write succeeded"),
+    Deno.writeTextFile(globalWritePath, "Deno global write succeeded"),
   );
   if (directWrite.allowed) {
-    await tempo.files.remove(directWritePath);
+    await Deno.remove(globalWritePath);
   }
 
   return {

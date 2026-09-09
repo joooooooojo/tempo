@@ -599,13 +599,17 @@ export interface TrustRepositoryConnectionInput {
   fingerprintSha256: string;
 }
 
-export interface PluginPermissions {
-  all: boolean;
-  read: string[];
-  write: string[];
-  net: string[];
-  env: string[];
-}
+export type PluginPermission =
+  | "read"
+  | "write"
+  | "net"
+  | "env"
+  | "sys"
+  | "run"
+  | "ffi"
+  | "import";
+
+export type PluginPermissions = PluginPermission[];
 
 export interface InstalledPlugin {
   permissions: PluginPermissions | null;

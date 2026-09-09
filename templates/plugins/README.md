@@ -12,7 +12,7 @@ Hybrid 的 `tsconfig.json`、`tsconfig.ui.json`、`tsconfig.runtime.json` 均位
 | Hybrid | Deno | 无额外权限（Command/MCP/私有 IPC） |
 | Headless | Deno | 无额外权限 |
 
-所有模板的 `build` 都先检查类型。插件私有文件优先使用无需声明权限的 `tempo.files`；Runtime 直接调用 Deno 文件 API 时再声明 `permissions.read`/`write: ["$DATA"]`。网络使用精确 host:port，同一白名单同时用于 Runtime 和托管 UI。确实需要 Deno 全部能力时可单独声明 `permissions.all: true`。
+所有模板的 `build` 都先检查类型。插件私有文件优先使用无需声明权限的 `tempo.files`。Runtime 直接调用 Deno 文件 API 时，在 `permissions` 数组中选择全局 `read` 或 `write`；`net`、`env`、`sys`、`run`、`ffi`、`import` 也可独立选择，其中 `net` 同时控制 Runtime 和托管 UI。空数组默认关闭全部敏感权限。
 
 `contributes.apps[].icon` 与 `contributes.actions[].icon` 使用包内相对路径，支持 SVG、PNG、JPEG（`.jpg` / `.jpeg`）、WebP 和 GIF；声明的文件必须随构建产物一起发布，且不超过 256 KiB。
 

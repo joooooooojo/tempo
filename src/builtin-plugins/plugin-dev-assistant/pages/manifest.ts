@@ -1,4 +1,4 @@
-import type { PluginPermissions } from "@/types";
+import type { PluginPermission, PluginPermissions } from "@/types";
 
 export type PluginKind = "ui" | "headless" | "hybrid";
 export type PluginPlatform = "macos" | "windows" | "linux";
@@ -68,7 +68,7 @@ export interface EditablePluginSetting {
 }
 
 export interface EditablePluginManifest {
-  permissions?: Partial<PluginPermissions>;
+  permissions?: PluginPermissions;
   $schema?: string;
   manifestVersion: number;
   id: string;
@@ -110,13 +110,12 @@ export function parseEditableManifest(
       return null;
     const manifest = value as Partial<EditablePluginManifest>;
     delete manifest.capabilities;
-    if (
-      manifest.permissions &&
-      typeof manifest.permissions === "object" &&
-      !Array.isArray(manifest.permissions)
-    ) {
-      delete (manifest.permissions as Record<string, unknown>).host;
-    }
+    const permissions = normalizePermissions(
+      (manifest as Record<string, unknown>).permissions,
+    );
+    manifest.permissions = manifest.main
+      ? permissions
+      : permissions.filter((permission) => permission === "net");
     if (!manifest.engines || typeof manifest.engines !== "object") return null;
     if (!manifest.contributes || typeof manifest.contributes !== "object")
       return null;
@@ -142,6 +141,36 @@ export function parseEditableManifest(
   } catch {
     return null;
   }
+}
+
+const PLUGIN_PERMISSIONS: PluginPermission[] = [
+  "read",
+  "write",
+  "net",
+  "env",
+  "sys",
+  "run",
+  "ffi",
+  "import",
+];
+
+function normalizePermissions(value: unknown): PluginPermissions {
+  if (Array.isArray(value)) {
+    return [...new Set(value.filter(
+      (permission): permission is PluginPermission =>
+        typeof permission === "string" &&
+        PLUGIN_PERMISSIONS.includes(permission as PluginPermission),
+    ))];
+  }
+  if (!value || typeof value !== "object") return [];
+
+  const legacy = value as Record<string, unknown>;
+  if (legacy.all === true) return [...PLUGIN_PERMISSIONS];
+  return PLUGIN_PERMISSIONS.filter((permission) =>
+    ["read", "write", "net", "env"].includes(permission) &&
+    Array.isArray(legacy[permission]) &&
+    legacy[permission].length > 0,
+  );
 }
 
 export function stringifyManifest(manifest: EditablePluginManifest): string {

@@ -745,7 +745,7 @@ fn apply_plugin_runtime_env(
     command: &mut tokio::process::Command,
     policy: &super::permissions::PluginPermissions,
 ) {
-    if policy.all {
+    if policy.allows_global(super::permissions::PluginPermission::Env) {
         return;
     }
     apply_minimal_plugin_runtime_env(command);
@@ -756,9 +756,11 @@ fn apply_declared_env(
     command: &mut tokio::process::Command,
     policy: &super::permissions::PluginPermissions,
 ) {
-    for key in &policy.env {
-        if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
+    if let Some(keys) = policy.legacy_env_keys() {
+        for key in keys {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
         }
     }
 }

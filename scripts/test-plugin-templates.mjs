@@ -125,16 +125,23 @@ async function runPlugin(t, packageDir, scratch, calls) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const port = server.address().port;
-  const reads = [packageDir, ...(policy.read?.includes("$DATA") ? [data] : [])];
-  const netScopes = [`127.0.0.1:${port}`,...(policy.net ?? [])];
-  const args = policy.all === true
+  const permissionNames = ["read","write","net","env","sys","run","ffi","import"];
+  const selected = new Set(Array.isArray(policy) ? policy : []);
+  const allowAll = permissionNames.every(permission => selected.has(permission));
+  const args = allowAll
     ? ["run","--no-config","--no-lock","--no-prompt","-A",bootstrap]
-    : ["run", "--no-config", "--no-lock", "--no-prompt", "--cached-only", "--no-remote", "--no-npm", "--node-modules-dir=none",
-      `--allow-read=${reads.join(",")}`, `--allow-net=${netScopes.join(",")}`,
-      ...(policy.write?.includes("$DATA") ? [`--allow-write=${data}`] : []),
-      ...(policy.env?.length ? [`--allow-env=${policy.env.join(",")}`] : []),bootstrap];
-  const env = {DENO_DIR:path.join(data,"cache")};
-  for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP"]) if (process.env[key]) env[key] = process.env[key];
+    : ["run", "--no-config", "--no-lock", "--no-prompt",
+      ...(!selected.has("import") ? ["--cached-only", "--no-remote", "--no-npm"] : []),
+      "--node-modules-dir=none",
+      selected.has("read") ? "--allow-read" : `--allow-read=${packageDir}`,
+      selected.has("net") ? "--allow-net" : `--allow-net=127.0.0.1:${port}`,
+      ...["write","env","sys","run","ffi","import"].filter(permission => selected.has(permission)).map(permission => `--allow-${permission}`),
+      bootstrap];
+  const env = selected.has("env") || allowAll ? {...process.env} : {};
+  env.DENO_DIR = path.join(data,"cache");
+  if (!selected.has("env") && !allowAll) {
+    for (const key of ["SystemRoot", "WINDIR", "TEMP", "TMP"]) if (process.env[key]) env[key] = process.env[key];
+  }
   const child = spawn(deno, args, {cwd:packageDir, env, windowsHide:true});
   const timer = setTimeout(() => child.kill(), 12000);
   t.after(() => { clearTimeout(timer); if (child.exitCode === null) child.kill(); });
@@ -198,7 +205,7 @@ test("Hello demo declares no Deno permissions",async () => {
   ));
   assert.equal(manifest.version,"2.1.0");
   assert.equal(manifest.engines.pluginApi,"^2.1.0");
-  assert.deepEqual(manifest.permissions,{});
+  assert.deepEqual(manifest.permissions,[]);
 });
 
 test("Hello demo uses Host files and blocks undeclared Deno permissions",{skip:!deno},async t => {
@@ -213,7 +220,7 @@ test("Hello demo uses Host files and blocks undeclared Deno permissions",{skip:!
   for (const who of ["Command", "MCP", "IPC"]) assert.ok(log.includes(`Hello, ${who}!`));
   assert.equal(result.hostCalls.filter(method => method === "notify.show").length,3);
   const permissions = scaDecode(result.responses.get("permissions"));
-  assert.deepEqual(permissions.declared,{});
+  assert.deepEqual(permissions.declared,[]);
   assert.equal(permissions.host.ok,true);
   assert.deepEqual(permissions.host.bytes,[0,1,2,255]);
   assert.equal(permissions.direct.read.allowed,false);
@@ -223,8 +230,8 @@ test("Hello demo uses Host files and blocks undeclared Deno permissions",{skip:!
   }
 
   for (const [mode,policy] of [
-    ["granular",{read:["$DATA"],write:["$DATA"],net:["example.com:443"],env:["PERMISSION_DEMO_VALUE"]}],
-    ["all",{all:true}],
+    ["granular",["read","write","net","env"]],
+    ["all",["read","write","net","env","sys","run","ffi","import"]],
   ]) {
     const packageDir = path.join(scratch,mode);
     await cp(path.join(root,"examples/plugins/com.example.hello"),packageDir,{recursive:true});

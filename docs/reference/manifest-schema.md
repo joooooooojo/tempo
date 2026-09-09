@@ -113,7 +113,7 @@ settings[] ----------------> Tempo 渲染设置界面
 | `main` | 条件 | Runtime 的包内 `.js` 或 `.mjs` 相对路径 |
 | `activationEvents` | 否 | 当前只支持 `onStartup`；需要 `main` |
 | `platforms` | 否 | 适用宿主：`macos`、`windows`、`linux`；省略表示当前已支持的平台（macOS + Windows） |
-| `permissions` | 否 | Deno 文件、网络、环境变量权限及托管 UI 网络白名单 |
+| `permissions` | 否 | Deno 八项全局敏感权限；`net` 同时控制托管 UI 网络 |
 | `contributes` | 否 | Apps、Commands、Actions、MCP Tools、Settings |
 
 `author`、`publisher`、`description`、`homepage`、`repository`、`license`、`categories` 是可选展示信息。
@@ -125,7 +125,7 @@ settings[] ----------------> Tempo 渲染设置界面
 :::
 
 ::: warning permissions 是 Deno 与 WebView 网络边界
-Manifest v2 使用 `permissions`：缺省关闭 Deno 敏感权限；`read`/`write` 仅接受 `$DATA`，`net` 接受明确的 `host:port` 并同时约束 Deno Runtime 与 Tempo 托管的插件 UI，`env` 接受非保留的大写变量名。`all: true` 授予 Deno 完全访问并开放托管 UI 网络，不能与细粒度权限同时声明。未知权限字段拒绝导入。Tempo Host API 和限定在插件数据目录的 `tempo.files` 不需要 Manifest 授权。详见 [Runtime](/developer/runtime#发布与信任)。
+Manifest v2 使用权限数组，可选值为 `read`、`write`、`net`、`env`、`sys`、`run`、`ffi`、`import`。每项独立生效且作用于全局；空数组或省略字段时全部关闭。`net` 同时开放 Deno Runtime 与 Tempo 托管插件 UI 的网络访问。八项全选等价于 Deno 完全访问。未知或重复权限拒绝导入。Tempo Host API 和限定在插件数据目录的 `tempo.files` 不需要 Manifest 授权。详见 [Runtime](/developer/runtime#发布与信任)。
 :::
 
 ## Apps

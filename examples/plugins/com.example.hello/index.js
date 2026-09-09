@@ -216,7 +216,7 @@ const context = await window.tempo.ready();
       setPermissionResult("host-ui", uiHostOk ? "允许（读写成功）" : "结果不一致", uiHostOk ? "allowed" : "error");
 
       const result = await window.ipcRenderer.invoke("permission-probe");
-      permissionPolicyEl.textContent = `Manifest：${JSON.stringify(result.declared ?? {})}`;
+      permissionPolicyEl.textContent = `Manifest：${JSON.stringify(result.declared ?? [])}`;
       setPermissionResult(
         "host-runtime",
         result.host?.ok ? "允许（完整操作成功）" : "操作失败",

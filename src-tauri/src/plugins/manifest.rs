@@ -980,11 +980,7 @@ mod tests {
         let manifest = PluginManifest::parse_str(raw).unwrap();
         assert_eq!(manifest.id, "com.example.hello");
         assert_eq!(manifest.version, "2.1.0");
-        assert!(!manifest.permissions.all);
-        assert!(manifest.permissions.read.is_empty());
-        assert!(manifest.permissions.write.is_empty());
-        assert!(manifest.permissions.net.is_empty());
-        assert!(manifest.permissions.env.is_empty());
+        assert!(manifest.permissions.is_empty());
     }
 
     #[test]

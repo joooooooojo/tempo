@@ -1805,8 +1805,8 @@
       "minPluginApi": "2.1.0",
       "manifestSchema": {
         "url": "releases/2.0.5/plugin-manifest.schema.json",
-        "sha256": "17b8d3a72a94fc36005c71b0b5a5c48b5dffab4fec3c58bb765fb7da27a0bfa1",
-        "size": 17371
+        "sha256": "b70fe71a050778173f316f83d1c44f8b547bb8ce6829a74fc2a5ce4e2267fe63",
+        "size": 15193
       },
       "templates": {
         "ui": {
@@ -1835,7 +1835,7 @@
             {
               "path": "manifest.json",
               "url": "releases/2.0.5/ui/manifest.json",
-              "sha256": "4874cc4b6fd263d10af0ad574686f47420a276ded9cfb1af1d26a73794220867",
+              "sha256": "6431f005655defb41c8d7ba84a783364b40f4b2e7005d6e25ef214374cd230d0",
               "size": 429,
               "render": true
             },
@@ -1916,7 +1916,7 @@
             {
               "path": "manifest.json",
               "url": "releases/2.0.5/hybrid/manifest.json",
-              "sha256": "44d0431c30f2a8a7dcd26d648b836199de95b4b89d7689fbc92a70cfd8c3c406",
+              "sha256": "d815ff75e1e825b680ec304b609e9713393a112c65e63514abd9aedf0552bd90",
               "size": 953,
               "render": true
             },
@@ -2011,7 +2011,7 @@
             {
               "path": "manifest.json",
               "url": "releases/2.0.5/headless/manifest.json",
-              "sha256": "887cd890b81155537c7c806cb9f1b36ebc8b513b55e4dda8b8de34e5f62d2ade",
+              "sha256": "e6f5ed4f98cf33e0aa27c886f5aa1934aa12f6818eaacf292a39657421a1dd51",
               "size": 719,
               "render": true
             },

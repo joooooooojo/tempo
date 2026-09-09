@@ -39,12 +39,7 @@
   "version": "2.0.0",
   "engines": { "tempo": ">=2.2.6", "pluginApi": "^2.1.0" },
   "main": "main.mjs",
-  "permissions": {
-    "read": ["$DATA"],
-    "write": ["$DATA"],
-    "net": ["api.example.com:443"],
-    "env": ["PLUGIN_API_KEY"]
-  }
+  "permissions": ["read", "write", "net", "env"]
 }
 ```
 
@@ -52,10 +47,13 @@
 
 | 权限 | 定义 |
 | --- | --- |
-| all | Deno `-A` 完全访问；与其它权限字段互斥，并开放托管 UI 网络 |
-| read/write | 仅 `$DATA`，宿主按连接身份解析为生产或开发数据目录 |
-| net | 精确 host:port、端口 1–65535，无 URL/凭证/通配符/分隔符；可显式声明本机服务 |
-| env | 声明的大写变量从宿主环境传入；拒绝 DENO_、NODE_、TEMPO_、LD_、DYLD_ 前缀及 PATH |
+| read/write | 全局读取 / 写入文件和目录 |
+| net | 全局网络；同时开放托管 UI 的 HTTP(S)、WebSocket、图片、媒体和字体网络 |
+| env | 读取全部宿主环境变量 |
+| sys | 读取系统信息 |
+| run | 启动子进程 |
+| ffi | 加载和调用动态库 |
+| import | 远程模块和运行时 npm |
 
 包目录读取和专用 IPC 端口是宿主必要授权。`tempo.storage` 按插件身份隔离；`tempo.files` 由宿主限定到插件数据目录，两者均无需 Deno 磁盘权限。Tempo Host API 不做 Manifest 级授权；各方法仍校验参数、调用位置、私有文件路径和允许的 URL scheme。
 
@@ -70,17 +68,18 @@
 ```text
 deno run --no-config --no-lock --no-prompt --cached-only
   --no-remote --no-npm --node-modules-dir=none
-  --allow-read=<canonical-package>[,<canonical-data>]
-  --allow-net=127.0.0.1:<ipc-port>[,<declared-endpoints>]
-  [--allow-write=<canonical-data>] [--allow-env=<declared-keys>]
+  --allow-read=<canonical-package>
+  --allow-net=127.0.0.1:<ipc-port>
+  [--allow-read] [--allow-write] [--allow-net] [--allow-env]
+  [--allow-sys] [--allow-run] [--allow-ffi] [--allow-import]
   <host-bootstrap.mjs>
 ```
 
-非空可选权限才输出 allow 参数，绝不生成裸 allow。路径 canonicalize 后拒绝逗号/换行等列表分隔歧义。细粒度模式不授予 sys、run、ffi 和 import，no-prompt 静默拒绝交互提权。
+Manifest 数组中的每项编译为对应的全局 `--allow-*` 参数。未声明 `read` 和 `net` 时仍分别保留包读取和专用 IPC 端点的内部最小授权；`no-prompt` 静默拒绝交互提权。未声明 `import` 时继续启用 `cached-only`、`no-remote` 和 `no-npm`。
 
-`permissions.all: true` 改用 `deno run --no-config --no-lock --no-prompt -A`，不再添加 cached-only、no-remote、no-npm 和 node-modules-dir 限制，并继承宿主环境。它允许远程模块、运行时 npm、子进程和 FFI，因此信任提示必须展示完整权限对象。
+八项权限全部声明时改用 `deno run --no-config --no-lock --no-prompt -A`。它允许远程模块、运行时 npm、子进程和 FFI，因此信任提示必须展示完整权限数组。
 
-细粒度模式通过 env_clear 清空继承环境，仅保留 OS/temp 必需变量、声明变量和 DENO_DIR。缓存位于 plugin-runtime/cache/<pluginId>，在插件数据可写范围之外；不继承用户全局 npm/cache/broker 配置。开发目录本身仍是用户可编辑的可信工作区。
+未声明 `env` 时通过 env_clear 清空继承环境，仅保留 OS/temp 必需变量和 DENO_DIR；声明后继承完整宿主环境。缓存位于 plugin-runtime/cache/<pluginId>，在插件数据可写范围之外。开发目录本身仍是用户可编辑的可信工作区。
 
 ## 5. IPC 与生命周期
 

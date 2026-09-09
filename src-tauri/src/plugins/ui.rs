@@ -32,10 +32,10 @@ const BRIDGE_SCRIPT_TAG: &str = concat!(
     r#"<script src="__tempo__/client.js"></script>"#,
 );
 
-/// Baseline CSP (design §5.2). Network destinations are added from the same exact `host:port`
-/// grants used by the Deno Runtime. Remote scripts, styles, frames, and forms remain disabled.
+/// Baseline CSP (design §5.2). The Runtime `net` permission also opens managed UI network
+/// access. Remote scripts, styles, frames, and forms remain disabled.
 fn csp_for_permissions(permissions: &super::permissions::PluginPermissions) -> String {
-    if permissions.all {
+    if permissions.allows_global(super::permissions::PluginPermission::Net) {
         return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
 img-src 'self' data: blob: http: https:; media-src 'self' blob: http: https:; \
 font-src 'self' data: http: https:; connect-src 'self' http: https: ws: wss:; \
@@ -44,7 +44,7 @@ object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     }
     let mut web_sources = Vec::new();
     let mut connect_sources = Vec::new();
-    for endpoint in &permissions.net {
+    for endpoint in permissions.legacy_net_endpoints().unwrap_or_default() {
         let Some(authority) = canonical_net_authority(endpoint) else {
             continue;
         };
@@ -525,11 +525,9 @@ mod tests {
     }
 
     #[test]
-    fn ui_network_uses_the_runtime_host_port_grants() {
-        let permissions = super::super::permissions::PluginPermissions {
-            net: vec!["api.example.com:443".into(), "[::1]:8080".into()],
-            ..Default::default()
-        };
+    fn legacy_ui_network_uses_the_runtime_host_port_grants() {
+        let permissions: super::super::permissions::PluginPermissions =
+            serde_json::from_str(r#"{"net":["api.example.com:443","[::1]:8080"]}"#).unwrap();
         let csp = csp_for_permissions(&permissions);
         for source in [
             "https://api.example.com:443",
@@ -544,11 +542,9 @@ mod tests {
     }
 
     #[test]
-    fn allow_all_opens_ui_network_without_enabling_remote_code() {
-        let permissions = super::super::permissions::PluginPermissions {
-            all: true,
-            ..Default::default()
-        };
+    fn net_permission_opens_ui_network_without_enabling_remote_code() {
+        let permissions: super::super::permissions::PluginPermissions =
+            serde_json::from_str(r#"["net"]"#).unwrap();
         let csp = csp_for_permissions(&permissions);
         assert!(csp.contains("connect-src 'self' http: https: ws: wss:;"));
         assert!(csp.contains("img-src 'self' data: blob: http: https:;"));

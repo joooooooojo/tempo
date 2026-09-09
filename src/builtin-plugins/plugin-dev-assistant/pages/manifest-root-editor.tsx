@@ -27,21 +27,30 @@ import {
   type PluginPlatform,
 } from "@/builtin-plugins/plugin-dev-assistant/pages/manifest";
 import { KIND_ITEMS } from "@/builtin-plugins/plugin-dev-assistant/pages/shared";
+import type { PluginPermission } from "@/types";
 
-type DataPermission = "read" | "write";
-
-const DATA_PERMISSION_ITEMS = [
+const PERMISSION_ITEMS: Array<{
+  value: PluginPermission;
+  label: string;
+  description: string;
+}> = [
   {
     value: "read",
-    label: "读取私有数据目录",
-    description: "允许 Deno Runtime 直接读取 $DATA",
+    label: "文件读取",
+    description: "读取任意文件和目录",
   },
   {
     value: "write",
-    label: "写入私有数据目录",
-    description: "允许 Deno Runtime 直接写入 $DATA",
+    label: "文件写入",
+    description: "写入任意文件和目录",
   },
-] as const;
+  { value: "net", label: "网络访问", description: "访问任意网络目标，并开放托管 UI 网络" },
+  { value: "env", label: "环境变量", description: "读取全部宿主环境变量" },
+  { value: "sys", label: "系统信息", description: "读取操作系统和硬件信息" },
+  { value: "run", label: "子进程", description: "启动和控制外部进程" },
+  { value: "ffi", label: "动态库", description: "加载并调用本地动态库" },
+  { value: "import", label: "远程导入", description: "加载远程模块和运行时 npm 包" },
+];
 
 const PLATFORM_ITEMS = [
   { value: "macos", label: "macOS" },
@@ -120,11 +129,9 @@ export function ManifestRootEditor({
                     if (nextKind === "ui") {
                       delete next.main;
                       delete next.activationEvents;
-                      if (next.permissions) {
-                        delete next.permissions.read;
-                        delete next.permissions.write;
-                        delete next.permissions.env;
-                      }
+                      next.permissions = (next.permissions ?? []).filter(
+                        (permission) => permission === "net",
+                      );
                       if (next.contributes.apps.length === 0) {
                         next.contributes.apps.push({
                           id: "main",
@@ -336,85 +343,56 @@ export function ManifestRootEditor({
               </div>
             </>
           ) : null}
-          <Field orientation="vertical">
-            <FieldLabel htmlFor="manifest-permissions-all">
-              {kind === "ui" ? "完全网络访问" : "Deno 完全访问"}
-            </FieldLabel>
-            <Switch
-              id="manifest-permissions-all"
-              checked={manifest.permissions?.all === true}
-              onCheckedChange={(checked) =>
+          <Field>
+            <FieldLabel>敏感权限</FieldLabel>
+            <Select
+              multiple
+              items={(kind === "ui"
+                ? PERMISSION_ITEMS.filter((item) => item.value === "net")
+                : PERMISSION_ITEMS
+              ).map((item) => ({ value: item.value, label: item.label }))}
+              value={manifest.permissions ?? []}
+              onValueChange={(value) =>
                 onUpdate((next) => {
-                  next.permissions = checked ? { all: true } : {};
+                  next.permissions = Array.isArray(value)
+                    ? value.filter((permission): permission is PluginPermission =>
+                        PERMISSION_ITEMS.some((item) => item.value === permission),
+                      )
+                    : [];
                 })
               }
-            />
+            >
+              <SelectTrigger className="w-full max-w-md">
+                <SelectValue>
+                  {(() => {
+                    const selected = PERMISSION_ITEMS.filter((item) =>
+                      (manifest.permissions ?? []).includes(item.value),
+                    );
+                    if (selected.length === 0) return "未选择敏感权限";
+                    if (selected.length <= 2) return selected.map((item) => item.label).join("、");
+                    return `已选择 ${selected.length} 项`;
+                  })()}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent align="start" alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {(kind === "ui"
+                    ? PERMISSION_ITEMS.filter((item) => item.value === "net")
+                    : PERMISSION_ITEMS
+                  ).map((item) => (
+                    <SelectItem key={item.value} value={item.value} title={item.description}>
+                      {item.label}（全局）
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <FieldDescription>
               {kind === "ui"
-                ? "允许托管 UI 访问任意网络目标"
-                : "允许 Deno 读取和写入任意文件、访问网络与环境变量，并使用系统、子进程、FFI 和远程导入能力"}
+                ? "网络权限同时控制托管 UI 的 HTTP、WebSocket、图片、媒体和字体访问"
+                : "默认全部关闭；tempo.files 始终可以读写当前插件的私有数据目录"}
             </FieldDescription>
           </Field>
-          {manifest.permissions?.all !== true && kind !== "ui" ? (
-            <>
-              <ToggleListField<DataPermission>
-                legend="Deno 数据目录权限"
-                description="tempo.files 和 tempo.storage 不需要这些权限；仅在 Runtime 直接使用 Deno 文件 API 时开启"
-                options={DATA_PERMISSION_ITEMS}
-                values={DATA_PERMISSION_ITEMS.flatMap((item) =>
-                  manifest.permissions?.[item.value]?.includes("$DATA")
-                    ? [item.value]
-                    : [],
-                )}
-                onChange={(values) =>
-                  onUpdate((next) => {
-                    const permissions = { ...(next.permissions ?? {}) };
-                    if (values.includes("read")) permissions.read = ["$DATA"];
-                    else delete permissions.read;
-                    if (values.includes("write")) permissions.write = ["$DATA"];
-                    else delete permissions.write;
-                    next.permissions = permissions;
-                  })
-                }
-              />
-              <StringListField
-                label="环境变量"
-                description="只向 Deno Runtime 暴露列出的变量；使用大写变量名"
-                itemLabel="环境变量"
-                placeholder="OPENAI_API_KEY"
-                items={manifest.permissions?.env ?? []}
-                onChange={(items) =>
-                  onUpdate((next) => {
-                    const permissions = { ...(next.permissions ?? {}) };
-                    if (items.length > 0) permissions.env = items;
-                    else delete permissions.env;
-                    next.permissions = permissions;
-                  })
-                }
-              />
-            </>
-          ) : null}
-          {manifest.permissions?.all !== true ? (
-            <StringListField
-              label="网络端点"
-              description={
-                kind === "ui"
-                  ? "允许托管 UI 访问的精确 host:port"
-                  : "允许 Deno Runtime 访问；托管 UI 存在时共用同一列表"
-              }
-              itemLabel="网络端点"
-              placeholder="api.example.com:443"
-              items={manifest.permissions?.net ?? []}
-              onChange={(items) =>
-                onUpdate((next) => {
-                  const permissions = { ...(next.permissions ?? {}) };
-                  if (items.length > 0) permissions.net = items;
-                  else delete permissions.net;
-                  next.permissions = permissions;
-                })
-              }
-            />
-          ) : null}
         </FieldGroup>
       </PluginDevSection>
 
