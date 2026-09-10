@@ -1,9 +1,9 @@
+use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 #[cfg(target_os = "macos")]
 use tauri::PhysicalPosition;
 #[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
-use tauri::webview::PageLoadEvent;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalSize, State, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
@@ -110,7 +110,8 @@ pub(crate) fn prepare_main_panel_for_show(app: &AppHandle) -> tauri::Result<Webv
     let target_monitor = monitor
         .as_ref()
         .map(|m| (m.name().cloned(), *m.position(), *m.size()));
-    let used_saved = place_main_panel_at_saved_position(app, &window, width, height, monitor.as_ref())?;
+    let used_saved =
+        place_main_panel_at_saved_position(app, &window, width, height, monitor.as_ref())?;
     if !used_saved {
         place_main_panel_on_monitor(&window, width, height, true, monitor)?;
     }
@@ -262,6 +263,17 @@ fn position_in_screen(
 }
 
 fn active_main_panel_monitor(app: &AppHandle) -> Option<Monitor> {
+    // The panel follows the user's pointer, which is the clearest indication of which screen
+    // they are currently working on. Foreground-window detection is only a Windows fallback:
+    // the foreground app can remain on another monitor while the pointer has already moved.
+    if let Some(monitor) = app.cursor_position().ok().and_then(|position| {
+        app.monitor_from_point(position.x, position.y)
+            .ok()
+            .flatten()
+    }) {
+        return Some(monitor);
+    }
+
     #[cfg(windows)]
     {
         use windows::Win32::Graphics::Gdi::{
@@ -277,16 +289,15 @@ fn active_main_panel_monitor(app: &AppHandle) -> Option<Monitor> {
             };
             if unsafe { GetMonitorInfoW(handle, &mut info) }.as_bool() {
                 if let Ok(Some(monitor)) = app.monitor_from_point(
-                    f64::from(info.rcMonitor.left), f64::from(info.rcMonitor.top),
+                    f64::from(info.rcMonitor.left),
+                    f64::from(info.rcMonitor.top),
                 ) {
                     return Some(monitor);
                 }
             }
         }
     }
-    app.cursor_position().ok()
-        .and_then(|position| app.monitor_from_point(position.x, position.y).ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten())
+    app.primary_monitor().ok().flatten()
 }
 
 pub(crate) fn clamp_position_to_monitor(
@@ -319,7 +330,9 @@ fn place_main_panel_at_saved_position(
         return Ok(false);
     };
     // A saved drag position is valid only on the screen selected for this open.
-    if target_monitor.is_some_and(|target| !position_in_screen(position, *target.position(), *target.size())) {
+    if target_monitor
+        .is_some_and(|target| !position_in_screen(position, *target.position(), *target.size()))
+    {
         return Ok(false);
     }
 
@@ -425,10 +438,19 @@ fn place_main_panel_window(
     let monitor = if follow_cursor {
         active_main_panel_monitor(app)
     } else {
-        window.current_monitor().ok().flatten()
+        window
+            .current_monitor()
+            .ok()
+            .flatten()
             .or_else(|| active_main_panel_monitor(app))
     };
-    place_main_panel_on_monitor(window, requested_width, requested_height, follow_cursor, monitor)
+    place_main_panel_on_monitor(
+        window,
+        requested_width,
+        requested_height,
+        follow_cursor,
+        monitor,
+    )
 }
 
 fn place_main_panel_on_monitor(
@@ -1296,16 +1318,32 @@ mod main_panel_placement_tests {
         let size = PhysicalSize::new(1920, 1080);
         assert!(position_in_screen(saved, primary, size));
         assert!(!position_in_screen(saved, secondary, size));
-        assert!(position_in_screen(PhysicalPosition::new(2240, 180), secondary, size));
+        assert!(position_in_screen(
+            PhysicalPosition::new(2240, 180),
+            secondary,
+            size
+        ));
     }
 
     #[test]
     fn negative_screen_origins_and_mixed_physical_sizes_are_supported() {
         let origin = PhysicalPosition::new(-2560, -400);
         let size = PhysicalSize::new(2560, 1440);
-        assert!(position_in_screen(PhysicalPosition::new(-2000, -100), origin, size));
+        assert!(position_in_screen(
+            PhysicalPosition::new(-2000, -100),
+            origin,
+            size
+        ));
         assert!(position_in_screen(origin, origin, size));
-        assert!(!position_in_screen(PhysicalPosition::new(0, 0), origin, size));
-        assert!(!position_in_screen(PhysicalPosition::new(-2000, 1040), origin, size));
+        assert!(!position_in_screen(
+            PhysicalPosition::new(0, 0),
+            origin,
+            size
+        ));
+        assert!(!position_in_screen(
+            PhysicalPosition::new(-2000, 1040),
+            origin,
+            size
+        ));
     }
 }
