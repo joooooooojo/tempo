@@ -2,6 +2,11 @@
   "name": "tempo-plugin-sdk",
   "version": "1.0.0",
   "description": "Application model and typed host APIs for Tempo plugins",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joooooooojo/tempo.git",
+    "directory": "sdk"
+  },
   "type": "module",
   "files": [
     "dist",
