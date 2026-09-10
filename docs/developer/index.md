@@ -5,7 +5,7 @@ description: 从插件类型、项目模板和运行边界开始开发 Tempo 插
 
 # 插件开发
 
-Tempo 会把插件 API 注入运行环境。官方模板通过 `@tempo/sdk/ui` 和 `@tempo/sdk/runtime` 使用这些 API，获得模块导入、类型补全和 UI/Runtime 环境隔离。
+Tempo 会把底层 API 注入运行环境。官方模板通过 UI 的 `connect()` 和 Runtime 的 `defineRuntime()` 建立入口，获得非空页面上下文、统一生命周期、类型补全和 UI/Runtime 环境隔离。
 
 ## 先选择插件类型
 
@@ -15,7 +15,7 @@ Tempo 会把插件 API 注入运行环境。官方模板通过 `@tempo/sdk/ui` �
 | 搜索后直接执行任务，或提供 MCP Tool | Headless | `main.mjs` |
 | 页面还需要后台计算、文件或网络能力 | Hybrid | `index.html` + `main.mjs` |
 
-不确定时先选 UI。只有页面确实需要 Node 能力或后台任务时，再增加 Runtime。
+不确定时先选 UI。只有页面确实需要后台任务、全局文件、网络或其它 Deno 能力时，再增加 Runtime。
 
 插件开发助手可以直接创建三套 Vite 模板。创建时会从远端目录选择当前 Host API 能使用的最新版本，并缓存校验通过的文件；模板更新不要求更新 Tempo。模板源代码位于 `src`，`pnpm build` 生成的 `dist` 可以直接导入 Tempo：
 
@@ -37,17 +37,18 @@ manifest.json
   mcpTools ----> MCP 工具的公开契约
   settings ----> 由 Tempo 渲染的插件设置
 
-UI -------- ipcRenderer -------- ipcMain -------- Runtime
+UI Client --------------- ipc --------------- Runtime Context
  |                                                          |
  +------------------------- tempo ---------------------------+
                          Tempo 平台 API
 ```
 
-- `tempo`：调用通知、存储、设置、主题等平台能力。UI 和 Runtime 都有，各自只暴露适合当前位置的方法。
-- `ipcRenderer` / `ipcMain`：只在本插件的 UI 与 Runtime 之间传消息，不写进 Manifest。
-- `commands`：Runtime 对 Action 提供的可执行能力，使用 `tempo.commands.register()` 注册。
-- `mcpTools`：Manifest 声明工具契约，Runtime 使用同名 `tempo.mcpTools.register()` 注册实现，不经过 Commands。
-- `tempo.events`：监听平台广播，不写进 Manifest，也不经过 Command。
+- `connect()`：等待页面上下文并返回 UI Client，包含通知、存储、设置、主题等页面能力。
+- `defineRuntime()`：在宿主挂载时运行 setup，提供 Runtime Context，并统一管理停止时的清理函数。
+- `ipc`：只在本插件的 UI 与 Runtime 之间传消息，可由共享类型约束，不写进 Manifest。
+- `commands`：Runtime 对 Action 提供的可执行能力。
+- `mcpTools`：Manifest 声明工具契约，Runtime 使用同名 `mcpTools.register()` 注册实现，不经过 Commands。
+- `events`：监听平台广播，不写进 Manifest，也不经过 Command。
 
 ## 推荐阅读顺序
 
@@ -67,6 +68,7 @@ UI -------- ipcRenderer -------- ipcMain -------- Runtime
 | Tempo | `2.2.6` | 宿主应用版本 |
 | `manifestVersion` | `2` | Manifest 文件格式 |
 | `engines.pluginApi` | `^2.1.0` | Host 注入 API 的兼容范围 |
+| `@tempo/sdk` | `1.0.0` | 官方 TypeScript SDK 版本 |
 | `version` | 由插件维护 | 当前插件包版本 |
 
 `@tempo/sdk` 的包版本与 Host API 独立维护。插件仍需在 `engines.pluginApi` 中声明自己依赖的 Host API 范围，SDK 不替代运行时兼容检查。

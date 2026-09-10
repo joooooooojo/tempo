@@ -1,22 +1,40 @@
 # @tempo/sdk
 
-Typed bindings for APIs injected by the Tempo plugin host.
+Application model and typed Host APIs for Tempo plugins.
+
+UI plugins connect after Tempo has supplied the page context:
 
 ```ts
-import { tempo } from "@tempo/sdk/ui";
+import { connect } from "@tempo/sdk/ui";
 
-await tempo.ready();
-await tempo.notify.show({ title: "Hello from Tempo" });
+const app = await connect();
+await app.notify.show({ title: `Tempo API ${app.context.apiVersion}` });
 ```
 
-Runtime plugins use the separate Deno-compatible entry:
+Runtime plugins declare their setup and cleanup in one place:
 
 ```ts
-import { onMounted, tempo } from "@tempo/sdk/runtime";
+import { defineRuntime } from "@tempo/sdk/runtime";
 
-onMounted(() => {
-  tempo.commands.register("run", async () => ({ ok: true }));
+defineRuntime(({ commands, events, onDispose }) => {
+  commands.register("run", async () => ({ ok: true }));
+  onDispose(events.on("clipboard.changed", console.log));
 });
 ```
 
-The SDK exposes the host globals as typed module exports. It does not request or bypass plugin permissions.
+Hybrid plugins can share an optional IPC contract:
+
+```ts
+type PluginIpc = {
+  invokes: {
+    greet: (name: string) => { message: string };
+  };
+  messages: {
+    refreshed: [at: Date];
+  };
+};
+```
+
+Pass it to `connect<PluginIpc>()` and `defineRuntime<PluginIpc>()` to type channel names, arguments, and invoke results on both sides. Omitting the contract keeps dynamic string channels available.
+
+The SDK uses APIs injected by Tempo. It does not request or bypass plugin permissions.

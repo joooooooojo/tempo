@@ -204,17 +204,17 @@ export interface TempoSessionApi {
 export interface TempoUiApi {
   readonly context: TempoUiContext | null;
   ready(): Promise<TempoUiContext>;
-  events: TempoEventsApi;
-  storage: TempoStorageApi;
-  files: TempoFilesApi;
-  settings: TempoSettingsApi;
-  notify: TempoNotifyApi;
-  theme: TempoUiThemeApi;
-  mainPanel: TempoUiMainPanelApi;
-  window: TempoWindowApi;
-  app: TempoAppApi;
-  external: TempoExternalApi;
-  session: TempoSessionApi;
+  readonly events: TempoEventsApi;
+  readonly storage: TempoStorageApi;
+  readonly files: TempoFilesApi;
+  readonly settings: TempoSettingsApi;
+  readonly notify: TempoNotifyApi;
+  readonly theme: TempoUiThemeApi;
+  readonly mainPanel: TempoUiMainPanelApi;
+  readonly window: TempoWindowApi;
+  readonly app: TempoAppApi;
+  readonly external: TempoExternalApi;
+  readonly session: TempoSessionApi;
 }
 
 export interface IpcRendererEvent {
@@ -314,3 +314,134 @@ export interface TempoRuntimeApi {
   readonly app: TempoAppApi;
   readonly external: TempoExternalApi;
 }
+
+export interface PluginIpcContract {
+  invokes?: object;
+  messages?: object;
+}
+
+export type AnyPluginIpcContract = {
+  invokes: Record<string, (...args: any[]) => any>;
+  messages: Record<string, readonly any[]>;
+};
+
+type InvokeMap<TContract extends PluginIpcContract> =
+  TContract extends { invokes: infer TInvokes }
+    ? TInvokes
+    : AnyPluginIpcContract["invokes"];
+
+type MessageMap<TContract extends PluginIpcContract> =
+  TContract extends { messages: infer TMessages }
+    ? TMessages
+    : AnyPluginIpcContract["messages"];
+
+type InvokeChannel<TContract extends PluginIpcContract> =
+  keyof InvokeMap<TContract> & string;
+
+type MessageChannel<TContract extends PluginIpcContract> =
+  keyof MessageMap<TContract> & string;
+
+type InvokeArgs<
+  TContract extends PluginIpcContract,
+  TChannel extends InvokeChannel<TContract>,
+> = InvokeMap<TContract>[TChannel] extends (...args: infer TArgs) => any
+  ? TArgs
+  : never;
+
+type InvokeResult<
+  TContract extends PluginIpcContract,
+  TChannel extends InvokeChannel<TContract>,
+> = InvokeMap<TContract>[TChannel] extends (...args: any[]) => infer TResult
+  ? Awaited<TResult>
+  : never;
+
+type MessageArgs<
+  TContract extends PluginIpcContract,
+  TChannel extends MessageChannel<TContract>,
+> = MessageMap<TContract>[TChannel] extends readonly any[]
+  ? MessageMap<TContract>[TChannel]
+  : never;
+
+export interface TempoUiIpc<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+> {
+  invoke<TChannel extends InvokeChannel<TContract>>(
+    channel: TChannel,
+    ...args: InvokeArgs<TContract, TChannel>
+  ): Promise<InvokeResult<TContract, TChannel>>;
+  send<TChannel extends MessageChannel<TContract>>(
+    channel: TChannel,
+    ...args: MessageArgs<TContract, TChannel>
+  ): void;
+  on<TChannel extends MessageChannel<TContract>>(
+    channel: TChannel,
+    listener: (
+      event: IpcRendererEvent,
+      ...args: MessageArgs<TContract, TChannel>
+    ) => void,
+  ): () => void;
+}
+
+export interface TempoRuntimeIpcSender<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+> {
+  send<TChannel extends MessageChannel<TContract>>(
+    channel: TChannel,
+    ...args: MessageArgs<TContract, TChannel>
+  ): void;
+}
+
+export interface TempoRuntimeIpcEvent<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+> {
+  readonly sender: TempoRuntimeIpcSender<TContract>;
+}
+
+export interface TempoRuntimeIpc<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+> {
+  handle<TChannel extends InvokeChannel<TContract>>(
+    channel: TChannel,
+    handler: (
+      event: TempoRuntimeIpcEvent<TContract>,
+      ...args: InvokeArgs<TContract, TChannel>
+    ) =>
+      | InvokeResult<TContract, TChannel>
+      | Promise<InvokeResult<TContract, TChannel>>,
+  ): void;
+  on<TChannel extends MessageChannel<TContract>>(
+    channel: TChannel,
+    listener: (
+      event: TempoRuntimeIpcEvent<TContract>,
+      ...args: MessageArgs<TContract, TChannel>
+    ) => void,
+  ): () => void;
+  send<TChannel extends MessageChannel<TContract>>(
+    channel: TChannel,
+    ...args: MessageArgs<TContract, TChannel>
+  ): void;
+}
+
+export interface TempoUiClient<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+> extends Omit<TempoUiApi, "app" | "context" | "ready"> {
+  readonly context: TempoUiContext;
+  readonly apps: TempoAppApi;
+  readonly ipc: TempoUiIpc<TContract>;
+}
+
+export type TempoDisposer = () => void | Promise<void>;
+
+export interface TempoRuntimeContext<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+> extends Omit<TempoRuntimeApi, "app"> {
+  readonly apps: TempoAppApi;
+  readonly ipc: TempoRuntimeIpc<TContract>;
+  onDispose(disposer: TempoDisposer): void;
+}
+
+export type TempoRuntimeSetup<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+> = (
+  context: TempoRuntimeContext<TContract>,
+) => void | TempoDisposer | Promise<void | TempoDisposer>;

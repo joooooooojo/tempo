@@ -1,7 +1,51 @@
-import { hostGlobal } from "./globals.js";
-import type { IpcRendererApi, TempoUiApi } from "./types.js";
+import { getHostGlobal } from "./globals.js";
+import type {
+  AnyPluginIpcContract,
+  IpcRendererApi,
+  PluginIpcContract,
+  TempoUiApi,
+  TempoUiClient,
+  TempoUiIpc,
+} from "./types.js";
 
 export type * from "./types.js";
 
-export const tempo = hostGlobal<TempoUiApi>("tempo");
-export const ipcRenderer = hostGlobal<IpcRendererApi>("ipcRenderer");
+function createIpc<TContract extends PluginIpcContract>(
+  ipcRenderer: IpcRendererApi,
+): TempoUiIpc<TContract> {
+  return {
+    invoke: (channel: string, ...args: any[]) =>
+      ipcRenderer.invoke(channel, ...args),
+    send: (channel: string, ...args: any[]) =>
+      ipcRenderer.send(channel, ...args),
+    on: (channel: string, listener: (...args: any[]) => void) =>
+      ipcRenderer.on(channel, listener as never),
+  } as TempoUiIpc<TContract>;
+}
+
+export async function connect<
+  TContract extends PluginIpcContract = AnyPluginIpcContract,
+>(): Promise<TempoUiClient<TContract>> {
+  const host = getHostGlobal<TempoUiApi>("tempo");
+  const ipcRenderer = getHostGlobal<IpcRendererApi>("ipcRenderer");
+  const context = await host.ready();
+  if (!context || typeof context !== "object") {
+    throw new Error("Tempo SDK could not connect: host returned an invalid UI context");
+  }
+
+  return Object.freeze({
+    context,
+    events: host.events,
+    storage: host.storage,
+    files: host.files,
+    settings: host.settings,
+    notify: host.notify,
+    theme: host.theme,
+    mainPanel: host.mainPanel,
+    window: host.window,
+    apps: host.app,
+    external: host.external,
+    session: host.session,
+    ipc: createIpc<TContract>(ipcRenderer),
+  });
+}

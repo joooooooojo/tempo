@@ -77,7 +77,7 @@ Tempo 的定位是**可扩展宿主**：内置应用与第三方插件在主面�
 | **声明式清单** | 导入时只解析 `manifest.json`，注册面板入口与快捷操作，不执行插件代码 |
 | **信任** | 用户确认后才视为信任包；含 `main` 的插件会提示其权限接近 Tempo 本体（读写文件、网络、起进程等） |
 | **启用** | 开关控制是否向面板注册贡献；Runtime **懒启动**，首次 `invoke` 或需要时才拉起 Node 进程 |
-| **SDK 与 Bridge** | Host 注入平台 API，`@tempo/sdk/ui` 与 `@tempo/sdk/runtime` 提供带类型的模块入口 |
+| **SDK 与 Bridge** | Host 注入底层 API，`@tempo/sdk/ui` 与 `@tempo/sdk/runtime` 提供 Client、Runtime 生命周期和强类型 IPC |
 | **Runtime** | 声明 `main.mjs` / `main.js` 的插件在独立 Deno 进程中运行；Supervisor 负责权限、启停与清理 |
 | **安全模型** | Deno 的八项敏感权限默认关闭，由用户逐项授权；Host API 可直接使用 |
 
@@ -108,30 +108,29 @@ com.example.myplugin/
 3. 导入后为**未信任、已禁用**；点击 **信任** → 打开 **启用**  
 4. 主面板搜索「Hello 示例」「Hello 独立窗口」或快捷操作「Hello 一下」
 
-Vite 模板会安装 `@tempo/sdk`。SDK 把 Host 注入的 API 暴露为类型安全的模块入口：
+Vite 模板会安装 `@tempo/sdk`。SDK 为 UI 和 Runtime 提供独立的应用模型：
 
 ```ts
 // UI
-import { ipcRenderer, tempo } from "@tempo/sdk/ui";
+import { connect } from "@tempo/sdk/ui";
 
-await tempo.ready();
-const result = await ipcRenderer.invoke("greet", { who: "Tempo" });
-await tempo.notify.show({ title: result.greeting });
+const app = await connect();
+const result = await app.ipc.invoke("greet", { who: "Tempo" });
+await app.notify.show({ title: result.greeting });
 
 // Runtime
-import { ipcMain, onMounted } from "@tempo/sdk/runtime";
+import { defineRuntime } from "@tempo/sdk/runtime";
 
-onMounted(() => {
-  ipcMain.handle("greet", async (_event, { who }) => ({
+defineRuntime(({ ipc }) => {
+  ipc.handle("greet", async (_event, { who }) => ({
     greeting: `Hello, ${who}!`,
   }));
 });
 ```
 
-Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一。MCP Tool 在 Manifest 声明契约，并由 Runtime 的 `tempo.mcpTools.register()` 独立注册。UI 与 Runtime 的私有通信使用 `ipcRenderer` / `ipcMain`；平台事件通过 `tempo.events.on/once/off` 管理，不写入 Manifest，也不需要 `hooks`。
+Action 可通过 `accepts: ["text" | "image" | "file"]` 匹配主面板输入，并在 `app`（打开 UI）与 `command`（执行 Runtime）中二选一。MCP Tool 在 Manifest 声明契约，并由 Runtime Context 的 `mcpTools.register()` 独立注册。UI 与 Runtime 的私有通信统一使用 `ipc`；平台事件通过 `events.on/once/off` 管理，不写入 Manifest，也不需要 `hooks`。
 
-常用平台 API 包括 `tempo.mainPanel`、`tempo.window`、`tempo.app`、`tempo.external`、`tempo.notify`、`tempo.theme`、`tempo.storage`、`tempo.settings`、`tempo.session` 与 `tempo.events`。
-Runtime 另外提供 `tempo.commands.register()` 给 Action 注册 Command，以及独立的 `tempo.mcpTools.register()` 给 MCP Tool 注册实现。
+UI Client 和 Runtime Context 都提供 `mainPanel`、`apps`、`external`、`notify`、`theme`、`storage`、`settings` 与 `events`。UI 另外提供页面 `context`、`window` 和 `session`，Runtime 另外提供 `commands`、`mcpTools`、`paths` 与 `onDispose`。
 
 卸载插件会停止 Runtime、移除面板贡献，安装包可移入回收目录（可选删除插件私有数据）。
 
@@ -161,7 +160,7 @@ Runtime 另外提供 `tempo.commands.register()` 给 Action 注册 Command，以
 - 健康检查：`GET http://127.0.0.1:17832/health`（无需鉴权）  
 - Tempo 未运行或 MCP 关闭时客户端无法连接  
 
-**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，并在 Runtime 使用 `tempo.mcpTools.register()` 注册实现；工具**默认不向 AI 暴露**，用户确认后才会以 `tempo_plugin_*` 一级 MCP 工具提供给外部客户端。旧的 `tempo_list_exposed_plugin_tools` / `tempo_call_plugin_tool` 入口暂时保留兼容。
+**内置工具（节选）**：待办列表/详情/增删改、子任务与备注、短语与分组、剪贴板搜索、按日屏幕使用报告等。插件可通过 `contributes.mcpTools` 声明工具，并在 Runtime Context 使用 `mcpTools.register()` 注册实现；工具**默认不向 AI 暴露**，用户确认后才会以 `tempo_plugin_*` 一级 MCP 工具提供给外部客户端。旧的 `tempo_list_exposed_plugin_tools` / `tempo_call_plugin_tool` 入口暂时保留兼容。
 
 ## 🛠️ 技术栈
 

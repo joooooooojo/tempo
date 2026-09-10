@@ -12,8 +12,8 @@ description: 按职责查找插件 API 入口、平台 API、宿主事件和 Man
 | 你在找什么 | 页面 |
 | --- | --- |
 | UI 和 Runtime 应导入哪个 SDK 入口 | [插件 API 入口](/reference/plugin-api) |
-| `tempo.storage`、通知、主题、窗口等参数 | [平台 API](/reference/plugin-host-api) |
-| `tempo.events` 支持哪些平台广播 | [宿主事件](/reference/host-events) |
+| `storage`、通知、主题、窗口等参数 | [平台 API](/reference/plugin-host-api) |
+| `events` 支持哪些平台广播 | [宿主事件](/reference/host-events) |
 | Apps、Commands、Actions、MCP Tools、Settings | [Manifest](/reference/manifest-schema) |
 | UI、Hybrid、Headless 与入口格式 | [插件类型与生命周期](/developer/plugin-lifecycle) |
 
@@ -21,17 +21,17 @@ description: 按职责查找插件 API 入口、平台 API、宿主事件和 Man
 
 | 通道 | API | 调用方向 |
 | --- | --- | --- |
-| 平台能力与广播 | `tempo.*` | 插件 ↔ Tempo |
-| 插件私有 IPC | `ipcRenderer` / `ipcMain` | 插件 UI ↔ 插件 Runtime |
-| Action Command | `tempo.commands.register` | Action → Runtime |
-| MCP Tool | `tempo.mcpTools.register` | MCP → Runtime |
+| 平台能力与广播 | UI Client / Runtime Context | 插件 ↔ Tempo |
+| 插件私有 IPC | `ipc` | 插件 UI ↔ 插件 Runtime |
+| Action Command | `commands.register` | Action → Runtime |
+| MCP Tool | `mcpTools.register` | MCP → Runtime |
 
-`tempo.events.on()` / `once()` 不会收到 `ipcMain.send()` 的消息，`ipcRenderer.on()` 也不会收到平台广播。
+`events.on()` / `once()` 不会收到 `ipc.send()` 的消息，`ipc.on()` 也不会收到平台广播。
 
 ## 当前协议版本
 
-- Manifest 格式：`1`
-- Host API：`1.0.0`
+- Manifest 格式：`2`
+- Host API：`2.1.0`
 - 常规调用超时：30 秒
 - 面板与窗口调用超时：5 秒
 - 单次消息上限：约 1 MiB

@@ -53,27 +53,25 @@ com.example.notes/
 
 ```ts
 import "./style.css";
-import { tempo } from "@tempo/sdk/ui";
+import { connect } from "@tempo/sdk/ui";
 
 const notes = document.querySelector<HTMLTextAreaElement>("#notes");
-
-await tempo.ready();
+const app = await connect();
 
 if (notes) {
-  notes.value = (await tempo.storage.get<string>("notes")) ?? "";
+  notes.value = (await app.storage.get<string>("notes")) ?? "";
   notes.addEventListener("input", () => {
-    void tempo.storage.set("notes", notes.value);
+    void app.storage.set("notes", notes.value);
   });
 }
 ```
 
-页面使用 WebView 自己的生命周期。模板把模块脚本放在 `body` 末尾，DOM 此时已经可用；`tempo.ready()` 只负责等待宿主上下文。`tempo.storage` 是当前插件独享的本地存储，不需要自己拼接插件 ID。
+页面使用 WebView 自己的生命周期。模板把模块脚本放在 `body` 末尾，DOM 此时已经可用；`connect()` 等待宿主上下文。`app.storage` 是当前插件独享的本地存储，不需要自己拼接插件 ID。
 
 如果需要读取打开页面时的参数：
 
 ```ts
-const context = await tempo.ready();
-console.log(context.params);
+console.log(app.context.params);
 ```
 
 ## 启动开发服务

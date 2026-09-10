@@ -1,11 +1,11 @@
 ---
 title: 宿主事件
-description: 使用 tempo.events 监听 Tempo 广播的平台事件。
+description: 使用 events 监听 Tempo 广播的平台事件。
 ---
 
 # 宿主事件
 
-宿主事件是 Tempo 广播的平台状态变化。UI 和 Runtime 都通过 `tempo.events` 监听，不需要在 Manifest 中声明 `hooks`，也不需要注册 Command。
+宿主事件是 Tempo 广播的平台状态变化。UI Client 和 Runtime Context 都通过 `events` 监听，不需要在 Manifest 中声明 `hooks`，也不需要注册 Command。
 
 ## 监听方法
 
@@ -20,7 +20,7 @@ description: 使用 tempo.events 监听 Tempo 广播的平台事件。
 
 `off` 可以使用传给 `on` 或 `once` 的原始函数。`once` 会在调用处理器前解除监听，即使处理器内部触发重入逻辑也只会执行一次。
 
-`tempo.events` 不提供 `emit`。平台广播只能由 Tempo 发出；插件 UI 与 Runtime 之间主动发送消息应使用 `ipcRenderer` / `ipcMain`。
+`events` 不提供 `emit`。平台广播只能由 Tempo 发出；插件 UI 与 Runtime 之间主动发送消息使用两侧的 `ipc`。
 
 ## 接收规则
 
@@ -41,27 +41,24 @@ Tempo 不会为了广播启动已停止的 Runtime，也不会保存事件等插
 
 ## Runtime 监听
 
-```js
-import { onMounted, onUnmounted, tempo } from "@tempo/sdk/runtime";
+```ts
+import { defineRuntime } from "@tempo/sdk/runtime";
 
-let offClipboard;
-
-onMounted(() => {
-  offClipboard = tempo.events.on("clipboard.changed", (payload) => {
+defineRuntime(({ events, onDispose }) => {
+  const offClipboard = events.on("clipboard.changed", (payload) => {
     console.log("clipboard changed at", payload.at);
   });
+  onDispose(offClipboard);
 });
-
-onUnmounted(() => offClipboard?.());
 ```
 
 ## UI 监听
 
-```js
-import { tempo } from "@tempo/sdk/ui";
+```ts
+import { connect } from "@tempo/sdk/ui";
 
-await tempo.ready();
-tempo.events.on("clipboard.changed", (payload) => {
+const app = await connect();
+app.events.on("clipboard.changed", (payload) => {
   console.log(payload.at);
 });
 ```
@@ -69,7 +66,7 @@ tempo.events.on("clipboard.changed", (payload) => {
 只关心下一次变化：
 
 ```js
-tempo.events.once("clipboard.changed", (payload) => {
+app.events.once("clipboard.changed", (payload) => {
   console.log("next change", payload.at);
 });
 ```
@@ -81,8 +78,8 @@ function onClipboardChanged(payload) {
   console.log(payload.at);
 }
 
-tempo.events.on("clipboard.changed", onClipboardChanged);
-tempo.events.off("clipboard.changed", onClipboardChanged);
+app.events.on("clipboard.changed", onClipboardChanged);
+app.events.off("clipboard.changed", onClipboardChanged);
 ```
 
 UI 只在页面打开期间接收广播。页面销毁由 WebView 管理，纯 UI 插件不需要生命周期钩子，也不需要为了监听事件增加 Runtime。
@@ -107,9 +104,9 @@ Payload 不包含剪贴板正文或文件路径，避免敏感内容被广播给
 
 ## 专用订阅
 
-以下变化使用独立订阅，不进入 `tempo.events` 的监听表：
+以下变化使用独立订阅，不进入 `events` 的监听表：
 
-- 主题变化：UI 使用 `tempo.theme.subscribe(...)`。
-- 插件设置变化：UI 或 Runtime 使用 `tempo.settings.subscribe(...)`。
+- 主题变化：UI 使用 `app.theme.subscribe(...)`。
+- 插件设置变化：UI Client 或 Runtime Context 使用 `settings.subscribe(...)`。
 
-调用 `tempo.events.removeAllListeners()` 不会移除设置或主题订阅。平台事件和 Runtime IPC 即使频道同名也不会混在一起。`tempo.events` 只接收平台来源，`ipcRenderer` 只接收 Runtime 来源。
+调用 `events.removeAllListeners()` 不会移除设置或主题订阅。平台事件和 Runtime IPC 即使频道同名也不会混在一起：`events` 只接收平台来源，UI Client 的 `ipc` 只接收 Runtime 来源。

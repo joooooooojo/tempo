@@ -16,26 +16,26 @@ apps[].id <---------------- actions[].app
 
 commands[].id <------------ actions[].command
       |
-      +----> tempo.commands.register(id, handler) in main.mjs
+      +----> commands.register(id, handler) in defineRuntime
 
-mcpTools[].name -----------> tempo.mcpTools.register(name, handler) in main.mjs
+mcpTools[].name -----------> mcpTools.register(name, handler) in defineRuntime
 
 settings[] ----------------> Tempo 渲染设置界面
-                              UI / Runtime 用 tempo.settings 读取
+                              UI Client / Runtime Context 用 settings 读取
 ```
 
 - **App** 是可打开的页面。
 - **Command** 是 Runtime 可执行能力的名字。
 - **Action** 是用户在主面板触发的操作，只能打开一个 App 或执行一个 Command。
-- **MCP Tool** 声明公开工具契约，由 Runtime 的 `tempo.mcpTools.register()` 提供实现。
+- **MCP Tool** 声明公开工具契约，由 Runtime Context 的 `mcpTools.register()` 提供实现。
 - **Settings** 放在这些入口之后，由宿主管理。
-- 平台事件使用 `tempo.events.on()` 监听，不存在 `contributes.hooks`。
+- 平台事件使用 Context 的 `events.on()` 监听，不存在 `contributes.hooks`。
 
 ## 完整示例
 
 ```json
 {
-  "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/1.0.0/plugin-manifest.schema.json",
+  "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.7/plugin-manifest.schema.json",
   "manifestVersion": 2,
   "id": "com.example.notes",
   "name": "Notes",
@@ -125,7 +125,7 @@ settings[] ----------------> Tempo 渲染设置界面
 :::
 
 ::: warning permissions 是 Deno 与 WebView 网络边界
-Manifest v2 使用权限数组，可选值为 `read`、`write`、`net`、`env`、`sys`、`run`、`ffi`、`import`。每项独立生效且作用于全局；空数组或省略字段时全部关闭。`net` 同时开放 Deno Runtime 与 Tempo 托管插件 UI 的网络访问。八项全选等价于 Deno 完全访问。未知或重复权限拒绝导入。Tempo Host API 和限定在插件数据目录的 `tempo.files` 不需要 Manifest 授权。详见 [Runtime](/developer/runtime#发布与信任)。
+Manifest v2 使用权限数组，可选值为 `read`、`write`、`net`、`env`、`sys`、`run`、`ffi`、`import`。每项独立生效且作用于全局；空数组或省略字段时全部关闭。`net` 同时开放 Deno Runtime 与 Tempo 托管插件 UI 的网络访问。八项全选等价于 Deno 完全访问。未知或重复权限拒绝导入。Tempo Host API 和限定在插件数据目录的 SDK `files` 不需要 Manifest 授权。详见 [Runtime 权限](/developer/runtime#权限)。
 :::
 
 ## Apps
@@ -173,9 +173,9 @@ Command 先在 Manifest 声明，再由 Runtime 注册同名 handler：
 }
 ```
 
-```js
-onMounted(() => {
-  tempo.commands.register("format", async (params, signal) => {
+```ts
+defineRuntime(({ commands }) => {
+  commands.register("format", async (params, signal) => {
     if (signal.aborted) throw new Error("cancelled");
     return { text: String(params?.text ?? "").trim() };
   });
@@ -223,10 +223,10 @@ Action 是主面板中的用户操作。每个 Action 必须在 `app` 和 `comma
 | `app` | 二选一 | 引用 `apps[].id` |
 | `command` | 二选一 | 引用 `commands[].id`，插件必须有 `main` |
 
-- `app`：Tempo 打开页面，把 `{ actionId, query, input }` 放入 SDK 导出的 `tempo.context.params`。
+- `app`：Tempo 打开页面，把 `{ actionId, query, input }` 放入 `connect()` 返回的 `app.context.params`。
 - `command`：Tempo 启动 Runtime，把相同结构传给 Command handler，并等待返回结果。
 
-Action 不会通过 `ipcMain` 执行。IPC 只服务于已经打开的插件 UI。
+Action 不会通过插件 `ipc` 执行。IPC 只服务于已经打开的插件 UI。
 
 ## MCP Tools
 
@@ -253,11 +253,11 @@ MCP Tool 向外部 AI 客户端声明名称、说明和参数契约。它不引�
 }
 ```
 
-Runtime 使用 `tempo.mcpTools.register()` 注册同名实现：
+Runtime 使用 Context 的 `mcpTools.register()` 注册同名实现：
 
-```js
-onMounted(() => {
-  tempo.mcpTools.register("search-notes", async (params, signal) => {
+```ts
+defineRuntime(({ mcpTools }) => {
+  mcpTools.register("search-notes", async (params, signal) => {
     if (signal.aborted) throw new Error("cancelled");
     return { items: [] };
   });
@@ -266,9 +266,9 @@ onMounted(() => {
 
 `name` 和 `description` 必需。`inputSchema` 和可选的 `outputSchema` 必须是 JSON Schema object。每个插件最多声明 64 个 MCP Tools。
 
-`tempo.mcpTools.register()` 只在 Runtime 中可用。名称必须与 `mcpTools[].name` 一致；它使用独立注册表，不会调用同名 Command。
+`mcpTools.register()` 只在 Runtime Context 中可用。名称必须与 `mcpTools[].name` 一致；它使用独立注册表，不会调用同名 Command。
 
-从早期设计升级时，删除原来的 `mcpTools[].command`，并把对应实现改为 `tempo.mcpTools.register(tool.name, handler)`。插件开发助手会在可视化编辑后自动移除旧字段。
+从早期设计升级时，删除原来的 `mcpTools[].command`，并在 `defineRuntime()` 中通过 `mcpTools.register(tool.name, handler)` 注册。插件开发助手会在可视化编辑后自动移除旧字段。
 
 插件 MCP 默认关闭。用户必须在插件详情中启用插件 MCP 和具体工具，外部客户端才能调用已注册的 Tool handler。
 
@@ -297,16 +297,15 @@ Settings 放在其它入口之后，由 Tempo 统一渲染配置界面：
 | `select` | `options` | 一个选项值 |
 | `multiselect` | `options` | 选项值数组 |
 
-每个 option 需要 `value`，可选 `label`。UI 和 Runtime 使用 `tempo.settings.get()`、`getAll()` 和 `subscribe()` 读取结果，不要直接修改保留键 `__tempo/settings`。
+每个 option 需要 `value`，可选 `label`。UI Client 和 Runtime Context 使用 `settings.get()`、`getAll()` 和 `subscribe()` 读取结果，不要直接修改保留键 `__tempo/settings`。
 
 ## 平台事件不写 Manifest
 
 Runtime 中直接监听即可，不要增加 `hooks` 配置：
 
-```js
-onMounted(() => {
-  const off = tempo.events.on("clipboard.changed", console.log);
-  onUnmounted(off);
+```ts
+defineRuntime(({ events, onDispose }) => {
+  onDispose(events.on("clipboard.changed", console.log));
 });
 ```
 
@@ -325,7 +324,7 @@ onMounted(() => {
 给 Manifest 添加 `$schema` 可以获得编辑器补全。插件开发助手不会写死一个永久的“最新版”地址，而是从远端模板目录选择兼容 release，并把该 release 对应的版本化 Schema URL 写入新项目：
 
 - [远端模板目录](https://joooooooojo.github.io/tempo/plugin-assets/catalog.json)
-- [Manifest Schema 1.0.0](https://joooooooojo.github.io/tempo/plugin-assets/releases/1.0.0/plugin-manifest.schema.json)
+- [Manifest Schema 2.0.7](https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.7/plugin-manifest.schema.json)
 - [仓库中的 Schema 源文件](https://github.com/joooooooojo/tempo/blob/master/docs/schemas/plugin-manifest.schema.json)
 
 Schema 与模板一起独立发布。现有项目保留创建时的版本化地址，不会因为远端更新突然改变校验规则。

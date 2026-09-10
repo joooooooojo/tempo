@@ -1,7 +1,7 @@
 {
   "name": "@tempo/sdk",
-  "version": "0.1.0",
-  "description": "Typed Tempo plugin host API bindings",
+  "version": "1.0.0",
+  "description": "Application model and typed host APIs for Tempo plugins",
   "type": "module",
   "files": [
     "dist",
@@ -23,7 +23,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && node --test test"
   },
   "publishConfig": {
     "access": "public"

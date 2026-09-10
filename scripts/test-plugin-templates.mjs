@@ -176,6 +176,26 @@ for (const kind of ["ui", "hybrid", "headless"]) {
         "// @ts-expect-error Node globals must not leak into UI.\nprocess.cwd();\nexport {};\n");
       await writeFile(path.join(project, "src/runtime/type-isolation.ts"),
         "// @ts-expect-error DOM globals must not leak into Runtime.\ndocument.title;\nexport {};\n");
+      await writeFile(path.join(project, "src/ui/ipc-contract-test.ts"), `
+import { connect } from "@tempo/sdk/ui";
+import type { PluginIpc } from "../ipc.js";
+const app = await connect<PluginIpc>();
+// @ts-expect-error Unknown invoke channels must be rejected.
+await app.ipc.invoke("missing");
+// @ts-expect-error Invoke arguments must match the shared contract.
+await app.ipc.invoke("greet", { name: 42 });
+export {};
+`);
+      await writeFile(path.join(project, "src/runtime/ipc-contract-test.ts"), `
+import { defineRuntime } from "@tempo/sdk/runtime";
+import type { PluginIpc } from "../ipc.js";
+defineRuntime<PluginIpc>(({ ipc }) => {
+  // @ts-expect-error Invoke results must match the shared contract.
+  ipc.handle("greet", async () => ({ message: 42 }));
+  // @ts-expect-error Message channels must match the shared contract.
+  ipc.send("missing");
+});
+`);
       await runNode("node_modules/typescript/bin/tsc", ["-b"], project);
       await runNode("node_modules/typescript/bin/tsc", ["-b"], project);
     } else {

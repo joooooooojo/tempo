@@ -1,111 +1,118 @@
 ---
 title: 加入后台能力
-description: 使用 ipcMain、ipcRenderer 和 Commands 为插件增加 Runtime。
+description: 使用 defineRuntime、IPC 和 Commands 为插件增加 Runtime。
 ---
 
 # 加入后台能力
 
-Runtime 是独立的受限 Deno 2.9.6 进程。已授权的数据文件操作、耗时计算、Action 命令和 MCP Tool 放在 Runtime；普通页面展示和交互留在 UI。
+Runtime 是独立的受限 Deno 2.9.6 进程。全局文件操作、耗时计算、Action Command 和 MCP Tool 放在 Runtime；普通页面展示和交互留在 UI。
 
-## 先分清四条通道
+## 四条通道
 
 | 通道 | 用途 | Manifest 声明 |
 | --- | --- | --- |
-| `tempo.*` | UI 或 Runtime 调用 Tempo 平台能力 | 不需要 |
-| `ipcRenderer` ↔ `ipcMain` | 本插件 UI 与 Runtime 私有通信 | 不需要 |
-| `tempo.commands.register` | 让 Action 执行 Runtime Command | 需要 `commands` |
-| `tempo.mcpTools.register` | 注册 MCP Tool 的 Runtime 实现 | 需要 `mcpTools` |
+| UI Client / Runtime Context | 调用 Tempo 平台能力 | 不需要 |
+| `ipc` | 本插件 UI 与 Runtime 私有通信 | 不需要 |
+| `commands.register` | 让 Action 执行 Runtime Command | 需要 `commands` |
+| `mcpTools.register` | 注册 MCP Tool 的实现 | 需要 `mcpTools` |
 
-平台广播是第四类输入：使用 `tempo.events.on(...)` 监听，不经过 IPC 或 Command，也不写进 Manifest。
+平台广播使用 `events.on(...)` 监听，不经过 IPC 或 Command，也不写进 Manifest。
 
-## Runtime 入口
+## 项目结构
 
-Hybrid 和 Headless 模板会把 TypeScript Runtime 构建成 `dist/main.mjs`。发布包的 Manifest 写：
-
-```json
-{
-  "main": "main.mjs"
-}
-```
-
-Hybrid 模板把两侧代码与类型环境完全分开：
+Hybrid 模板把 UI 和 Runtime 的类型环境分开，并共享 IPC 类型：
 
 ```text
-tsconfig.json           # references 统一组织两个子项目
-tsconfig.ui.json        # DOM 与 @tempo/sdk/ui
-tsconfig.runtime.json   # Deno 兼容环境与 @tempo/sdk/runtime
+tsconfig.json
+tsconfig.ui.json
+tsconfig.runtime.json
 src/
-  ui/
-    main.ts
-    style.css
-  runtime/
-    main.ts
+  ipc.ts
+  ui/main.ts
+  runtime/main.ts
 ```
 
-根 `tsconfig.json` 通过 `references` 引用 `tsconfig.ui.json` 和 `tsconfig.runtime.json`，`pnpm typecheck` 使用 `tsc -b` 统一检查。两侧不共享全局类型：UI 不会获得 Node.js 类型，Runtime 也不会获得 DOM 类型。`pnpm build` 先完成统一类型检查，再由 Vite 生成插件包；TypeScript 增量缓存位于 `node_modules/.cache`。
+根 `tsconfig.json` 通过 references 组织两个子项目。`pnpm typecheck` 使用 `tsc -b` 检查，UI 不会获得 Node 类型，Runtime 也不会获得 DOM 类型。
 
-开发助手新建的项目默认监听项目内的 `dist/main.mjs`。Hybrid 开发时通常同时运行：
+开发时通常同时运行：
 
 ```bash
 pnpm dev
 pnpm dev:runtime
 ```
 
-第一个命令启动 UI，第二个命令持续重建 Runtime。Headless 模板只需运行 `pnpm dev`。
+第一个命令启动 UI，第二个持续构建 `dist/main.mjs`。Headless 模板只需运行 `pnpm dev`。
+
+## 定义 Runtime
+
+```ts
+import { defineRuntime } from "@tempo/sdk/runtime";
+
+defineRuntime(({ commands, events, onDispose }) => {
+  commands.register("status", async () => ({ running: true }));
+
+  const timer = setInterval(() => console.log("tick"), 60_000);
+  onDispose(() => clearInterval(timer));
+  onDispose(events.on("clipboard.changed", console.log));
+});
+```
+
+setup 在宿主挂载 Runtime 时执行，可以是异步函数。每次 `onDispose()` 注册一个清理项；setup 还可直接返回清理函数。停止时 SDK 按注册的相反顺序执行，并在一个清理项失败后继续处理其余项。
 
 ## 页面调用 Runtime
 
-Runtime 直接在入口文件注册处理器：
+先声明共享契约：
 
 ```ts
-import { ipcMain, onMounted, onUnmounted, tempo } from "@tempo/sdk/runtime";
+// src/ipc.ts
+export type PluginIpc = {
+  invokes: {
+    "format-note": (input: { text?: string }) => { text: string };
+  };
+  messages: {
+    "editor-changed": [payload: { dirty: boolean }];
+    saved: [payload: { at: number }];
+  };
+};
+```
 
-function formatNote(input: { text?: string } = {}) {
-  return { text: String(input.text ?? "").trim() };
-}
+Runtime 实现频道：
 
-onMounted(() => {
-  ipcMain.handle("format-note", async (event, input) => {
-    const result = formatNote(input);
-    event.sender.send("note-formatted", result);
-    return result;
+```ts
+import { defineRuntime } from "@tempo/sdk/runtime";
+import type { PluginIpc } from "../ipc.js";
+
+defineRuntime<PluginIpc>(({ ipc }) => {
+  ipc.handle("format-note", async (_event, input) => ({
+    text: String(input.text ?? "").trim(),
+  }));
+
+  ipc.on("editor-changed", (event, payload) => {
+    if (payload.dirty) event.sender.send("saved", { at: Date.now() });
   });
 });
 ```
 
-UI 调用它：
+UI 调用同一个契约：
 
 ```ts
-import { ipcRenderer, tempo } from "@tempo/sdk/ui";
+import { connect } from "@tempo/sdk/ui";
+import type { PluginIpc } from "../ipc.js";
 
-await tempo.ready();
-const result = await ipcRenderer.invoke("format-note", {
-  text: "  hello  ",
-});
-console.log(result.text);
-```
+const app = await connect<PluginIpc>();
+const result = await app.ipc.invoke("format-note", { text: "  hello  " });
 
-单向消息使用 `send/on`：
-
-```ts
-// UI
-ipcRenderer.send("editor-changed", { dirty: true });
-const off = ipcRenderer.on("saved", (_event, payload) => {
-  console.log(payload);
-});
-
-// Runtime
-ipcMain.on("editor-changed", (event, payload) => {
-  console.log(payload.dirty);
-  event.sender.send("saved", { at: Date.now() });
+app.ipc.send("editor-changed", { dirty: true });
+const offSaved = app.ipc.on("saved", (_event, payload) => {
+  console.log(payload.at);
 });
 ```
 
-IPC 参数与返回值使用 Structured Clone，可以包含 `Date`、`Map`、`Set`、TypedArray 等值，不能包含函数、Promise 或 DOM 节点。
+IPC 参数与返回值使用 Structured Clone，可以包含 `Date`、`Map`、`Set` 和 TypedArray，不能包含函数、Promise 或 DOM 节点。省略 IPC 泛型时可以使用任意字符串频道。
 
-## 让 Action 执行 Command
+## Action Command
 
-先在 Manifest 声明 Command：
+先在 Manifest 声明：
 
 ```json
 {
@@ -123,77 +130,53 @@ IPC 参数与返回值使用 Structured Clone，可以包含 `Date`、`Map`、`S
 }
 ```
 
-再在 Runtime 注册同名实现：
+再注册实现：
 
 ```ts
-onMounted(() => {
-  tempo.commands.register("format-note", async (params, signal) => {
+defineRuntime(({ commands }) => {
+  commands.register("format-note", async (params, signal) => {
     if (signal.aborted) throw new Error("cancelled");
-    return formatNote(params);
+    return { text: String(params.input.text).trim() };
   });
 });
 ```
 
-`ipcMain.handle("format-note")` 和 `tempo.commands.register("format-note")` 即使同名也属于不同通道。前者只给插件 UI 使用，后者只由 Tempo 的 Action 调用。
+`ipc.handle("format-note")` 和 `commands.register("format-note")` 即使同名也属于不同通道。前者只给插件 UI 使用，后者由 Tempo Action 调用。
 
-## 注册 MCP Tool
+## MCP Tool
 
-Manifest 只声明工具名称、说明和 Schema，不引用 Command：
-
-```json
-{
-  "mcpTools": [
-    {
-      "name": "format-note",
-      "description": "去除文字首尾空白",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "text": { "type": "string" }
-        }
-      }
-    }
-  ]
-}
-```
-
-Runtime 使用同名 `tempo.mcpTools.register()` 注册实现：
+Manifest 声明工具名称、说明和 JSON Schema，Runtime 注册同名实现：
 
 ```ts
-onMounted(() => {
-  tempo.mcpTools.register("format-note", async (params, signal) => {
+defineRuntime(({ mcpTools }) => {
+  mcpTools.register("format-note", async (params, signal) => {
     if (signal.aborted) throw new Error("cancelled");
-    return formatNote(params);
+    return { text: String(params.text ?? "").trim() };
   });
 });
 ```
 
-`tempo.mcpTools.register` 只存在于 Runtime。`@tempo/sdk/ui` 导出的 `tempo` 没有 `mcpTools`。Tool 名称必须与 `mcpTools[].name` 一致；只声明不注册时，调用返回 `NOT_FOUND`。
+MCP Tool 使用独立注册表，不会调用同名 Command。只声明但没有注册时，调用返回 `NOT_FOUND`。
 
-## 监听平台事件
+## 平台事件
 
 ```ts
-onMounted(() => {
-  const off = tempo.events.on("clipboard.changed", (payload) => {
+defineRuntime(({ events, onDispose }) => {
+  onDispose(events.on("clipboard.changed", (payload) => {
     console.log(payload.at);
-  });
-  onUnmounted(off);
+  }));
 });
 ```
 
-广播只发给已经运行的 Runtime 和当前打开的页面，不会为了事件启动已停止的 Runtime。需要常驻监听时，在 Manifest 根字段添加：
+广播只发给已经运行的 Runtime 和当前打开的页面。需要常驻监听时，在 Manifest 根字段添加：
 
 ```json
 { "activationEvents": ["onStartup"] }
 ```
 
-一次性监听、按处理器移除和批量清理见 [宿主事件](/reference/host-events#监听方法)。
+## 权限
 
-## 发布与信任
-
-Tempo 不会替插件安装依赖或编译 TypeScript。模板的 Vite 配置会把依赖打进 `main.mjs`，并把 Manifest 复制到 `dist`。
-
-带 `main` 的插件需要安装 Deno 运行时、信任插件并启用。Manifest 必须为 v2，Deno 权限默认拒绝。
+带 `main` 的插件需要安装 Deno Runtime、信任插件并启用。Deno 敏感权限默认全部关闭：
 
 ```json
 {
@@ -201,20 +184,12 @@ Tempo 不会替插件安装依赖或编译 TypeScript。模板的 Vite 配置会
 }
 ```
 
-`read` 和 `write` 分别允许读取、写入任意文件与目录；`net` 允许访问任意网络目标，并同时开放 Tempo 托管插件 UI 的 HTTP(S)、WebSocket、图片、媒体和字体网络；`env` 允许读取全部宿主环境变量。包文件读取和专用 IPC 端点是宿主运行插件所需的内部授权。使用 `tempo.storage` 或 `tempo.files` 不需要 Deno 文件权限，其中 `tempo.files` 始终把路径限定在当前插件的数据目录。Tempo Host API 不需要 Manifest 授权，仍会执行参数、调用位置、私有目录边界和 URL scheme 等接口校验。
+八项权限是 `read`、`write`、`net`、`env`、`sys`、`run`、`ffi` 和 `import`。每项都允许对应能力的全局访问；八项全选等价于 Deno `-A`。`net` 同时控制 Runtime 与 Tempo 托管插件 UI 的网络。
 
-Deno 2.9 提供八个可独立选择的全局权限：`read`、`write`、`net`、`env`、`sys`（系统信息）、`run`（子进程）、`ffi`（动态库）和 `import`（远程模块及运行时 npm）。空数组或省略字段时全部关闭。
+Host API 无需 Manifest 授权。`storage` 和 `files` 始终可用，其中 `files` 限定在当前插件数据目录。只有直接调用 Deno 或 Node 兼容文件 API 时才需要 `read` / `write`。
 
-需要全部 Deno 能力时，选择全部八项：
+## 构建与发布
 
-```json
-{
-  "permissions": ["read", "write", "net", "env", "sys", "run", "ffi", "import"]
-}
-```
+Tempo 不会为插件安装依赖或编译 TypeScript。模板的 Vite 配置会把 SDK 和其它依赖内联到 `main.mjs`，并复制 Manifest 到 `dist`。
 
-八项全选时 Runtime 使用 Deno `-A`。只选择部分权限时，每一项都单独生效；未选的权限继续关闭。远程脚本、样式和 iframe 始终由托管 UI 的 CSP 禁止。
-
-Node/npm/TypeScript/Vite 仍用于构建。内联纯 JS npm 依赖的 ESM `main.mjs` 可以直接在 Deno 执行；动态 require、外置 node_modules、Electron API、`.node` 和 Node 打包的原生 exe 不在支持范围。对最终产物进行测试，不以打包成功作为兼容证明。
-
-Tempo 托管的插件 UI 通过 CSP 使用同一网络策略；连接到外部开发服务器的 UI 由开发服务器自身策略负责。Deno 的权限不是 OS 级隔离，全选八项等同于信任插件代码以当前用户权限执行。只安装信任来源的插件。
+Node/npm/TypeScript/Vite 负责构建；最终后台代码由 Deno 执行。动态 require、外置 `node_modules`、Electron API、`.node` 和 Node 原生可执行模块不受支持。
