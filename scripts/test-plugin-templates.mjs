@@ -219,61 +219,35 @@ defineRuntime<PluginIpc>(({ ipc }) => {
   });
 }
 
-test("Hello demo declares no Deno permissions",async () => {
-  const manifest = JSON.parse(await readFile(
-    path.join(root,"templates/examples/plugins/com.example.hello/manifest.json"),"utf8",
-  ));
-  assert.equal(manifest.version,"2.1.0");
-  assert.equal(manifest.engines.pluginApi,"^2.1.0");
-  assert.deepEqual(manifest.permissions,[]);
-});
-
-test("Hello demo uses Host files and blocks undeclared Deno permissions",{skip:!deno},async t => {
+test("SDK example builds without project-local bridge files", async t => {
   const scratch = await mkdtemp(path.join(root,".plugin-template-test-"));
   t.after(() => rm(scratch,{recursive:true,force:true,maxRetries:5,retryDelay:100}));
-  const calls = [{type:"invoke",id:"command",commandId:"hello",params:{who:"Command"}},
-    {type:"mcp-invoke",id:"mcp",toolName:"say-hello",arguments:{who:"MCP"}},
-    {type:"ipc-invoke",id:"ipc",channel:"greet",args:[{who:"IPC"}]},
-    {type:"ipc-invoke",id:"permissions",channel:"permission-probe",args:[]}];
-  const result = await runPlugin(t,path.join(root,"templates/examples/plugins/com.example.hello"),scratch,calls);
-  const log = await readFile(path.join(result.data,"hello.log"),"utf8");
-  for (const who of ["Command", "MCP", "IPC"]) assert.ok(log.includes(`Hello, ${who}!`));
-  assert.equal(result.hostCalls.filter(method => method === "notify.show").length,3);
-  const permissions = scaDecode(result.responses.get("permissions"));
-  assert.deepEqual(permissions.declared,[]);
-  assert.equal(permissions.host.ok,true);
-  assert.deepEqual(permissions.host.bytes,[0,1,2,255]);
-  assert.equal(permissions.direct.read.allowed,false);
-  assert.equal(permissions.direct.write.allowed,false);
-  for (const [name,state] of Object.entries(permissions.permissions)) {
-    assert.notEqual(state,"granted",`${name} should remain blocked`);
-  }
+  const project = path.join(scratch,"example");
+  await cp(path.join(root,"templates/examples/plugins"),project,{recursive:true});
 
-  for (const [mode,policy] of [
-    ["granular",["read","write","net","env"]],
-    ["all",["read","write","net","env","sys","run","ffi","import"]],
-  ]) {
-    const packageDir = path.join(scratch,mode);
-    await cp(path.join(root,"templates/examples/plugins/com.example.hello"),packageDir,{recursive:true});
-    const manifestPath = path.join(packageDir,"manifest.json");
-    const manifest = JSON.parse(await readFile(manifestPath,"utf8"));
-    manifest.permissions = policy;
-    await writeFile(manifestPath,`${JSON.stringify(manifest,null,2)}\n`);
-    const grantedResult = await runPlugin(t,packageDir,scratch,[
-      {type:"ipc-invoke",id:"permissions",channel:"permission-probe",args:[]},
-    ]);
-    const granted = scaDecode(grantedResult.responses.get("permissions"));
-    assert.deepEqual(granted.declared,policy);
-    assert.equal(granted.host.ok,true);
-    assert.equal(granted.direct.read.allowed,true);
-    assert.equal(granted.direct.write.allowed,true);
-    for (const name of ["read","write","net","env"]) {
-      assert.equal(granted.permissions[name],"granted",`${mode} should grant ${name}`);
-    }
-    for (const name of ["sys","run","ffi"]) {
-      if (mode === "all") assert.equal(granted.permissions[name],"granted");
-      else assert.notEqual(granted.permissions[name],"granted",`${mode} should block ${name}`);
-    }
-    assert.equal(granted.permissions.import,mode === "all" ? "granted" : "denied");
-  }
+  assert.equal(existsSync(path.join(project,".tempo")),false);
+  assert.equal(existsSync(path.join(project,"tempo.vite.ts")),false);
+  assert.match(await readFile(path.join(project,"vite.config.ts"),"utf8"),/tempo-plugin-sdk\/vite/);
+
+  const manifest = JSON.parse(await readFile(path.join(project,"manifest.json"),"utf8"));
+  assert.equal(manifest.id,"com.example.plugin");
+  assert.equal(manifest.version,"0.1.0");
+  assert.equal(manifest.engines.pluginApi,"^2.1.0");
+  assert.deepEqual(manifest.permissions,[]);
+
+  await runNode("node_modules/typescript/bin/tsc",["-b"],project);
+  await runNode("node_modules/vite/bin/vite.js",["build"],project);
+  await runNode("node_modules/vite/bin/vite.js",["build","--config","vite.runtime.config.ts"],project);
+
+  await t.test("built Runtime uses the SDK transport",{skip:!deno},async t => {
+    const calls = [
+      {type:"invoke",id:"command",commandId:"greet",params:{name:"Command"}},
+      {type:"mcp-invoke",id:"mcp",toolName:"greet-tool",arguments:{name:"MCP"}},
+      {type:"ipc-invoke",id:"ipc",channel:"greet",args:[{name:"IPC"}]},
+    ];
+    const result = await runPlugin(t,path.join(project,"dist"),scratch,calls);
+    assert.equal(result.responses.get("command").message,"Hello, Command!");
+    assert.equal(result.responses.get("mcp").message,"Hello, MCP!");
+    assert.equal(scaDecode(result.responses.get("ipc")).message,"Hello, IPC!");
+  });
 });

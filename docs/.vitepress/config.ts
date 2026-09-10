@@ -55,7 +55,7 @@ export default defineConfig({
           text: "继续查阅",
           items: [
             { text: "API 参考", link: "/reference/" },
-            { text: "完整示例", link: "https://github.com/joooooooojo/tempo/tree/master/templates/examples/plugins/com.example.hello" },
+            { text: "完整示例", link: "https://github.com/joooooooojo/tempo/tree/master/templates/examples/plugins" },
           ],
         },
       ],

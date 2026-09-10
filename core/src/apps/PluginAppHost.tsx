@@ -12,11 +12,8 @@ import type { PluginRpcError, PluginUiPrepareResult } from "@/types";
  * is relayed through the `plugin_bridge_invoke` command, which re-checks `viewInstanceId`
  * ownership on the Rust side; nothing here is trusted at face value from the iframe.
  *
- * The host injects `__tempo__/structured-clone.js` + `__tempo__/client.js` and mounts
- * `window.tempo` plus `window.ipcRenderer`:
- *
- *   await window.ipcRenderer.invoke("greet", { who: "Tempo" })
- *   await window.tempo.notify.show({ title: "Hi" })
+ * The host injects `__tempo__/structured-clone.js` + `__tempo__/client.js` before
+ * plugin code so tempo-plugin-sdk can connect to the internal UI transport.
  *
  * Host -> plugin:
  *   { type: "tempo-plugin-context", apiVersion, theme, params, session }

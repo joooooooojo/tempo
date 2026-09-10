@@ -5,7 +5,7 @@ description: 使用 connect 和 defineRuntime 构建 Tempo 插件。
 
 # 使用 SDK
 
-`tempo-plugin-sdk` 提供 UI Client、Runtime Context、生命周期管理和可选的强类型 IPC。它使用 Tempo 已注入的底层对象，不实现宿主能力，也不改变插件权限。
+`tempo-plugin-sdk` 提供 UI Client、Runtime Context、生命周期管理、可选的强类型 IPC 和 Vite 开发支持。它通过 Tempo 注入的版本化内部传输调用宿主能力，不改变插件权限。
 
 模板已经包含依赖。手动创建项目时安装：
 
@@ -98,3 +98,16 @@ import type {
 ```
 
 UI 与 Runtime 应分别使用对应入口。底层宿主全局只用于 SDK 实现和兼容旧插件，新代码无需直接访问。
+
+## Vite 开发支持
+
+```ts
+import { defineConfig } from "vite";
+import { tempoPlugin } from "tempo-plugin-sdk/vite";
+
+export default defineConfig({
+  plugins: [tempoPlugin()],
+});
+```
+
+`tempoPlugin()` 在 Vite 开发服务中注入 SDK 自带的 UI 传输，在生产构建完成后把项目根目录的 Manifest 复制到输出目录。可用 `tempoPlugin({ outDir: "build" })` 覆盖复制目标。插件项目无需包含 `.tempo`、桥接源码或额外的 Vite 辅助文件。生产页面由 Tempo 注入传输，SDK 会校验传输协议版本。

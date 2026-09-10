@@ -1,9 +1,8 @@
-import { getHostGlobal } from "./globals.js";
+import { getUiTransport } from "./globals.js";
 import type {
   AnyPluginIpcContract,
   IpcRendererApi,
   PluginIpcContract,
-  TempoUiApi,
   TempoUiClient,
   TempoUiIpc,
 } from "./types.js";
@@ -26,8 +25,7 @@ function createIpc<TContract extends PluginIpcContract>(
 export async function connect<
   TContract extends PluginIpcContract = AnyPluginIpcContract,
 >(): Promise<TempoUiClient<TContract>> {
-  const host = getHostGlobal<TempoUiApi>("tempo");
-  const ipcRenderer = getHostGlobal<IpcRendererApi>("ipcRenderer");
+  const { tempo: host, ipcRenderer } = getUiTransport();
   const context = await host.ready();
   if (!context || typeof context !== "object") {
     throw new Error("Tempo SDK could not connect: host returned an invalid UI context");

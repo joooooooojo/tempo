@@ -15,6 +15,10 @@ const window = {
 const context = vm.createContext({ atob, btoa, console, TextDecoder, TextEncoder, window });
 vm.runInContext(source, context, { filename: "core/plugin-ui/bridge-client.js" });
 
+assert.equal(context.__tempoPluginUi.protocolVersion, 1);
+assert.equal(context.__tempoPluginUi.tempo, context.window.tempo);
+assert.equal(context.__tempoPluginUi.ipcRenderer, context.window.ipcRenderer);
+
 const hostFiles = new Map();
 parent.postMessage = (request) => {
   let result = null;

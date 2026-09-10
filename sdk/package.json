@@ -1,6 +1,6 @@
 {
   "name": "tempo-plugin-sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Application model and typed host APIs for Tempo plugins",
   "repository": {
     "type": "git",
@@ -24,10 +24,14 @@
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node ./scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test"
   },
@@ -35,6 +39,7 @@
     "access": "public"
   },
   "devDependencies": {
+    "@types/node": "^26.1.0",
     "typescript": "~5.8.3"
   }
 }

@@ -3,6 +3,14 @@ import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scaEncode, scaDecodeArgs, scaEncodeArgs } from "../../core/plugin-runtime/structured-clone.mjs";
 
+if (
+  globalThis.__tempoPluginRuntime?.protocolVersion !== 1 ||
+  globalThis.__tempoPluginRuntime.tempo !== globalThis.tempo ||
+  globalThis.__tempoPluginRuntime.ipcMain !== globalThis.ipcMain
+) {
+  throw new Error("versioned Tempo Runtime transport is unavailable");
+}
+
 onMounted(() => {
   tempo.mcpTools.register("echo", async args => args);
   ipcMain.handle("echo", async (_event, value) => value);

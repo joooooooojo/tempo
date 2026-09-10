@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { defineRuntime } from "../dist/runtime.js";
 import { connect } from "../dist/ui.js";
+import { tempoPlugin } from "../dist/vite.js";
 
-const HOST_GLOBALS = ["tempo", "ipcRenderer", "ipcMain", "onMounted", "onUnmounted"];
+const HOST_GLOBALS = [
+  "__tempoPluginUi",
+  "__tempoPluginRuntime",
+  "tempo",
+  "ipcRenderer",
+  "ipcMain",
+  "onMounted",
+  "onUnmounted",
+];
 
 function clearHostGlobals() {
   for (const name of HOST_GLOBALS) delete globalThis[name];
@@ -19,19 +31,24 @@ test("connect waits for the UI context and returns a connected client", async ()
     resolveReady = resolve;
   });
   const calls = [];
-  globalThis.tempo = {
+  const tempo = {
     context: null,
     ready: () => ready,
     storage: { get: async () => null },
     notify: { show: async () => undefined },
   };
-  globalThis.ipcRenderer = {
+  const ipcRenderer = {
     invoke: async (channel, ...args) => {
       calls.push([channel, args]);
       return { ok: true };
     },
     send() {},
     on() { return () => {}; },
+  };
+  globalThis.__tempoPluginUi = {
+    protocolVersion: 1,
+    tempo,
+    ipcRenderer,
   };
 
   let connected = false;
@@ -45,7 +62,7 @@ test("connect waits for the UI context and returns a connected client", async ()
   resolveReady(context);
   const client = await connecting;
   assert.equal(client.context, context);
-  assert.equal(client.storage, globalThis.tempo.storage);
+  assert.equal(client.storage, tempo.storage);
   assert.equal("ready" in client, false);
   assert.equal("tempo" in client, false);
   assert.deepEqual(await client.ipc.invoke("probe", 1), { ok: true });
@@ -58,22 +75,32 @@ test("connect rejects an invalid host context", async () => {
   await assert.rejects(connect(), /host returned an invalid UI context/);
 });
 
+test("connect rejects an unsupported internal transport protocol", async () => {
+  globalThis.__tempoPluginUi = { protocolVersion: 2 };
+  await assert.rejects(connect(), /unsupported protocol 2 \(expected 1\)/);
+});
+
 test("defineRuntime runs setup on mount and disposers in reverse order", async () => {
   const mounted = [];
   const unmounted = [];
   const disposed = [];
-  globalThis.tempo = {
+  const tempo = {
     pluginId: "com.example.test",
     commands: {},
     events: {},
   };
-  globalThis.ipcMain = {
+  const ipcMain = {
     handle() {},
     on() { return () => {}; },
     send() {},
   };
-  globalThis.onMounted = (hook) => mounted.push(hook);
-  globalThis.onUnmounted = (hook) => unmounted.push(hook);
+  globalThis.__tempoPluginRuntime = {
+    protocolVersion: 1,
+    tempo,
+    ipcMain,
+    onMounted: (hook) => mounted.push(hook),
+    onUnmounted: (hook) => unmounted.push(hook),
+  };
 
   defineRuntime(({ onDispose, pluginId }) => {
     assert.equal(pluginId, "com.example.test");
@@ -135,4 +162,33 @@ test("SDK entry points report missing host globals clearly", async () => {
     () => defineRuntime(() => {}),
     /host global "tempo" is unavailable/,
   );
+});
+
+test("tempoPlugin injects SDK-owned assets only during development", () => {
+  const plugin = tempoPlugin();
+  plugin.configResolved({ command: "serve", root: ".", build: { outDir: "dist" } });
+  const tags = plugin.transformIndexHtml();
+  assert.equal(tags.length, 2);
+  assert.match(tags[0].children, /__tempoSca/);
+  assert.match(tags[1].children, /__tempoPluginUi/);
+
+  plugin.configResolved({ command: "build", root: ".", build: { outDir: "dist" } });
+  assert.deepEqual(plugin.transformIndexHtml(), []);
+});
+
+test("tempoPlugin copies the project manifest only during builds", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tempo-sdk-vite-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const manifest = '{"id":"com.example.test"}\n';
+  await writeFile(path.join(root, "manifest.json"), manifest);
+
+  const plugin = tempoPlugin();
+  plugin.configResolved({ command: "serve", root, build: { outDir: "build" } });
+  plugin.closeBundle();
+  await assert.rejects(readFile(path.join(root, "build", "manifest.json")), /ENOENT/);
+
+  plugin.configResolved({ command: "build", root, build: { outDir: "build" } });
+  plugin.closeBundle();
+
+  assert.equal(await readFile(path.join(root, "build", "manifest.json"), "utf8"), manifest);
 });

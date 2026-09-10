@@ -795,12 +795,26 @@ async function main() {
     send({ type: "handshake", token: descriptor.token });
   });
 
-  globalThis.tempo = buildTempo(descriptor);
-  globalThis.ipcMain = {
+  const tempo = buildTempo(descriptor);
+  const ipcMain = {
     handle: ipcHandle,
     on: ipcOn,
     send: ipcSendToUi,
   };
+  Object.defineProperty(globalThis, "__tempoPluginRuntime", {
+    value: Object.freeze({
+      protocolVersion: 1,
+      tempo,
+      ipcMain,
+      onMounted: registerMountedHook,
+      onUnmounted: registerUnmountedHook,
+    }),
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  globalThis.tempo = tempo;
+  globalThis.ipcMain = ipcMain;
   globalThis.onMounted = registerMountedHook;
   globalThis.onUnmounted = registerUnmountedHook;
 

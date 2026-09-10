@@ -19,9 +19,9 @@ const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TEMPLATE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TEMPLATE_FILES: usize = 256;
 #[cfg(test)]
-const BUNDLED_TEMPLATE_VERSION: &str = "2.0.8";
+const BUNDLED_TEMPLATE_VERSION: &str = "2.0.9";
 static BUNDLED_DENO_TEMPLATES: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../docs/public/plugin-assets/releases/2.0.8");
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../docs/public/plugin-assets/releases/2.0.9");
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -635,18 +635,17 @@ mod tests {
         let package: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(root.join("package.json")).unwrap())
                 .unwrap();
-        assert_eq!(package["dependencies"]["tempo-plugin-sdk"], "^1.0.0");
+        assert_eq!(package["dependencies"]["tempo-plugin-sdk"], "^1.1.0");
+        assert!(!root.join("tempo.vite.ts").exists());
+        assert!(!root.join(".tempo").exists());
         let manifest: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(root.join("manifest.json")).unwrap())
                 .unwrap();
         assert_eq!(manifest["id"], "com.example.hybrid");
-        assert!(manifest["$schema"]
-            .as_str()
-            .unwrap()
-            .starts_with(&format!(
-                "http://{address}/releases/{}/",
-                super::BUNDLED_TEMPLATE_VERSION
-            )));
+        assert!(manifest["$schema"].as_str().unwrap().starts_with(&format!(
+            "http://{address}/releases/{}/",
+            super::BUNDLED_TEMPLATE_VERSION
+        )));
 
         server.abort();
         let _ = server.await;

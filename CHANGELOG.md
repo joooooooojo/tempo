@@ -7,12 +7,12 @@
 ### Changed
 
 - 插件运行时（破坏性变更）：后台统一迁移到 Deno 2.9.6，不再回退 Node；插件需使用 Manifest v2 / Host API 2.x，新增文件 API 的模板要求 2.1.0。旧插件须提升版本、重新打包并确认信任，Node/npm/Vite 继续用于构建。
-- 插件 SDK（破坏性变更）：`tempo-plugin-sdk` 升级到 1.0，UI 改用 `connect()` 获取上下文非空的 Client，Runtime 改用 `defineRuntime()` 统一 setup 与逆序清理；Hybrid 可用一份 IPC 契约约束两侧频道、参数和返回值。
+- 插件 SDK（破坏性变更）：`tempo-plugin-sdk` 升级到 1.1，UI 改用 `connect()` 获取上下文非空的 Client，Runtime 改用 `defineRuntime()` 统一 setup 与逆序清理；SDK 优先连接带协议版本的宿主内部传输，并新增 `tempo-plugin-sdk/vite` 的单一 `tempoPlugin()` 配置入口。
 - 插件权限：Manifest 改为八项可独立选择的权限数组，分别控制全局文件读取、全局文件写入、网络、环境变量、系统信息、子进程、动态库和远程导入；默认全部关闭，八项全选等价于 Deno 完全访问，`net` 同时控制 Runtime 与托管 UI。Tempo Host API 不再要求逐项授权，并移除重复的 `capabilities` 声明。
 - 插件文件 API：UI 与 Runtime 新增始终可用的 `tempo.files`，无需 Deno 文件权限即可读写当前插件的私有数据目录；拒绝绝对路径、路径穿越和符号链接，并限制单文件与目录列表大小。
-- 插件模板：同步 UI / Hybrid / Headless 模板至 2.0.8 和 Host API 2.1.0，并提供内置模板回退；Hybrid 的 UI、Runtime tsconfig 位于根目录，由 references 和 `tsc -b` 统一检查，同时通过共享 IPC 契约保持两侧类型一致。
+- 插件模板：同步 UI / Hybrid / Headless 模板至 2.0.9 和 Host API 2.1.0，并提供内置模板回退；开发桥接改由 SDK 提供，生成项目不再包含 `.tempo` 与 `tempo.vite.ts`；Hybrid 通过共享 IPC 契约保持两侧类型一致。
 - 插件图标：统一支持 SVG、PNG、JPEG、WebP 与 GIF，并在 Manifest、包导入、主界面、插件管理、插件仓库及独立窗口使用同一格式契约；模板 Schema 更新至 2.0.5。
-- 演示插件：Hello 2.1.0 新增权限检查面板，对比零 Deno 权限下的敏感操作拦截与 UI / Runtime 始终可用的 `tempo.files` 私有目录读写，并提供八项权限的选择示例。
+- 演示插件：改为可直接构建的 TypeScript Hybrid 项目，UI、Runtime 和 Vite 配置均通过 `tempo-plugin-sdk` 交互，并演示共享 IPC 契约、Command 与 MCP Tool。
 - 主面板：自动收起改为按「原生应用激活」判断——只有切换到其他应用时才收起；右键菜单、插件窗口、开发者工具、系统文件对话框等 Tempo 自身窗口获得焦点不再误关面板。
 - 插件仓库：凭证不再写入系统凭证库，Token 和密码只留在当前应用会话。
 

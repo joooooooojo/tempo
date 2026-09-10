@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  if (window.tempo || window.ipcRenderer) return;
+  if (globalThis.__tempoPluginUi || window.tempo || window.ipcRenderer) return;
 
   const sca = globalThis.__tempoSca;
   const pending = new Map();
@@ -403,6 +403,12 @@
     true,
   );
 
+  Object.defineProperty(globalThis, "__tempoPluginUi", {
+    value: Object.freeze({ protocolVersion: 1, tempo, ipcRenderer }),
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
   window.tempo = tempo;
   window.ipcRenderer = ipcRenderer;
   window.parent.postMessage({ type: "tempo-plugin-ready" }, "*");

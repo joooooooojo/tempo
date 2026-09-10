@@ -38,3 +38,16 @@ type PluginIpc = {
 Pass it to `connect<PluginIpc>()` and `defineRuntime<PluginIpc>()` to type channel names, arguments, and invoke results on both sides. Omitting the contract keeps dynamic string channels available.
 
 The SDK uses APIs injected by Tempo. It does not request or bypass plugin permissions.
+
+Vite projects can use the SDK-owned development transport and manifest helper:
+
+```ts
+import { defineConfig } from "vite";
+import { tempoPlugin } from "tempo-plugin-sdk/vite";
+
+export default defineConfig({
+  plugins: [tempoPlugin()],
+});
+```
+
+`tempoPlugin()` injects the SDK-owned transport during development and copies `manifest.json` during builds. Production plugin pages receive the versioned transport from Tempo, so generated projects do not need `.tempo` bridge files.

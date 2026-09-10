@@ -26,8 +26,6 @@ com.example.notes/
   index.html
   package.json
   vite.config.ts
-  tempo.vite.ts
-  .tempo/              # 开发服务使用的 Host Bridge
   src/
     main.ts
     style.css
@@ -90,7 +88,7 @@ pnpm dev
 3. 点击 **连接**。
 4. 在主面板搜索插件名称并打开页面。
 
-模板中的 `tempo.vite.ts` 只在 Vite 开发服务中注入 Bridge。生产构建不会把 `.tempo` 目录打进插件包。
+模板从 `tempo-plugin-sdk/vite` 加载开发桥接。桥接实现随 SDK 发布，生成的插件项目不再保存 `.tempo` 或桥接脚本；生产环境由 Tempo 在加载页面时提供内部传输。
 
 ## 构建并导入
 

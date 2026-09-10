@@ -1,8 +1,8 @@
 import { defineConfig } from "vite";
-import { copyManifest, tempoDevBridge } from "./tempo.vite";
+import { tempoPlugin } from "tempo-plugin-sdk/vite";
 
 export default defineConfig({
-  plugins: [tempoDevBridge(), copyManifest()],
+  plugins: [tempoPlugin()],
   build: {
     outDir: "dist",
     emptyOutDir: true,

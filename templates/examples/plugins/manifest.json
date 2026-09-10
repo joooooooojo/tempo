@@ -1,0 +1,51 @@
+{
+  "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.9/plugin-manifest.schema.json",
+  "manifestVersion": 2,
+  "id": "com.example.plugin",
+  "name": "hello",
+  "version": "0.1.0",
+  "engines": {
+    "tempo": ">=2.2.6",
+    "pluginApi": "^2.1.0"
+  },
+  "kind": "hybrid",
+  "main": "main.mjs",
+  "contributes": {
+    "apps": [
+      {
+        "id": "main",
+        "name": "hello",
+        "entry": "index.html",
+        "windowMode": "normal"
+      }
+    ],
+    "commands": [
+      {
+        "id": "greet",
+        "title": "Greet"
+      }
+    ],
+    "actions": [
+      {
+        "id": "open",
+        "name": "打开 hello",
+        "app": "main"
+      }
+    ],
+    "mcpTools": [
+      {
+        "name": "greet-tool",
+        "description": "Return a greeting",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "permissions": []
+}

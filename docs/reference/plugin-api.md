@@ -5,7 +5,7 @@ description: UI Client、Runtime Context、生命周期和强类型 IPC。
 
 # 插件 API 入口
 
-Tempo 在插件入口执行前注入底层 API。`tempo-plugin-sdk` 在这些对象之上提供两个入口：UI 使用 `connect()`，Runtime 使用 `defineRuntime()`。官方模板已经声明 SDK 依赖并把它打进最终产物。
+Tempo 在插件入口执行前注入带协议版本的内部传输。`tempo-plugin-sdk` 在传输之上提供两个入口：UI 使用 `connect()`，Runtime 使用 `defineRuntime()`。官方模板已经声明 SDK 依赖并把它打进最终产物。
 
 ## 两个入口
 
@@ -29,7 +29,7 @@ defineRuntime(({ commands }) => {
 });
 ```
 
-底层 `window.tempo`、`window.ipcRenderer` 与 Runtime 全局继续存在，以运行 SDK 和兼容旧插件。使用 SDK 的业务代码无需直接读取它们。
+旧的 `window.tempo`、`window.ipcRenderer` 与 Runtime 全局暂时保留用于兼容旧插件。SDK 1.1 优先连接版本化内部传输；使用 SDK 的业务代码无需直接读取任何宿主全局。
 
 ## 平台能力
 

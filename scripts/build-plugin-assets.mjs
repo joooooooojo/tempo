@@ -9,7 +9,6 @@ const outputRoot = path.join(root, "docs", "public", "plugin-assets");
 const catalogPath = path.join(outputRoot, "catalog.json");
 const schemaSource = path.join(root, "docs", "schemas", "plugin-manifest.schema.json");
 const kinds = ["ui", "hybrid", "headless"];
-const sharedBridgeFiles = ["bridge-client.js", "structured-clone.js"];
 
 const releaseConfig = JSON.parse(
   await readFile(path.join(sourceRoot, "release.json"), "utf8"),
@@ -113,18 +112,6 @@ for (const kind of kinds) {
     const target = path.join(releaseOutputRoot, kind, relativePath);
     const url = `${releaseRelativeRoot}/${kind}/${posixPath}`;
     stagedFiles.push({ source, target, relativePath, url, descriptors });
-  }
-  if (kind === "ui" || kind === "hybrid") {
-    for (const fileName of sharedBridgeFiles) {
-      const relativePath = path.join(".tempo", fileName);
-      stagedFiles.push({
-        source: path.join(root, "core", "plugin-ui", fileName),
-        target: path.join(releaseOutputRoot, kind, relativePath),
-        relativePath,
-        url: `${releaseRelativeRoot}/${kind}/.tempo/${fileName}`,
-        descriptors,
-      });
-    }
   }
   nextRelease.templates[kind] = { files: descriptors };
 }

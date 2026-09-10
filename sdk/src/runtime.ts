@@ -1,11 +1,9 @@
-import { getHostGlobal } from "./globals.js";
+import { getRuntimeTransport } from "./globals.js";
 import type {
   AnyPluginIpcContract,
   IpcMainApi,
   PluginIpcContract,
   TempoDisposer,
-  TempoLifecycleRegistrar,
-  TempoRuntimeApi,
   TempoRuntimeContext,
   TempoRuntimeIpc,
   TempoRuntimeSetup,
@@ -32,10 +30,7 @@ export function defineRuntime<
     throw new TypeError("defineRuntime requires a setup function");
   }
 
-  const host = getHostGlobal<TempoRuntimeApi>("tempo");
-  const ipcMain = getHostGlobal<IpcMainApi>("ipcMain");
-  const onMounted = getHostGlobal<TempoLifecycleRegistrar>("onMounted");
-  const onUnmounted = getHostGlobal<TempoLifecycleRegistrar>("onUnmounted");
+  const { tempo: host, ipcMain, onMounted, onUnmounted } = getRuntimeTransport();
   const disposers: TempoDisposer[] = [];
   let disposing = false;
 

@@ -77,7 +77,7 @@ Tempo 的定位是**可扩展宿主**：内置应用与第三方插件在主面�
 | **声明式清单** | 导入时只解析 `manifest.json`，注册面板入口与快捷操作，不执行插件代码 |
 | **信任** | 用户确认后才视为信任包；含 `main` 的插件会提示其权限接近 Tempo 本体（读写文件、网络、起进程等） |
 | **启用** | 开关控制是否向面板注册贡献；Runtime **懒启动**，首次 `invoke` 或需要时才拉起 Node 进程 |
-| **SDK 与 Bridge** | Host 注入底层 API，`tempo-plugin-sdk/ui` 与 `tempo-plugin-sdk/runtime` 提供 Client、Runtime 生命周期和强类型 IPC |
+| **SDK 与 Bridge** | Host 注入版本化内部传输，`tempo-plugin-sdk/ui` 与 `tempo-plugin-sdk/runtime` 提供 Client、Runtime 生命周期和强类型 IPC |
 | **Runtime** | 声明 `main.mjs` / `main.js` 的插件在独立 Deno 进程中运行；Supervisor 负责权限、启停与清理 |
 | **安全模型** | Deno 的八项敏感权限默认关闭，由用户逐项授权；Host API 可直接使用 |
 
@@ -97,16 +97,16 @@ com.example.myplugin/
 - **纯 UI**：无 `main`，不需安装插件 Deno 运行时
 - **混合 / 无界面**：有 `main` 时须在设置 → 插件中安装 **插件 Deno 运行时**
 
-`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`permissions`、`contributes.apps` / `commands` / `actions` / `mcpTools` / `settings`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `templates/examples/plugins/com.example.hello/manifest.json`。
+`manifest.json` 常用字段：`id`（如 `com.example.hello`）、`name`、`version`、`engines.tempo` / `engines.pluginApi`、`main`（可选）、`permissions`、`contributes.apps` / `commands` / `actions` / `mcpTools` / `settings`（可选）等。应用用 `windowMode: "normal" | "standalone"` 选择主面板或独立窗口；`rect: { width?, height?, x?, y? }` 控制矩形，支持像素、百分比，`x/y` 还支持 `"center"`。完整示例见仓库 `templates/examples/plugins/manifest.json`。
 
 文档：[在线文档](https://joooooooojo.github.io/tempo/)（本地：`pnpm docs:dev`）· [快速开始](./docs/guide/getting-started.md) · [插件开发](./docs/developer/index.md) · [SDK](./docs/developer/sdk.md) · [插件 API 入口](./docs/reference/plugin-api.md) · [平台 API](./docs/reference/plugin-host-api.md) · [Manifest](./docs/reference/manifest-schema.md)
 
-### 安装与试用（Hello 示例）
+### 安装与试用（SDK 示例）
 
-1. 设置 → 插件 → 安装 **插件 Deno 运行时**（仅含 `main` 的插件需要）
-2. **导入目录** → 选择 `templates/examples/plugins/com.example.hello`
-3. 导入后为**未信任、已禁用**；点击 **信任** → 打开 **启用**  
-4. 主面板搜索「Hello 示例」「Hello 独立窗口」或快捷操作「Hello 一下」
+1. 在 `templates/examples/plugins` 运行 `pnpm install && pnpm build`
+2. 设置 → 插件 → 安装 **插件 Deno 运行时**
+3. **导入目录** → 选择 `templates/examples/plugins/dist`
+4. 导入后点击 **信任** 并打开 **启用**，再从主面板打开 `hello`
 
 Vite 模板会安装 `tempo-plugin-sdk`。SDK 为 UI 和 Runtime 提供独立的应用模型：
 
@@ -115,15 +115,15 @@ Vite 模板会安装 `tempo-plugin-sdk`。SDK 为 UI 和 Runtime 提供独立的
 import { connect } from "tempo-plugin-sdk/ui";
 
 const app = await connect();
-const result = await app.ipc.invoke("greet", { who: "Tempo" });
-await app.notify.show({ title: result.greeting });
+const result = await app.ipc.invoke("greet", { name: "Tempo" });
+await app.notify.show({ title: result.message });
 
 // Runtime
 import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ ipc }) => {
-  ipc.handle("greet", async (_event, { who }) => ({
-    greeting: `Hello, ${who}!`,
+  ipc.handle("greet", async (_event, { name }) => ({
+    message: `Hello, ${name}!`,
   }));
 });
 ```
@@ -136,7 +136,7 @@ UI Client 和 Runtime Context 都提供 `mainPanel`、`apps`、`external`、`not
 
 ### Vite 项目模板
 
-插件开发助手会从 GitHub Pages 获取最新兼容的 UI、Hybrid、Headless 模板，并在本地缓存通过 SHA-256 校验的版本。模板与 Tempo 应用独立发布，不需要更新桌面端即可获得新模板。模板使用 `tempo-plugin-sdk`，Vite 会把 SDK 与其他依赖打进 `dist`，产物可直接导入 Tempo。
+插件开发助手会从 GitHub Pages 获取最新兼容的 UI、Hybrid、Headless 模板，并在本地缓存通过 SHA-256 校验的版本。模板与 Tempo 应用独立发布，不需要更新桌面端即可获得新模板。模板使用 `tempo-plugin-sdk`，Vite 会把 SDK 与其他依赖打进 `dist`，产物可直接导入 Tempo。开发桥接由 `tempo-plugin-sdk/vite` 提供，生成项目不再携带 `.tempo` 目录。
 
 模板目录同时协商版本化 Manifest Schema。新项目的 `manifest.json` 会自动写入当前模板对应的远端 `$schema` 地址。
 

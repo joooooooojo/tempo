@@ -5,7 +5,7 @@ description: 从插件类型、项目模板和运行边界开始开发 Tempo 插
 
 # 插件开发
 
-Tempo 会把底层 API 注入运行环境。官方模板通过 UI 的 `connect()` 和 Runtime 的 `defineRuntime()` 建立入口，获得非空页面上下文、统一生命周期、类型补全和 UI/Runtime 环境隔离。
+Tempo 会把版本化内部传输注入运行环境。官方模板通过 UI 的 `connect()` 和 Runtime 的 `defineRuntime()` 建立入口，获得非空页面上下文、统一生命周期、类型补全和 UI/Runtime 环境隔离。
 
 ## 先选择插件类型
 
@@ -68,7 +68,7 @@ UI Client --------------- ipc --------------- Runtime Context
 | Tempo | `2.2.6` | 宿主应用版本 |
 | `manifestVersion` | `2` | Manifest 文件格式 |
 | `engines.pluginApi` | `^2.1.0` | Host 注入 API 的兼容范围 |
-| `tempo-plugin-sdk` | `1.0.0` | 官方 TypeScript SDK 版本 |
+| `tempo-plugin-sdk` | `1.1.0` | 官方 TypeScript SDK 版本 |
 | `version` | 由插件维护 | 当前插件包版本 |
 
 `tempo-plugin-sdk` 的包版本与 Host API 独立维护。插件仍需在 `engines.pluginApi` 中声明自己依赖的 Host API 范围，SDK 不替代运行时兼容检查。

@@ -21,7 +21,7 @@ use super::manifest::PluginManifest;
 pub const PROTOCOL: &str = "tempo-plugin";
 
 /// Host-owned bridge script path (not read from the plugin package). Injected into every
-/// plugin HTML document so authors get `window.tempo` and `window.ipcRenderer` directly.
+/// plugin HTML document so the SDK can connect to the versioned internal UI transport.
 pub const BRIDGE_CLIENT_PATH: &str = "__tempo__/client.js";
 pub const BRIDGE_SCA_PATH: &str = "__tempo__/structured-clone.js";
 

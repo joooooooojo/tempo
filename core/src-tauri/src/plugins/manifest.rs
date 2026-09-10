@@ -976,12 +976,10 @@ mod tests {
 
     #[test]
     fn parses_repository_example_manifest() {
-        let raw = include_str!(
-            "../../../../templates/examples/plugins/com.example.hello/manifest.json"
-        );
+        let raw = include_str!("../../../../templates/examples/plugins/manifest.json");
         let manifest = PluginManifest::parse_str(raw).unwrap();
-        assert_eq!(manifest.id, "com.example.hello");
-        assert_eq!(manifest.version, "2.1.0");
+        assert_eq!(manifest.id, "com.example.plugin");
+        assert_eq!(manifest.version, "0.1.0");
         assert!(manifest.permissions.is_empty());
     }
 
