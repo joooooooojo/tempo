@@ -33,6 +33,7 @@
 
 - 补充 Deno 迁移详设与审核记录，同步插件开发、权限及升级文档；增加受限运行时、模板构建、类型隔离和演示插件回归测试。
 - 仓库调整为 pnpm monorepo：主应用迁入 `core`，文档、插件模板与 `@tempo/sdk` 独立为 workspace；持续发布内容的官方插件仓库由 `plugin-repository/` Git Submodule 引入，可复制的仓库模板保留在 `templates/plugin-repository/` 并独立打包。插件项目模板改用 SDK 的 UI / Runtime 模块入口。
+- 新增 `@tempo/sdk` npm 发布工作流：`sdk-v*` 标签或手动版本输入触发，发布前校验版本、SDK、插件模板、Deno Runtime 和 npm 包内容，并生成 provenance。
 
 ## [2.2.6] - 2026-08-31
 

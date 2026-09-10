@@ -1,0 +1,118 @@
+name: SDK Release
+
+on:
+  push:
+    tags:
+      - "sdk-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SDK version from sdk/package.json (for example, 1.0.0)"
+        required: true
+        type: string
+      npm_tag:
+        description: "npm distribution tag"
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: sdk-release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve SDK release
+        id: release
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref_name }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REQUESTED_NPM_TAG: ${{ inputs.npm_tag }}
+        run: |
+          set -euo pipefail
+
+          SDK_VERSION="$(node -p "require('./sdk/package.json').version")"
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            EXPECTED_REF="sdk-v${SDK_VERSION}"
+            if [[ "$RELEASE_REF" != "$EXPECTED_REF" ]]; then
+              echo "::error::Tag ${RELEASE_REF} does not match sdk/package.json version ${SDK_VERSION}; expected ${EXPECTED_REF}."
+              exit 1
+            fi
+            if [[ "$SDK_VERSION" == *-* ]]; then
+              NPM_DIST_TAG="next"
+            else
+              NPM_DIST_TAG="latest"
+            fi
+          else
+            if [[ "$REQUESTED_VERSION" != "$SDK_VERSION" ]]; then
+              echo "::error::Requested version ${REQUESTED_VERSION} does not match sdk/package.json version ${SDK_VERSION}."
+              exit 1
+            fi
+            NPM_DIST_TAG="$REQUESTED_NPM_TAG"
+          fi
+
+          if npm view "@tempo/sdk@${SDK_VERSION}" version >/dev/null 2>&1; then
+            echo "::error::@tempo/sdk@${SDK_VERSION} is already published."
+            exit 1
+          fi
+
+          echo "version=${SDK_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=${NPM_DIST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Publishing @tempo/sdk@${SDK_VERSION} with npm tag ${NPM_DIST_TAG}."
+
+      - name: Test SDK
+        run: |
+          rm -rf sdk/dist
+          pnpm --dir sdk test
+
+      - name: Test plugin templates with Deno
+        run: TEMPO_PLUGIN_DENO_PATH="$(command -v deno)" pnpm test:plugin-templates
+
+      - name: Inspect package contents
+        working-directory: sdk
+        run: npm pack --dry-run
+
+      - name: Publish SDK
+        working-directory: sdk
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_DIST_TAG: ${{ steps.release.outputs.npm_tag }}
+        run: |
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::Repository secret NPM_TOKEN is not configured."
+            exit 1
+          fi
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          npm publish --registry https://registry.npmjs.org --access public --tag "$NPM_DIST_TAG" --provenance
