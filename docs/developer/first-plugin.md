@@ -5,7 +5,7 @@ description: 用插件开发助手创建、运行并构建一个 UI 插件。
 
 # 做出第一个插件
 
-这个教程创建一个可以保存文字的 Notes 页面。插件开发助手生成的项目已经声明 `@tempo/sdk` 依赖。
+这个教程创建一个可以保存文字的 Notes 页面。插件开发助手生成的项目已经声明 `tempo-plugin-sdk` 依赖。
 
 ## 创建项目
 
@@ -53,7 +53,7 @@ com.example.notes/
 
 ```ts
 import "./style.css";
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 
 const notes = document.querySelector<HTMLTextAreaElement>("#notes");
 const app = await connect();

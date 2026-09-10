@@ -46,7 +46,7 @@ pnpm dev:runtime
 ## 定义 Runtime
 
 ```ts
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ commands, events, onDispose }) => {
   commands.register("status", async () => ({ running: true }));
@@ -79,7 +79,7 @@ export type PluginIpc = {
 Runtime 实现频道：
 
 ```ts
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 import type { PluginIpc } from "../ipc.js";
 
 defineRuntime<PluginIpc>(({ ipc }) => {
@@ -96,7 +96,7 @@ defineRuntime<PluginIpc>(({ ipc }) => {
 UI 调用同一个契约：
 
 ```ts
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 import type { PluginIpc } from "../ipc.js";
 
 const app = await connect<PluginIpc>();

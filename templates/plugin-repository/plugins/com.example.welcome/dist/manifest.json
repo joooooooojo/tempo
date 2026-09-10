@@ -1,5 +1,5 @@
 {
-  "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.7/plugin-manifest.schema.json",
+  "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.8/plugin-manifest.schema.json",
   "manifestVersion": 2,
   "id": "com.example.welcome",
   "name": "Welcome",

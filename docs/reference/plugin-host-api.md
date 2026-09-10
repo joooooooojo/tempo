@@ -1,6 +1,6 @@
 ---
 title: 平台 API
-description: "@tempo/sdk 的 UI Client 与 Runtime Context 方法。"
+description: "tempo-plugin-sdk 的 UI Client 与 Runtime Context 方法。"
 ---
 
 # 平台 API

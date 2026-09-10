@@ -35,7 +35,7 @@ settings[] ----------------> Tempo 渲染设置界面
 
 ```json
 {
-  "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.7/plugin-manifest.schema.json",
+  "$schema": "https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.8/plugin-manifest.schema.json",
   "manifestVersion": 2,
   "id": "com.example.notes",
   "name": "Notes",
@@ -324,7 +324,7 @@ defineRuntime(({ events, onDispose }) => {
 给 Manifest 添加 `$schema` 可以获得编辑器补全。插件开发助手不会写死一个永久的“最新版”地址，而是从远端模板目录选择兼容 release，并把该 release 对应的版本化 Schema URL 写入新项目：
 
 - [远端模板目录](https://joooooooojo.github.io/tempo/plugin-assets/catalog.json)
-- [Manifest Schema 2.0.7](https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.7/plugin-manifest.schema.json)
+- [Manifest Schema 2.0.8](https://joooooooojo.github.io/tempo/plugin-assets/releases/2.0.8/plugin-manifest.schema.json)
 - [仓库中的 Schema 源文件](https://github.com/joooooooojo/tempo/blob/master/docs/schemas/plugin-manifest.schema.json)
 
 Schema 与模板一起独立发布。现有项目保留创建时的版本化地址，不会因为远端更新突然改变校验规则。

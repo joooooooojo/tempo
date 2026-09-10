@@ -1,8 +1,8 @@
 {
   "name": "@tempo/templates",
   "private": true,
-  "version": "2.0.7",
+  "version": "2.0.8",
   "devDependencies": {
-    "@tempo/sdk": "workspace:*"
+    "tempo-plugin-sdk": "workspace:*"
   }
 }

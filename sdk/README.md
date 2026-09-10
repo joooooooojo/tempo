@@ -1,11 +1,11 @@
-# @tempo/sdk
+# tempo-plugin-sdk
 
 Application model and typed Host APIs for Tempo plugins.
 
 UI plugins connect after Tempo has supplied the page context:
 
 ```ts
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 
 const app = await connect();
 await app.notify.show({ title: `Tempo API ${app.context.apiVersion}` });
@@ -14,7 +14,7 @@ await app.notify.show({ title: `Tempo API ${app.context.apiVersion}` });
 Runtime plugins declare their setup and cleanup in one place:
 
 ```ts
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ commands, events, onDispose }) => {
   commands.register("run", async () => ({ ok: true }));

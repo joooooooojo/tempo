@@ -68,10 +68,10 @@ UI Client --------------- ipc --------------- Runtime Context
 | Tempo | `2.2.6` | 宿主应用版本 |
 | `manifestVersion` | `2` | Manifest 文件格式 |
 | `engines.pluginApi` | `^2.1.0` | Host 注入 API 的兼容范围 |
-| `@tempo/sdk` | `1.0.0` | 官方 TypeScript SDK 版本 |
+| `tempo-plugin-sdk` | `1.0.0` | 官方 TypeScript SDK 版本 |
 | `version` | 由插件维护 | 当前插件包版本 |
 
-`@tempo/sdk` 的包版本与 Host API 独立维护。插件仍需在 `engines.pluginApi` 中声明自己依赖的 Host API 范围，SDK 不替代运行时兼容检查。
+`tempo-plugin-sdk` 的包版本与 Host API 独立维护。插件仍需在 `engines.pluginApi` 中声明自己依赖的 Host API 范围，SDK 不替代运行时兼容检查。
 
 ::: info 内部设计文档
 `docs/design` 记录 Tempo 平台实现决策，面向仓库贡献者，不是插件入门教程。

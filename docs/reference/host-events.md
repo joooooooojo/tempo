@@ -42,7 +42,7 @@ Tempo 不会为了广播启动已停止的 Runtime，也不会保存事件等插
 ## Runtime 监听
 
 ```ts
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ events, onDispose }) => {
   const offClipboard = events.on("clipboard.changed", (payload) => {
@@ -55,7 +55,7 @@ defineRuntime(({ events, onDispose }) => {
 ## UI 监听
 
 ```ts
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 
 const app = await connect();
 app.events.on("clipboard.changed", (payload) => {

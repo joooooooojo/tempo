@@ -19,9 +19,9 @@ const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TEMPLATE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TEMPLATE_FILES: usize = 256;
 #[cfg(test)]
-const BUNDLED_TEMPLATE_VERSION: &str = "2.0.7";
+const BUNDLED_TEMPLATE_VERSION: &str = "2.0.8";
 static BUNDLED_DENO_TEMPLATES: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../docs/public/plugin-assets/releases/2.0.7");
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../docs/public/plugin-assets/releases/2.0.8");
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -630,12 +630,12 @@ mod tests {
         assert!(root.join("src/ui/main.ts").is_file());
         assert!(root.join("src/runtime/main.ts").is_file());
         let runtime_source = std::fs::read_to_string(root.join("src/runtime/main.ts")).unwrap();
-        assert!(runtime_source.contains("@tempo/sdk/runtime"));
+        assert!(runtime_source.contains("tempo-plugin-sdk/runtime"));
         assert!(runtime_source.contains("defineRuntime<PluginIpc>"));
         let package: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(root.join("package.json")).unwrap())
                 .unwrap();
-        assert_eq!(package["dependencies"]["@tempo/sdk"], "^1.0.0");
+        assert_eq!(package["dependencies"]["tempo-plugin-sdk"], "^1.0.0");
         let manifest: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(root.join("manifest.json")).unwrap())
                 .unwrap();

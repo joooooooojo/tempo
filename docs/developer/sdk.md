@@ -5,18 +5,18 @@ description: 使用 connect 和 defineRuntime 构建 Tempo 插件。
 
 # 使用 SDK
 
-`@tempo/sdk` 提供 UI Client、Runtime Context、生命周期管理和可选的强类型 IPC。它使用 Tempo 已注入的底层对象，不实现宿主能力，也不改变插件权限。
+`tempo-plugin-sdk` 提供 UI Client、Runtime Context、生命周期管理和可选的强类型 IPC。它使用 Tempo 已注入的底层对象，不实现宿主能力，也不改变插件权限。
 
 模板已经包含依赖。手动创建项目时安装：
 
 ```bash
-pnpm add @tempo/sdk
+pnpm add tempo-plugin-sdk
 ```
 
 ## UI：connect
 
 ```ts
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 
 const app = await connect();
 console.log(app.context.params);
@@ -28,7 +28,7 @@ await app.storage.set("ready", true);
 ## Runtime：defineRuntime
 
 ```ts
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ commands, events, storage, onDispose }) => {
   commands.register("load", async () => storage.get("value"));
@@ -42,7 +42,7 @@ defineRuntime(({ commands, events, storage, onDispose }) => {
 
 `defineRuntime()` 在宿主挂载 Runtime 时执行 setup。可通过 `onDispose()` 注册多个清理函数，也可以从 setup 返回一个清理函数；停止时按注册的相反顺序执行，并在某项失败后继续清理剩余资源。setup 中途失败时，已经注册的清理函数也会立即执行。
 
-`@tempo/sdk/runtime` 面向 Deno Runtime，不引用浏览器 DOM。Vite 会把 SDK 打进最终 `main.mjs`，Tempo 安装插件时不会下载 npm 依赖。
+`tempo-plugin-sdk/runtime` 面向 Deno Runtime，不引用浏览器 DOM。Vite 会把 SDK 打进最终 `main.mjs`，Tempo 安装插件时不会下载 npm 依赖。
 
 ## 强类型 IPC
 
@@ -62,7 +62,7 @@ export type PluginIpc = {
 UI 使用同一个类型：
 
 ```ts
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 import type { PluginIpc } from "../ipc.js";
 
 const app = await connect<PluginIpc>();
@@ -73,7 +73,7 @@ app.ipc.send("changed", "42", true);
 Runtime 侧也使用它：
 
 ```ts
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 import type { PluginIpc } from "../ipc.js";
 
 defineRuntime<PluginIpc>(({ ipc }) => {
@@ -94,7 +94,7 @@ import type {
   TempoRuntimeContext,
   TempoUiClient,
   TempoWindowRect,
-} from "@tempo/sdk";
+} from "tempo-plugin-sdk";
 ```
 
 UI 与 Runtime 应分别使用对应入口。底层宿主全局只用于 SDK 实现和兼容旧插件，新代码无需直接访问。

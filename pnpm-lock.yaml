@@ -8,7 +8,7 @@ importers:
 
   .:
     devDependencies:
-      '@tempo/sdk':
+      tempo-plugin-sdk:
         specifier: workspace:*
         version: link:sdk
       '@types/node':
@@ -156,7 +156,7 @@ importers:
 
   templates:
     devDependencies:
-      '@tempo/sdk':
+      tempo-plugin-sdk:
         specifier: workspace:*
         version: link:../sdk
 

@@ -1,6 +1,6 @@
 fn main() {
     tauri_build::build();
-    println!("cargo:rerun-if-changed=../../docs/public/plugin-assets/releases/2.0.7");
+    println!("cargo:rerun-if-changed=../../docs/public/plugin-assets/releases/2.0.8");
     println!("cargo:rerun-if-changed=../../templates/plugin-repository");
 
     for icon in [

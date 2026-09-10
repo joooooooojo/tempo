@@ -77,7 +77,7 @@ Tempo 的定位是**可扩展宿主**：内置应用与第三方插件在主面�
 | **声明式清单** | 导入时只解析 `manifest.json`，注册面板入口与快捷操作，不执行插件代码 |
 | **信任** | 用户确认后才视为信任包；含 `main` 的插件会提示其权限接近 Tempo 本体（读写文件、网络、起进程等） |
 | **启用** | 开关控制是否向面板注册贡献；Runtime **懒启动**，首次 `invoke` 或需要时才拉起 Node 进程 |
-| **SDK 与 Bridge** | Host 注入底层 API，`@tempo/sdk/ui` 与 `@tempo/sdk/runtime` 提供 Client、Runtime 生命周期和强类型 IPC |
+| **SDK 与 Bridge** | Host 注入底层 API，`tempo-plugin-sdk/ui` 与 `tempo-plugin-sdk/runtime` 提供 Client、Runtime 生命周期和强类型 IPC |
 | **Runtime** | 声明 `main.mjs` / `main.js` 的插件在独立 Deno 进程中运行；Supervisor 负责权限、启停与清理 |
 | **安全模型** | Deno 的八项敏感权限默认关闭，由用户逐项授权；Host API 可直接使用 |
 
@@ -108,18 +108,18 @@ com.example.myplugin/
 3. 导入后为**未信任、已禁用**；点击 **信任** → 打开 **启用**  
 4. 主面板搜索「Hello 示例」「Hello 独立窗口」或快捷操作「Hello 一下」
 
-Vite 模板会安装 `@tempo/sdk`。SDK 为 UI 和 Runtime 提供独立的应用模型：
+Vite 模板会安装 `tempo-plugin-sdk`。SDK 为 UI 和 Runtime 提供独立的应用模型：
 
 ```ts
 // UI
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 
 const app = await connect();
 const result = await app.ipc.invoke("greet", { who: "Tempo" });
 await app.notify.show({ title: result.greeting });
 
 // Runtime
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ ipc }) => {
   ipc.handle("greet", async (_event, { who }) => ({
@@ -136,7 +136,7 @@ UI Client 和 Runtime Context 都提供 `mainPanel`、`apps`、`external`、`not
 
 ### Vite 项目模板
 
-插件开发助手会从 GitHub Pages 获取最新兼容的 UI、Hybrid、Headless 模板，并在本地缓存通过 SHA-256 校验的版本。模板与 Tempo 应用独立发布，不需要更新桌面端即可获得新模板。模板使用 `@tempo/sdk`，Vite 会把 SDK 与其他依赖打进 `dist`，产物可直接导入 Tempo。
+插件开发助手会从 GitHub Pages 获取最新兼容的 UI、Hybrid、Headless 模板，并在本地缓存通过 SHA-256 校验的版本。模板与 Tempo 应用独立发布，不需要更新桌面端即可获得新模板。模板使用 `tempo-plugin-sdk`，Vite 会把 SDK 与其他依赖打进 `dist`，产物可直接导入 Tempo。
 
 模板目录同时协商版本化 Manifest Schema。新项目的 `manifest.json` 会自动写入当前模板对应的远端 `$schema` 地址。
 
@@ -170,7 +170,7 @@ UI Client 和 Runtime Context 都提供 `mainPanel`、`apps`、`external`、`not
 | 前端 | React 19、TypeScript、Vite 7、Tailwind CSS 4、shadcn/ui |
 | 数据 | SQLite（rusqlite），存储路径可在设置中修改 |
 | 系统能力 | 全局快捷键、托盘、前台窗口检测（active-win）、剪贴板（arboard） |
-| 插件 | Deno Runtime、Supervisor、Host Bridge、`@tempo/sdk`、MCP 桥接 |
+| 插件 | Deno Runtime、Supervisor、Host Bridge、`tempo-plugin-sdk`、MCP 桥接 |
 
 ## 📁 项目结构
 
@@ -181,7 +181,7 @@ UI Client 和 Runtime Context 都提供 `mainPanel`、`apps`、`external`、`not
 │   ├── plugin-ui/            # 页面 Bridge
 │   └── plugin-runtime/       # Deno Runtime bootstrap
 ├── docs/                     # VitePress 文档站与 Schema
-├── sdk/                      # @tempo/sdk 源码
+├── sdk/                      # tempo-plugin-sdk 源码
 ├── templates/
 │   ├── plugins/              # UI / Hybrid / Headless 项目模板
 │   ├── plugin-repository/    # 创建新插件仓库的内置模板
@@ -195,12 +195,12 @@ UI Client 和 Runtime Context 都提供 `mainPanel`、`apps`、`external`、`not
 ```bash
 pnpm dev                  # Tauri 开发模式
 pnpm run sync:app-version # 同步 Tempo 应用版本到 Cargo / Tauri
-pnpm sdk:build            # 构建 @tempo/sdk
+pnpm sdk:build            # 构建 tempo-plugin-sdk
 pnpm docs:dev             # 启动文档站
 pnpm run build            # 类型检查 + 发布构建
 ```
 
-Tempo 应用版本以 `core/package.json` 为唯一来源；在 `core` workspace 提升版本后会同步 `core/src-tauri`。插件 API 通过 `engines.pluginApi` 协商兼容性，`@tempo/sdk` 独立维护包版本。
+Tempo 应用版本以 `core/package.json` 为唯一来源；在 `core` workspace 提升版本后会同步 `core/src-tauri`。插件 API 通过 `engines.pluginApi` 协商兼容性，`tempo-plugin-sdk` 独立维护包版本。
 
 调试：开发模式下可通过 Tauri/WebView 开发者工具查看面板前端；插件 UI 可在对应面板内调试。
 

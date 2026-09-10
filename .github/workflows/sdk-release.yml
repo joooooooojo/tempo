@@ -83,14 +83,14 @@ jobs:
             NPM_DIST_TAG="$REQUESTED_NPM_TAG"
           fi
 
-          if npm view "@tempo/sdk@${SDK_VERSION}" version >/dev/null 2>&1; then
-            echo "::error::@tempo/sdk@${SDK_VERSION} is already published."
+          if npm view "tempo-plugin-sdk@${SDK_VERSION}" version >/dev/null 2>&1; then
+            echo "::error::tempo-plugin-sdk@${SDK_VERSION} is already published."
             exit 1
           fi
 
           echo "version=${SDK_VERSION}" >> "$GITHUB_OUTPUT"
           echo "npm_tag=${NPM_DIST_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Publishing @tempo/sdk@${SDK_VERSION} with npm tag ${NPM_DIST_TAG}."
+          echo "Publishing tempo-plugin-sdk@${SDK_VERSION} with npm tag ${NPM_DIST_TAG}."
 
       - name: Test SDK
         run: |

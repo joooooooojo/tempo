@@ -18,7 +18,7 @@ description: UI、Hybrid、Headless 的入口格式、启动时机与清理方�
 每次打开 App，Tempo 都会创建页面实例，并在插件脚本执行前注入宿主桥接。UI 入口通过 SDK 连接：
 
 ```ts
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 
 const app = await connect();
 console.log(app.context.params, app.context.session);
@@ -44,7 +44,7 @@ const stopTheme = await app.theme.subscribe((theme) => {
 Runtime 使用一个声明式入口：
 
 ```ts
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ commands, events, ipc, onDispose }) => {
   commands.register("status", async () => ({ running: true }));
@@ -58,7 +58,7 @@ defineRuntime(({ commands, events, ipc, onDispose }) => {
 
 入口不需要导出激活函数或默认对象。模板把 TypeScript 构建为 ESM `main.mjs`；Manifest 的 `main` 不能直接指向 TypeScript 文件。
 
-原生 JavaScript 插件仍可直接使用 Tempo 注入的底层全局。`@tempo/sdk` 1.x 不再导出这些全局对象，新 TypeScript 项目应使用 `connect()` / `defineRuntime()`。
+原生 JavaScript 插件仍可直接使用 Tempo 注入的底层全局。`tempo-plugin-sdk` 1.x 不再导出这些全局对象，新 TypeScript 项目应使用 `connect()` / `defineRuntime()`。
 
 ## Runtime 启动时机
 

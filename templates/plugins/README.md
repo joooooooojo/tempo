@@ -2,7 +2,7 @@
 
 `ui`、`hybrid` 和 `headless` 是下一次发布的模板源。`release.json` 独立维护模板版本、最低 Host API 和公开资源根地址。
 
-当前模板 2.0.7 使用 Manifest v2、Host API ^2.1.0 和 `@tempo/sdk` 1.x，要求 Tempo >=2.2.6。后台运行于 Deno 2.9.6；Node/npm/TypeScript/Vite 仅用于构建，默认继续输出自包含 ESM `main.mjs`。
+当前模板 2.0.8 使用 Manifest v2、Host API ^2.1.0 和 `tempo-plugin-sdk` 1.x，要求 Tempo >=2.2.6。后台运行于 Deno 2.9.6；Node/npm/TypeScript/Vite 仅用于构建，默认继续输出自包含 ESM `main.mjs`。
 
 模板通过 UI 的 `connect()` 和 Runtime 的 `defineRuntime()` 建立插件入口。Hybrid 模板在 `src/ipc.ts` 中共享 IPC 契约，Vite 将 SDK 与业务依赖打进最终插件产物。
 

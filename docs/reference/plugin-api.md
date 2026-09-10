@@ -5,24 +5,24 @@ description: UI Client、Runtime Context、生命周期和强类型 IPC。
 
 # 插件 API 入口
 
-Tempo 在插件入口执行前注入底层 API。`@tempo/sdk` 在这些对象之上提供两个入口：UI 使用 `connect()`，Runtime 使用 `defineRuntime()`。官方模板已经声明 SDK 依赖并把它打进最终产物。
+Tempo 在插件入口执行前注入底层 API。`tempo-plugin-sdk` 在这些对象之上提供两个入口：UI 使用 `connect()`，Runtime 使用 `defineRuntime()`。官方模板已经声明 SDK 依赖并把它打进最终产物。
 
 ## 两个入口
 
 | 环境 | SDK 入口 | 入口函数 | 结果 |
 | --- | --- | --- | --- |
-| UI | `@tempo/sdk/ui` | `await connect()` | 上下文非空的 `TempoUiClient` |
-| Runtime | `@tempo/sdk/runtime` | `defineRuntime(setup)` | 挂载时传入 `TempoRuntimeContext` |
+| UI | `tempo-plugin-sdk/ui` | `await connect()` | 上下文非空的 `TempoUiClient` |
+| Runtime | `tempo-plugin-sdk/runtime` | `defineRuntime(setup)` | 挂载时传入 `TempoRuntimeContext` |
 
 ```ts
 // UI
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 
 const app = await connect();
 await app.notify.show({ title: `UI ready: ${app.context.apiVersion}` });
 
 // Runtime
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 
 defineRuntime(({ commands }) => {
   commands.register("run", async () => ({ ok: true }));
@@ -146,4 +146,4 @@ setup 可以同步或异步执行。`onDispose()` 可调用多次，setup 也可
 
 ## TypeScript 类型
 
-`@tempo/sdk/ui` 与 `@tempo/sdk/runtime` 都重新导出公共类型。Hybrid 的两个 TypeScript 子项目使用不同入口和 lib，因此 UI 不会误用 Runtime 生命周期，Runtime 也不会获得 DOM API。
+`tempo-plugin-sdk/ui` 与 `tempo-plugin-sdk/runtime` 都重新导出公共类型。Hybrid 的两个 TypeScript 子项目使用不同入口和 lib，因此 UI 不会误用 Runtime 生命周期，Runtime 也不会获得 DOM API。

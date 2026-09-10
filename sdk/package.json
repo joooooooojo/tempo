@@ -1,5 +1,5 @@
 {
-  "name": "@tempo/sdk",
+  "name": "tempo-plugin-sdk",
   "version": "1.0.0",
   "description": "Application model and typed host APIs for Tempo plugins",
   "type": "module",

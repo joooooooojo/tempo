@@ -177,7 +177,7 @@ for (const kind of ["ui", "hybrid", "headless"]) {
       await writeFile(path.join(project, "src/runtime/type-isolation.ts"),
         "// @ts-expect-error DOM globals must not leak into Runtime.\ndocument.title;\nexport {};\n");
       await writeFile(path.join(project, "src/ui/ipc-contract-test.ts"), `
-import { connect } from "@tempo/sdk/ui";
+import { connect } from "tempo-plugin-sdk/ui";
 import type { PluginIpc } from "../ipc.js";
 const app = await connect<PluginIpc>();
 // @ts-expect-error Unknown invoke channels must be rejected.
@@ -187,7 +187,7 @@ await app.ipc.invoke("greet", { name: 42 });
 export {};
 `);
       await writeFile(path.join(project, "src/runtime/ipc-contract-test.ts"), `
-import { defineRuntime } from "@tempo/sdk/runtime";
+import { defineRuntime } from "tempo-plugin-sdk/runtime";
 import type { PluginIpc } from "../ipc.js";
 defineRuntime<PluginIpc>(({ ipc }) => {
   // @ts-expect-error Invoke results must match the shared contract.
