@@ -59,7 +59,7 @@ UI Client --------------- ipc --------------- Runtime Context
 5. [使用 SDK](/developer/sdk)：查 SDK 入口和类型导入。
 6. [平台 API](/reference/plugin-host-api)：查 `tempo` 的方法和参数。
 7. [Manifest](/reference/manifest-schema)：查 Apps、Commands、Actions、MCP Tools 和 Settings。
-8. [维护插件仓库](/developer/plugin-repository)：在 Tempo 里从官方模板创建 Git 插件源。
+8. [维护插件仓库](/developer/plugin-repository)：在 Tempo 里从内置模板创建 Git 插件源。
 
 ## 版本字段
 

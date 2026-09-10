@@ -1,6 +1,6 @@
 ---
 title: 维护插件仓库
-description: 在 Tempo 里从官方模板创建 Git 插件仓库，提交 dist，再添加为插件源。
+description: 在 Tempo 里从内置模板创建 Git 插件仓库，提交 dist，再添加为插件源。
 ---
 
 # 维护插件仓库
@@ -14,16 +14,18 @@ Tempo 可以从 Git 仓库发现和安装插件。仓库是一个普通 monorepo
 1. 打开 **设置 → 插件管理 → 插件仓库**。
 2. 点 **从模板创建**。
 3. 选择保存位置，可选填写文件夹名称和说明。
-4. Tempo 把官方模板写到本机目录（含示例插件 `com.example.welcome`）、自动生成仓库 ID 并初始化 Git，然后打开该文件夹。
+4. Tempo 把内置模板写到本机目录（含示例插件 `com.example.welcome`）、自动生成仓库 ID 并初始化 Git，然后打开该文件夹。
 5. 把目录推到 GitHub、GitLab 或其他 Git 托管。
 6. 回到 Tempo，点 **添加源**，填入远程 Git 地址并同步。不要添加 `file://` 本地路径。
 
-模板随 Tempo 一起打包，离线也能创建。源文件由 [`tempo-official-warehouse`](https://github.com/joooooooojo/tempo-official-warehouse) 独立仓库维护，并作为主仓库的 `plugin-repository/` Submodule 引入，包含：
+模板随 Tempo 一起打包，离线也能创建。模板源文件位于主仓库的 [`templates/plugin-repository`](https://github.com/joooooooojo/tempo/tree/master/templates/plugin-repository)，包含：
 
 - `tempo-plugin-repository.json` 根索引
 - 示例插件 `plugins/com.example.welcome`（含可安装 `dist/`）
 - `node scripts/validate.mjs` 本地 / CI 校验
 - GitHub Actions 工作流
+
+[`tempo-official-warehouse`](https://github.com/joooooooojo/tempo-official-warehouse) 是 Tempo 持续维护和发布官方插件的仓库，在主仓库中以 `plugin-repository/` Submodule 引入。它和用于创建新仓库的模板相互独立，也不会被打包进应用；官方插件增加时不会扩大应用内嵌模板。
 
 私有仓库在 Tempo 里配置 PAT 或 SSH 凭证。秘密只留在当前应用会话，退出后需重新输入。
 
@@ -65,4 +67,4 @@ Tempo 读取仓库根目录的 `tempo-plugin-repository.json`：
 
 1. [做出第一个插件](/developer/first-plugin)：生成并构建单个插件。
 2. [安装与管理插件](/guide/plugins)：最终用户如何导入、信任和启用。
-3. 模板内 [CONTRIBUTING.md](https://github.com/joooooooojo/tempo-official-warehouse/blob/master/CONTRIBUTING.md)：发布和更新检查清单。
+3. 模板内 [CONTRIBUTING.md](https://github.com/joooooooojo/tempo/blob/master/templates/plugin-repository/CONTRIBUTING.md)：发布和更新检查清单。

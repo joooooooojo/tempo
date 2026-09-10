@@ -10,7 +10,7 @@ on:
       - master
     paths:
       - "core/**"
-      - "plugin-repository"
+      - "templates/plugin-repository/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"

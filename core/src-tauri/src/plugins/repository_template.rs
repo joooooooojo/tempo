@@ -1,4 +1,4 @@
-//! Scaffold a local Git plugin repository from the bundled official template.
+//! Scaffold a local Git plugin repository from the bundled repository template.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use super::ids::new_repository_index_id;
 
-static TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../plugin-repository");
+static TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../templates/plugin-repository");
 const INDEX_FILE: &str = "tempo-plugin-repository.json";
 const DEFAULT_FOLDER_NAME: &str = "tempo-plugins";
 

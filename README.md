@@ -182,8 +182,11 @@ UI Client 和 Runtime Context 都提供 `mainPanel`、`apps`、`external`、`not
 │   └── plugin-runtime/       # Deno Runtime bootstrap
 ├── docs/                     # VitePress 文档站与 Schema
 ├── sdk/                      # @tempo/sdk 源码
-├── templates/                # UI / Hybrid / Headless 模板与示例
-├── plugin-repository/        # 官方插件仓库 Submodule
+├── templates/
+│   ├── plugins/              # UI / Hybrid / Headless 项目模板
+│   ├── plugin-repository/    # 创建新插件仓库的内置模板
+│   └── examples/             # 插件示例
+├── plugin-repository/        # 持续发布官方插件的 Submodule
 └── scripts/                  # 跨 workspace 的构建与校验脚本
 ```
 
